@@ -1,0 +1,28 @@
+{
+  "name": "generalpurpose-discord-bot",
+  "version": "1.0.0",
+  "description": "basic discord bot with simple commands",
+  "dependencies": {
+    "discord.js": "14.14.1"
+  },
+  "main": "index.js",
+  "scripts": {
+    "test": "node index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/John-Fries-J/GeneralPurpose-discord-bot.git"
+  },
+  "keywords": [
+    "discord",
+    "discord",
+    "bots",
+    "discordjs"
+  ],
+  "author": "john-fries-j",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/John-Fries-J/GeneralPurpose-discord-bot/issues"
+  },
+  "homepage": "https://github.com/John-Fries-J/GeneralPurpose-discord-bot#readme"
+}
