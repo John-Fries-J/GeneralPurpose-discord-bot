@@ -19,9 +19,10 @@ Some kewl features will be added here once made
 
 Commands:
 
-* `/command` - "what it do"
-
-
+* `/ban [user] [reason]` - "Bans a user from the server"
+* `/kick [user] [reason]` - "Kicks a user from the server"
+* `/help` - "Sends a help embed with all the commands that will auto update when a new command is made or edited"
+* `/ping` - "Gets the ping of the bot"
 
 
 ## Authors
