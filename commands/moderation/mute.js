@@ -27,6 +27,7 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('mute')
         .setDescription('Mutes a user from the server.')
+        .setDMPermission(false)
         .addUserOption(option => option.setName('user').setDescription('The user to mute').setRequired(true))
         .addStringOption(option => option.setName('duration').setDescription('The duration of the mute e.g., 1s, 5m, 2h, 3d, 1w').setRequired(true))
         .addStringOption(option => option.setName('reason').setDescription('The reason for the mute').setRequired(false)),

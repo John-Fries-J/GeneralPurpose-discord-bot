@@ -5,6 +5,8 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('unmute')
         .setDescription('Unmutes a user from the server.')
+        .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
+        .setDMPermission(false)
         .addUserOption(option => option.setName('user').setDescription('The user to unmute').setRequired(true)),
     async execute(interaction) {
         const user = interaction.options.getUser('user');

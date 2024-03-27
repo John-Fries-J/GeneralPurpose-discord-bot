@@ -4,6 +4,7 @@ const { blue } = require('../../colors.json');
 module.exports = {
 	data: new SlashCommandBuilder()
 		.setName('server')
+		.setDMPermission(false)
 		.setDescription('Provides information about the server.'),
 	async execute(interaction) {
 		const embed = new EmbedBuilder()
