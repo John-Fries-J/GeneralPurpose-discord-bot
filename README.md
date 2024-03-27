@@ -48,7 +48,7 @@ Utility
 
 
 #Config <br>
-``
+`
 {<br>
     "token":"", This is your discord bot token. Find it <a href="https://discord.com/developers/applications/"> here</a>  under Bot <br>
     "prefix":"!", This can be anything but is set to ! by default. This isnt really used but here incase I pull it in at some point as all the commands are slash commands <br>
@@ -59,7 +59,7 @@ Utility
 	"guildId": "" This is the parent servers ID. This is currently not used for anything but if this bot is used in one guild specifically or you have a main server just put the ID there. 
   <br>
 }<br>
-`` 
+` 
 <br>
 <br>
 
