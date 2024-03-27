@@ -13,13 +13,14 @@
   </p>
 
 
-## About The Project
+# About The Project
 
 Some kewl features will be added here once made. 
 
-Index:
-<a href="#Commands"> Command List </a>
-<a href="#GettingStarted"> Command List </a>
+Index: <br>
+<a href="#Commands"> Command List </a> <br>
+<a href="#GettingStarted"> Command List </a> <br>
+<a href="#Config"> Config Setup and Explanation </a><br>
 
 
 #GettingStarted
@@ -43,11 +44,11 @@ Utility
 * `/ping` - "Gets the ping of the bot"
 * `/user` - "Provides information about the user"
 * `/server` - "Provides information about the server"
-* `/avatar` - "Provides the users avatar or selected user"
+* `/avatar` - "Provides the users avatar or selected user" <br> <br>
 
 
 #Config
-```
+``
 {
     "token":"", This is your discord bot token. Find it here: https://discord.com/developers/applications/ under Bot
     "prefix":"!", This can be anything but is set to ! by default. This isnt really used but here incase I pull it in at some point as all the commands are slash commands
@@ -57,8 +58,9 @@ Utility
     "clientId": "", This is the bots client ID found here: https://discord.com/developers/applications/ under OAuth2
 	"guildId": "" This is the parent servers ID. This is currently not used for anything but if this bot is used in one guild specifically or you have a main server just put the ID there.
 }
-```
-
+`` 
+<br>
+<br>
 
 ## Authors
 
