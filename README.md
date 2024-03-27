@@ -50,13 +50,13 @@ Utility
 #Config <br>
 
 <br>
-    `"token":"",` This is your discord bot token. Find it <a href="https://discord.com/developers/applications/"> here</a>  under Bot <br>
-    `"prefix":"!",` This can be anything but is set to ! by default. This isnt really used but here incase I pull it in at some point as all the commands are slash commands <br>
-    `"devs":["630070645874622494"],` This is your discord ID by default its mine but you can change it out and put yours in there. If you want to put multiple you should        seperate it out like an array like follows: ["630070645874622494", "464107754198663168"] <br>
-    `"logChannel":"",` This is currently where all the bots logs go whenever someone runs a command. Eventually this will be swapped out at a later version. <br>
-    `"statusName": "Bot Status",` This is what the bot is "playing" I recomend something like. "/help" but its entirely up to you <br>
-    `"clientId": "",` This is the bots client ID found <a href="https://discord.com/developers/applications/">here</a> under OAuth2 <br>
-	  `"guildId": ""` This is the parent servers ID. This is currently not used for anything but if this bot is used in one guild specifically or you have a main server just put the ID there. 
+    ``"token":"",`` This is your discord bot token. Find it <a href="https://discord.com/developers/applications/"> here</a>  under Bot <br>
+    ``"prefix":"!",`` This can be anything but is set to ! by default. This isnt really used but here incase I pull it in at some point as all the commands are slash commands <br>
+    ``"devs":["630070645874622494"],`` This is your discord ID by default its mine but you can change it out and put yours in there. If you want to put multiple you should       seperate it out like an array like follows: ["630070645874622494", "464107754198663168"] <br>
+    ``"logChannel":"",`` This is currently where all the bots logs go whenever someone runs a command. Eventually this will be swapped out at a later version. <br>
+    ``"statusName": "Bot Status",`` This is what the bot is "playing" I recomend something like. "/help" but its entirely up to you <br>
+    ``"clientId": "",`` This is the bots client ID found <a href="https://discord.com/developers/applications/">here</a> under OAuth2 <br>
+	  ``"guildId": ""`` This is the parent servers ID. This is currently not used for anything but if this bot is used in one guild specifically or you have a main server just put the ID there. 
   <br>
 <br>
  
