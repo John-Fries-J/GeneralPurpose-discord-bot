@@ -1,4 +1,5 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
+const { red } = require('../../colors.json');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -22,7 +23,8 @@ module.exports = {
         const embed = new EmbedBuilder()
             .setTitle('User Banned')
             .setDescription(`You have been banned from the server${reason ? ` for the following reason: ${reason}` : ''}`)
-            .setTimestamp();
+            .setTimestamp()
+            .setColor(red);
 
         try {
             await member.send({ embeds: [embed] });
