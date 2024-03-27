@@ -15,9 +15,22 @@
 
 ## About The Project
 
-Some kewl features will be added here once made
+Some kewl features will be added here once made. 
 
-Commands:
+Index:
+<a href="#Commands"> Command List </a>
+<a href="#GettingStarted"> Command List </a>
+
+
+#GettingStarted
+
+Download all the dependacies using ``npm i`` I'm using node v18.12.1 <br>
+Now fill out the exampleconfig.json config. For more details check <a href="#config">here!</a> <br>
+Make sure to change your config filename to config.json or YOUR FILE WILL NOT WORK.<br>
+Once all your dependancies are downloaded type either ``npm run run`` or ``node index.js`` <br>
+
+
+#Commands:
 
 Moderation
 * `/ban [user] [reason] [duration]` - "Bans a user from the server can also have a duration on the ban"
@@ -31,6 +44,21 @@ Utility
 * `/user` - "Provides information about the user"
 * `/server` - "Provides information about the server"
 * `/avatar` - "Provides the users avatar or selected user"
+
+
+#Config
+```
+{
+    "token":"", This is your discord bot token. Find it here: https://discord.com/developers/applications/ under Bot
+    "prefix":"!", This can be anything but is set to ! by default. This isnt really used but here incase I pull it in at some point as all the commands are slash commands
+    "devs":["630070645874622494"], This is your discord ID by default its mine but you can change it out and put yours in there. If you want to put multiple you should seperate it out like an array like follows: ["630070645874622494", "464107754198663168"]
+    "logChannel":"", This is currently where all the bots logs go whenever someone runs a command. Eventually this will be swapped out at a later version.
+    "statusName": "Bot Status", This is what the bot is "playing" I recomend something like. "/help" but its entirely up to you
+    "clientId": "", This is the bots client ID found here: https://discord.com/developers/applications/ under OAuth2
+	"guildId": "" This is the parent servers ID. This is currently not used for anything but if this bot is used in one guild specifically or you have a main server just put the ID there.
+}
+```
+
 
 ## Authors
 
