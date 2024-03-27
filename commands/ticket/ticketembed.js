@@ -96,6 +96,11 @@ module.exports = {
                 .setDescription('This ticket has been closed.')
                 .setColor(red);
               const closedticket = await newChannel.send({ embeds: [closedEmbed] });
+              const closersTicket = new EmbedBuilder()
+                .setTitle('You Closed your ticket!')
+                .setDescription('You have closed your ticket. If you need further assistance, please open a new ticket.')
+                .setColor(green);
+              i.user.send({ embeds: [closersTicket] });
               const deletebutton = new ButtonBuilder()
                 .setStyle("Danger")
                 .setLabel("Delete Ticket")
@@ -136,7 +141,7 @@ module.exports = {
                     .setTitle('Ticket Deletion Cancelled')
                     .setDescription('This ticket will not be deleted.')
                     .setColor(green);
-                  m.user.send({ embeds: [cancelledEmbed] });
+                    newChannel.send({ embeds: [cancelledEmbed] });
 
               });
 
