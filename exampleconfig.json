@@ -3,5 +3,7 @@
     "prefix":"!",
     "devs":[""],
     "logChannel":"",
-    "statusName": "Bot Status"
+    "statusName": "Bot Status",
+    "clientId": "",
+	"guildId": ""
 }
