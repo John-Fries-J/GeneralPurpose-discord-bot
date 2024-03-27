@@ -14,7 +14,7 @@ module.exports = {
         member.timeout(null, 'Unmuted')
         const embed = new EmbedBuilder()
         .setTitle('User Unmute')
-        .setDescription(`${member.tag} has been unmuted.`)
+        .setDescription(`**${member.user.tag}** has been unmuted.`)
         .setColor(green)
         .setTimestamp();
         await interaction.reply({ embeds: [embed] });
