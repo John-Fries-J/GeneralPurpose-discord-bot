@@ -12,6 +12,19 @@ module.exports = {
             .setDescription('Click the button below to open a ticket.')
             .setColor(red)
             .setTimestamp();
+          
+        if (!config.ticketSupportRole) {
+          console.log('Please set a ticket role in the config.');
+          await interaction.reply({ content: 'Please set a ticket role in the config.', ephemeral: true });
+          return;
+        }
+
+        if (!config.ticketCategory){
+          console.log('Please set a ticket category in the config.');
+          await interaction.reply({ content: 'Please set a ticket category in the config.', ephemeral: true });
+          return;
+        }
+
 
         const ticketChannelId = config.ticketChannel;
         const channel = interaction.guild.channels.cache.get(ticketChannelId);
@@ -53,7 +66,6 @@ module.exports = {
                     ]
                 }
             );
-
             const ticketEmbed = new EmbedBuilder()
                 .setTitle(`Ticket has been created!`)
                 .setDescription(
