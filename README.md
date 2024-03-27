@@ -24,6 +24,7 @@ Moderation
 * `/unban [user]` - "Unbans a user from the server using their discord ID"
 * `/mute [user] [duration] [reason]` - "Mutes a user in the server with the timeout feature."
 * `/unmute [user]` - "Unmutes the user"
+* `/purge [amount]` - "Purges the specified amount of messages"
 
 Utility
 * `/ping` - "Gets the ping of the bot"
