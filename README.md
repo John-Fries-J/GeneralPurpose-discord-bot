@@ -12,6 +12,7 @@
     This is still a work in progress. Once this is to a point I'm happy with will I announce this elswhere. This is a passion project so don't expect updates immediately and it might not be perfect so feel free to create issues and prs if you want to help but if I can't fix dont be a beg. Luv u.
   </p>
 
+# IF YOU ARE HAVING ISSUES OR ANY SUPPORT QUESTIONS. JOIN MY DISCORD. https://johnfries.net/discord I have notis on for discord so I'll respond ASAP.
 
 # About The Project
 
