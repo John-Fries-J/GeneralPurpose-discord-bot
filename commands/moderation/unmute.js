@@ -1,5 +1,5 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const { red } = require('../../colors.json');
+const { green } = require('../../colors.json');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -15,14 +15,14 @@ module.exports = {
         const embed = new EmbedBuilder()
         .setTitle('User Unmute')
         .setDescription(`${member.tag} has been unmuted.`)
-        .setColor(red)
+        .setColor(green)
         .setTimestamp();
         await interaction.reply({ embeds: [embed] });
 
         const dmEmbed = new EmbedBuilder()
         .setTitle('User Unmute')
         .setDescription(`You have been unmuted in **${interaction.guild.name}**.`)
-        .setColor(red)
+        .setColor(green)
         .setTimestamp();
         await member.send({ embeds: [dmEmbed] });
     },

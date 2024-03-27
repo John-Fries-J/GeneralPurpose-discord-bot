@@ -1,5 +1,5 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const { red } = require('../../colors.json');
+const { orange } = require('../../colors.json');
 
 function parseDuration(durationString) {
     const regex = /(\d+)(s|m|h|d|w)/;
@@ -27,6 +27,7 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('mute')
         .setDescription('Mutes a user from the server.')
+        .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
         .setDMPermission(false)
         .addUserOption(option => option.setName('user').setDescription('The user to mute').setRequired(true))
         .addStringOption(option => option.setName('duration').setDescription('The duration of the mute e.g., 1s, 5m, 2h, 3d, 1w').setRequired(true))
@@ -49,14 +50,14 @@ module.exports = {
         const embed = new EmbedBuilder()
             .setTitle('User Muted')
             .setDescription(`**${member.user.tag}** has been muted for ${durationString}.\n**Reason:** ${reason}`)
-            .setColor(red)
+            .setColor(orange)
             .setTimestamp();
         await interaction.reply({ embeds: [embed] });
 
         const dmEmbed = new EmbedBuilder()
             .setTitle('User Muted')
             .setDescription(`You have been muted in **${interaction.guild.name}** for ${durationString}.\n**Reason:** ${reason}`)
-            .setColor(red)
+            .setColor(orange)
             .setTimestamp();
         await member.send({ embeds: [dmEmbed] });
     },
