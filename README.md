@@ -19,11 +19,17 @@ Some kewl features will be added here once made
 
 Commands:
 
-* `/ban [user] [reason]` - "Bans a user from the server"
-* `/kick [user] [reason]` - "Kicks a user from the server"
-* `/help` - "Sends a help embed with all the commands that will auto update when a new command is made or edited"
-* `/ping` - "Gets the ping of the bot"
+Moderation
+* `/ban [user] [reason] [duration]` - "Bans a user from the server can also have a duration on the ban"
+* `/unban [user]` - "Unbans a user from the server using their discord ID"
+* `/mute [user] [duration] [reason]` - "Mutes a user in the server with the timeout feature."
+* `/unmute [user]` - "Unmutes the user"
 
+Utility
+* `/ping` - "Gets the ping of the bot"
+* `/user` - "Provides information about the user"
+* `/server` - "Provides information about the server"
+* `/avatar` - "Provides the users avatar or selected user"
 
 ## Authors
 
