@@ -22,7 +22,7 @@ module.exports = {
               },
             ]);
         const newName = interaction.channel.name.replace('ticket-', 'closed-');
-        await interaction.guild.channels.edit(interaction.channel.id, { name: `closed-${newName}` });
+        await interaction.guild.channels.edit(interaction.channel.id, { name: `${newName}` });
         await interaction.reply({ content: `Ticket closed was closed by <${interaction.user.id}>`});
     },
 };
