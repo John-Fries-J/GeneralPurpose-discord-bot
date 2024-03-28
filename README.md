@@ -20,11 +20,11 @@ Some kewl features will be added here once made.
 
 Index: <br>
 <a href="#Commands"> Command List </a> <br>
-<a href="#GettingStarted"> Command List </a> <br>
+<a href="#GettingStarted"> Getting Started With the bot </a> <br>
 <a href="#Config"> Config Setup and Explanation </a><br>
 
 
-#GettingStarted
+# GettingStarted
 
 Download all the dependacies using ``npm i`` I'm using node v18.12.1 <br>
 Now fill out the exampleconfig.json config. For more details check <a href="#config">here!</a> <br>
@@ -32,7 +32,7 @@ Make sure to change your config filename to config.json or YOUR FILE WILL NOT WO
 Once all your dependancies are downloaded type either ``npm run run`` or ``node index.js`` <br>
 
 
-#Commands:
+# Commands:
 
 Moderation
 * `/ban [user] [reason] [duration]` - "Bans a user from the server can also have a duration on the ban"
@@ -45,10 +45,15 @@ Utility
 * `/ping` - "Gets the ping of the bot"
 * `/user` - "Provides information about the user"
 * `/server` - "Provides information about the server"
-* `/avatar` - "Provides the users avatar or selected user" <br> <br>
+* `/avatar` - "Provides the users avatar or selected user" 
 
+Ticket
+* `/ticket [embedMessageChannel] [supportRole] [ticketCategory]` - "Initiates the ticket system and sends the embed through."
+* `/close` - "Closes the ticket. Allows the support role to still see the channel but disables the ticket owner from seeing the channel"
+* `/delete` - "Deletes the ticket channel. Looks for any channel with the name "closed-" so be careful."
+<br> <br>
 
-#Config <br>
+# Config <br>
 
 <br>
     "token":"", This is your discord bot token. Find it <a href="https://discord.com/developers/applications/"> here</a>  under Bot <br>
