@@ -1,9 +1,10 @@
-const { SlashCommandBuilder, EmbedBuilder, PermissionsBitField, PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder, PermissionsBitField, PermissionFlagsBits } = require('discord.js');
 const { blue } = require('../../colors.json');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('close')
+        .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
         .setDescription('Closes the ticket'),
     async execute(interaction) {
         if (!interaction.channel.name.startsWith('ticket-')) {
