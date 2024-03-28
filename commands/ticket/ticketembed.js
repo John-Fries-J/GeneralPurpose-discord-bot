@@ -1,32 +1,22 @@
-const { SlashCommandBuilder, EmbedBuilder, ButtonBuilder, ActionRowBuilder, ChannelType, PermissionsBitField } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, ButtonBuilder, ActionRowBuilder, ChannelType, PermissionsBitField, PermissionFlagsBits } = require('discord.js');
 const { red, green } = require('../../colors.json');
-const config = require('../../config.json');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('ticket')
         .setDescription('Create a ticket embed with a button to open a ticket')
-        .addChannelOption(option => option.setName('channel').setDescription('The channel to send the ticket embed to').setRequired(true)),
-
+        .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+        .addChannelOption(option => option.setName('channel').setDescription('The channel to send the ticket embed to').setRequired(true))
+        .addRoleOption(option => option.setName('role').setDescription('The Support Role ID that you want to have access to the tickets').setRequired(true))
+        .addChannelOption(option => option.setName('category').setDescription('The category ID you want to have the tickets under').setRequired(true)),
     async execute(interaction) {
         const ticketEmbed = new EmbedBuilder()
             .setTitle('Ticket')
             .setDescription('Click the button below to open a ticket.')
             .setColor(red)
             .setTimestamp();
-          
-        if (!config.ticketSupportRole) {
-          console.log('Please set a ticket role in the config.');
-          await interaction.reply({ content: 'Please set a ticket role in the config.', ephemeral: true });
-          return;
-        }
-
-        if (!config.ticketCategory){
-          console.log('Please set a ticket category in the config.');
-          await interaction.reply({ content: 'Please set a ticket category in the config.', ephemeral: true });
-          return;
-        }
-
+        const ticketCategoryId = interaction.options.getChannel('category').id;
+        const ticketRole = interaction.options.getRole('role').id;
         const ticketChannelId = interaction.options.getChannel('channel').id;
         const channel = interaction.guild.channels.cache.get(ticketChannelId);
         const ticketMessage = await channel.send({ embeds: [ticketEmbed] });
@@ -50,7 +40,7 @@ module.exports = {
                     name: `ticket-${i.user.username}`,
                     type: ChannelType.GuildText,
                     topic: i.user.id,
-                    parent: `${config.ticketCategory}`,
+                    parent: ticketCategoryId,
                     permissionOverwrites: [
                       {
                         id: i.user.id,
@@ -61,7 +51,7 @@ module.exports = {
                         deny: [PermissionsBitField.Flags.ViewChannel],
                       },
                       {
-                        id: config.ticketSupportRole,
+                        id: ticketRole,
                         allow: [PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ViewChannel],
                       }
                     ]
@@ -74,7 +64,7 @@ module.exports = {
                 )
                 .setColor(green);
 
-            newChannel.send(`<@${i.user.id}>, <@&${config.ticketSupportRole}>`);
+            newChannel.send(`<@${i.user.id}>, <@&${ticketRole}>`);
             const ticketedmessage = await newChannel.send({ embeds: [ticketEmbed] });
 
             const ticketedbutton = new ButtonBuilder()
@@ -86,9 +76,11 @@ module.exports = {
             const ticketedFilter = j => j.customId === 'close_ticket' && j.user.id === i.user.id;
             const ticketedCollector = ticketedmessage.createMessageComponentCollector({ filter: ticketedFilter, time: 15000 });
 
+            const newName = newChannel.name.replace('ticket-', 'closed-');
             ticketedCollector.on('collect', async j => {
                 j.deferUpdate();
               newChannel.edit({
+                name: newName,
               permissionOverwrites: [
                 {
                 id: i.user.id,
@@ -99,7 +91,7 @@ module.exports = {
                   deny: [PermissionsBitField.Flags.ViewChannel],
                 },
                 {
-                  id: config.ticketSupportRole,
+                  id: ticketRole,
                   allow: [PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ViewChannel],
                 }
               ]
