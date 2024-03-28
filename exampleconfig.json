@@ -6,7 +6,6 @@
     "statusName": "Bot Status",
     "clientId": "",
 	"guildId": "",
-    "ticketChannel": "",
     "ticketCategory": "",
     "ticketSupportRole":""
 }

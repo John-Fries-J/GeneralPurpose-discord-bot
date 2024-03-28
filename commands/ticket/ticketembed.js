@@ -5,7 +5,9 @@ const config = require('../../config.json');
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('ticket')
-        .setDescription('Create a ticket embed with a button to open a ticket'),
+        .setDescription('Create a ticket embed with a button to open a ticket')
+        .addChannelOption(option => option.setName('channel').setDescription('The channel to send the ticket embed to').setRequired(true)),
+
     async execute(interaction) {
         const ticketEmbed = new EmbedBuilder()
             .setTitle('Ticket')
@@ -25,8 +27,7 @@ module.exports = {
           return;
         }
 
-
-        const ticketChannelId = config.ticketChannel;
+        const ticketChannelId = interaction.options.getChannel('channel').id;
         const channel = interaction.guild.channels.cache.get(ticketChannelId);
         const ticketMessage = await channel.send({ embeds: [ticketEmbed] });
 
