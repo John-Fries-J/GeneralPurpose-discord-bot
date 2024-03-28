@@ -1,9 +1,11 @@
 {
     "token":"",
     "prefix":"!",
-    "devs":[""],
+    "devs":["630070645874622494"],
     "logChannel":"",
     "statusName": "Bot Status",
     "clientId": "",
-	"guildId": ""
+	"guildId": "",
+    "ticketCategory": "",
+    "ticketSupportRole":""
 }
