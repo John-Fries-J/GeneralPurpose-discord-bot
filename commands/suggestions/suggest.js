@@ -14,6 +14,12 @@ module.exports = {
             .setDescription(`**Submitter:**\n ${user.tag} \n\n**Suggestion**\n${suggestion}`)
             .setColor(blue)
             .setTimestamp();
-        await interaction.reply({ embeds: [embed] });
+        const channel = interaction.guild.channels.cache.find(channel => channel.name === 'suggestions');
+        if (!channel) {
+            await interaction.reply({ content: 'Could not find a channel named suggestions. Pester the bot devs to make one', ephemeral: true });
+            return;
+        }
+        await channel.send({ embeds: [embed] });
+        await interaction.reply({ content: 'Suggestion submitted!', ephemeral: true });
     },
 };
