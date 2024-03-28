@@ -62,7 +62,7 @@ Ticket
     "logChannel":"", This is currently where all the bots logs go whenever someone runs a command. Eventually this will be swapped out at a later version. <br>
     "statusName": "Bot Status", This is what the bot is "playing" I recomend something like. "/help" but its entirely up to you <br>
     "clientId": "", This is the bots client ID found <a href="https://discord.com/developers/applications/">here</a> under OAuth2 <br>
-	"guildId": "" This is the parent servers ID. This is currently not used for anything but if this bot is used in one guild specifically or you have a main server just put the ID there. 
+	  "guildId": "" This is the parent servers ID. This is currently not used for anything but if this bot is used in one guild specifically or you have a main server just put the ID there. 
   <br>
 <br>
  
