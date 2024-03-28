@@ -20,16 +20,12 @@ module.exports = {
         const ticketChannelId = interaction.options.getChannel('channel').id;
         const channel = interaction.guild.channels.cache.get(ticketChannelId);
         const ticketMessage = await channel.send({ embeds: [ticketEmbed] });
-
         interaction.reply({ content: `Ticket embed has been sent to <#${ticketChannelId}>`, ephemeral: true });
-
         const ticketButton = new ButtonBuilder()
             .setLabel('Open Ticket')
             .setStyle('Primary')
             .setCustomId('open_ticket');
-
         ticketMessage.edit({ components: [new ActionRowBuilder().addComponents(ticketButton)] });
-
         const filter = i => i.customId === 'open_ticket';
         const collector = ticketMessage.createMessageComponentCollector({ filter, time: 15000 });
 
@@ -147,11 +143,9 @@ module.exports = {
                     .setDescription('This ticket will not be deleted.')
                     .setColor(green);
                     newChannel.send({ embeds: [cancelledEmbed] });
-
               });
-
             });
         });
           });
           }
-          }
+      }
