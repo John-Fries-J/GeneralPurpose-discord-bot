@@ -3,9 +3,7 @@ const { blue } = require('../colors.json');
 const config = require('../config.json');
 
 module.exports = {
-
     name: Events.InteractionCreate,
-
     async execute(interaction) {
             const channelId = `${config.logChannel}`;
             const channel = interaction.guild.channels.cache.get(channelId);
