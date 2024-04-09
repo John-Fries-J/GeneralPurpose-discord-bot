@@ -10,20 +10,20 @@ module.exports = {
             const channelId = `${config.logChannel}`;
             const channel = interaction.guild.channels.cache.get(channelId);
             if (!channel) return console.log('Log channel not found');
-            if (!interaction.commandName) {
+            if (interaction.isButton()) {
                 const logEmbed = new EmbedBuilder()
-                .setTitle(`${interaction.user.tag} ran a command`)
-                .setDescription(`${interaction.user.tag} did something to do with something. ${interaction.get}`)
+                .setTitle(`${interaction.user.tag} Clicked a button`)
+                .setDescription(`${interaction.user.tag} clicked a button in ${interaction.channel}`)
                 .setColor(blue)
                 .setTimestamp();
             channel.send({ embeds: [logEmbed] });
-            }
+            } else{
             const logEmbed = new EmbedBuilder()
                 .setTitle(`${interaction.user.tag} ran a command`)
                 .setDescription(`Command ran in ${interaction.channel}, by ${interaction.user.tag}.\nCommand: ${interaction.commandName}\n[Click here to be taken there](https://discord.com/channels/${interaction.guild.id}/${interaction.channel.id}/${interaction.id})`)
                 .setColor(blue)
                 .setTimestamp();
             channel.send({ embeds: [logEmbed] });
-    
+        }
         }
 };
