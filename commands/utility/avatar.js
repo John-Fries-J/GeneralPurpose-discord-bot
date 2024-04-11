@@ -21,7 +21,7 @@ module.exports = {
             embed.setTitle(`${interaction.user.tag}'s Avatar`);
         }
         
-        embed.setImage(user.displayAvatarURL({ dynamic: true }));
+        embed.setImage(user.avatarURL({ dynamic: true }));
         
         await interaction.reply({ embeds: [embed] });
     },

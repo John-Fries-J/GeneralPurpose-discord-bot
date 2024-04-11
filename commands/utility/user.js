@@ -15,7 +15,7 @@ module.exports = {
                 .setDescription(`**User\'s name:** ${user.tag }*(ID: ${user.id})*\n**Account Created:** ${user.createdAt.toLocaleString('en-GB', {timeZone: 'GMT', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', timeZoneName: 'short'})}\n**Joined __${interaction.guild.name}__:** ${interaction.member.joinedAt.toLocaleString('en-GB', {timeZone: 'GMT', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', timeZoneName: 'short'})}`)
                 .setColor(blue)
                 .setTimestamp()
-                .setThumbnail(user.displayAvatarURL());
+                .setThumbnail(user.avatarURL());
 
             interaction.reply({ embeds: [userEmbed] });
         }
@@ -27,7 +27,7 @@ module.exports = {
                 .setDescription(`**User\'s name:** ${user.tag} *(ID: ${user.id})* \n**Account Created:** ${user.createdAt.toLocaleString('en-GB', {timeZone: 'GMT', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', timeZoneName: 'short'})}\n**Joined __${interaction.guild.name}__:** ${interaction.member.joinedAt.toLocaleString('en-GB', {timeZone: 'GMT', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', timeZoneName: 'short'})}`)
                 .setColor(blue)
                 .setTimestamp()
-                .setThumbnail(user.displayAvatarURL());
+                .setThumbnail(user.avatarURL());
 
             interaction.reply({ embeds: [userEmbed] });
         }
