@@ -9,19 +9,19 @@
   <p align="center">
     Free easy discord bot with lots of configurable options
     <br>
-    This is still a work in progress. Once this is to a point I'm happy with will I announce this elswhere. This is a passion project so don't expect updates immediately and it might not be perfect so feel free to create issues and prs if you want to help but if I can't fix dont be a beg. Luv u.
+    This is a passion project so don't expect updates immediately and it might not be perfect so feel free to create issues and prs if you want to help but if I can't fix dont be a beg.
   </p>
 
 # IF YOU ARE HAVING ISSUES OR ANY SUPPORT QUESTIONS. JOIN MY DISCORD. https://johnfries.net/discord I have notis on for discord so I'll respond ASAP.
 
 # About The Project
 
-Some kewl features will be added here once made. 
+This bot is made with the intention of setting things up without configing beforehand. You can setup most of the channels. Roles ect via commands rather than hard code. There is no need for a database and its 2 commands to get started. Super simple for people that just want to run a bot with some cool features and forget about it. If you're wanting to create something more permenant i.e setting the ticket channel once then never touching it again. Let me know on discord and I'll create a custom repo for you that has your desired needs. Same with custom commands, If you want help setting them up let me know and I'll help on discord!
 
 Index: <br>
-<a href="#Commands"> Command List </a> <br>
-<a href="#GettingStarted"> Getting Started With the bot </a> <br>
-<a href="#Config"> Config Setup and Explanation </a><br>
+<a href="#Commands"> Command List</a> <br>
+<a href="#GettingStarted"> Getting Started With the bot</a> <br>
+<a href="#Config"> Config Setup and Explanation</a><br>
 
 
 # GettingStarted
