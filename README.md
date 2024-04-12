@@ -45,7 +45,8 @@ Utility
 * `/ping` - "Gets the ping of the bot"
 * `/user` - "Provides information about the user"
 * `/server` - "Provides information about the server"
-* `/avatar` - "Provides the users avatar or selected user" 
+* `/avatar` - "Provides the users avatar or selected user"
+* `/help [Optionally can specify the command you want more detail on]` - "Provides a list of the commands the bot has." 
 
 Ticket
 * `/ticket [embedMessageChannel] [supportRole] [ticketCategory]` - "Initiates the ticket system and sends the embed through."
