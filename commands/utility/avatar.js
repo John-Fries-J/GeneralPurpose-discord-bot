@@ -9,20 +9,16 @@ module.exports = {
     async execute(interaction) {
         let user = interaction.options.getUser('user') || interaction.user;
         let mentionedUser = interaction.options.getMember('user');
-        
         const embed = new EmbedBuilder()
             .setColor(blue)
             .setTimestamp();
-
         if (mentionedUser) {
             user = mentionedUser.user;
             embed.setTitle(`${user.tag}'s Avatar`);
         } else {
             embed.setTitle(`${interaction.user.tag}'s Avatar`);
         }
-        
         embed.setImage(user.avatarURL({ dynamic: true }));
-        
         await interaction.reply({ embeds: [embed] });
     },
 };

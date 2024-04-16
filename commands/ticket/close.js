@@ -1,5 +1,4 @@
 const { SlashCommandBuilder, PermissionsBitField, PermissionFlagsBits } = require('discord.js');
-const { blue } = require('../../colors.json');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -11,7 +10,6 @@ module.exports = {
             return await interaction.reply({ content: 'You can only use this command in a ticket channel', ephemeral: true });
         }
         const ticketUser = interaction.channel.topic;
-
         await interaction.channel.permissionOverwrites.set([
               {
               id: ticketUser,

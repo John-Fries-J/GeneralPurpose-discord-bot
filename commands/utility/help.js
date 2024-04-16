@@ -13,11 +13,9 @@ module.exports = {
         if (interaction.options.getString('command')) {
             const commandName = interaction.options.getString('command');
             const command = interaction.client.commands.get(commandName);
-
             if (!command) {
                 return await interaction.reply({ content: 'That command does not exist.', ephemeral: true });
             }
-
             const embed = new EmbedBuilder()
                 .setTitle(`Help for **${commandName}** command`)
                 .setDescription(`**Description:**\n${command.data.description}`)
@@ -27,7 +25,6 @@ module.exports = {
             await interaction.reply({ embeds: [embed] });
             return;
         }else{
-
         const commandCategories = fs.readdirSync("./commands").filter(file => fs.lstatSync(path.join("./commands", file)).isDirectory());
         const embed = new EmbedBuilder()
             .setTitle('Help 📚')
@@ -42,7 +39,6 @@ module.exports = {
             });
             embed.addFields({ name: category.charAt(0).toUpperCase() + category.slice(1), value: commands.join(', ') });
         });
-
         await interaction.reply({ embeds: [embed] });
     }
     },

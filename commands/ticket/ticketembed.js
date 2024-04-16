@@ -28,7 +28,6 @@ module.exports = {
         ticketMessage.edit({ components: [new ActionRowBuilder().addComponents(ticketButton)] });
         const filter = i => i.customId === 'open_ticket';
         const collector = ticketMessage.createMessageComponentCollector({ filter, time: 15000 });
-
         collector.on('collect', async i => {
             i.deferUpdate();
             const newChannel = await interaction.guild.channels.create(
@@ -59,10 +58,8 @@ module.exports = {
                   `Your ticket has been created, while we wait for a member of staff to respond, please provide us with some information about your issue.`
                 )
                 .setColor(green);
-
             newChannel.send(`<@${i.user.id}>, <@&${ticketRole}>`);
             const ticketedmessage = await newChannel.send({ embeds: [ticketEmbed] });
-
             const ticketedbutton = new ButtonBuilder()
                   .setStyle("Primary")
                   .setLabel("🔒")
@@ -71,7 +68,6 @@ module.exports = {
             ticketedmessage.edit({ components: [new ActionRowBuilder().addComponents(ticketedbutton)] });
             const ticketedFilter = j => j.customId === 'close_ticket' && j.user.id === i.user.id;
             const ticketedCollector = ticketedmessage.createMessageComponentCollector({ filter: ticketedFilter, time: 15000 });
-
             const newName = newChannel.name.replace('ticket-', 'closed-');
             ticketedCollector.on('collect', async j => {
                 j.deferUpdate();
@@ -109,7 +105,6 @@ module.exports = {
               closedticket.edit({ components: [new ActionRowBuilder().addComponents(deletebutton)] });
               const deleteFilter = k => k.customId === 'delete_ticket' && k.user.id === k.user.id;
               const deleteCollector = closedticket.createMessageComponentCollector({ filter: deleteFilter, time: 15000 });
-
               deleteCollector.on('collect', async k => {
                 k.deferUpdate();
                 const confirmEmbed = new EmbedBuilder()
@@ -128,14 +123,12 @@ module.exports = {
                 confirmMessage.edit({ components: [new ActionRowBuilder().addComponents(confirmbutton, cancelbutton)] });
                 const confirmFilter = l => l.customId === 'confirm_delete' && l.user.id === k.user.id;
                 const confirmCollector = confirmMessage.createMessageComponentCollector({ filter: confirmFilter, time: 15000 });
-
                 confirmCollector.on('collect', async l => {
                   l.deferUpdate();
                   newChannel.delete();
                 });
                 const cancelFilter = m => m.customId === 'cancel_delete' && m.user.id === k.user.id;
                 const cancelCollector = confirmMessage.createMessageComponentCollector({ filter: cancelFilter, time: 15000 });
-
                 cancelCollector.on('collect', async m => {
                   m.deferUpdate();
                   const cancelledEmbed = new EmbedBuilder()
