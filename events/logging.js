@@ -18,7 +18,7 @@ module.exports = {
             } else{
             const logEmbed = new EmbedBuilder()
                 .setTitle(`${interaction.user.tag} ran a command`)
-                .setDescription(`Command ran in ${interaction.channel}, by ${interaction.user.tag}.\nCommand: ${interaction.commandName}\n[Click here to be taken there](https://discord.com/channels/${interaction.guild.id}/${interaction.channel.id}/${interaction.id})`)
+                .setDescription(`Command ran in ${interaction.channel}, by ${interaction.user.tag}.\nCommand: ${interaction.commandName}\n[Go there](https://discord.com/channels/${interaction.guild.id}/${interaction.channel.id}/${interaction.id})`)
                 .setColor(blue)
                 .setTimestamp();
             channel.send({ embeds: [logEmbed] });
