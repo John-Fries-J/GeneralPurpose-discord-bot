@@ -33,4 +33,8 @@ for (const file of eventFiles) {
 		client.on(event.name, (...args) => event.execute(...args));
 	}
 }
+if (!token) {
+	console.log('[ERROR] No token provided in config.json');
+	process.exit(1);
+}
 client.login(token);
