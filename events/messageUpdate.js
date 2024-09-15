@@ -5,7 +5,7 @@ const config = require('../config.json');
 module.exports = {
     name: Events.MessageUpdate,
     async execute(oldMessage, newMessage) {
-        const channelId = config.logChannel;
+        const channelId = config.logChannels.editMessage;
         const channel = oldMessage.guild.channels.cache.get(channelId) || oldMessage.guild.channels.cache.find(ch => ch.name === 'logs');
         
         if (!channel) {

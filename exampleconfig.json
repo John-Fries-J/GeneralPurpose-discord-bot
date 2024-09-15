@@ -1,9 +1,16 @@
 {
     "token":"",
     "devs":["630070645874622494"],
-    "logChannel":"",
     "suggestChannel":"",
     "statusName": "Bot Status",
     "clientId": "",
-    "guildId": ""
+    "guildId": "",
+    "logChannels":{
+        "logChannel": "",
+        "messageDelete": "",
+        "editMessage": "",
+        "threadCreate": "",
+        "threadDelete": "",
+        "threadUpdate": ""
+    }
 }

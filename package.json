@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "description": "basic discord bot with simple commands",
   "dependencies": {
-    "discord.js": "^14.14.1"
+    "discord.js": "^14.14.1",
+    "generalpurpose-discord-bot": "file:"
   },
   "main": "index.js",
   "scripts": {

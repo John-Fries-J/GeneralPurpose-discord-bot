@@ -5,7 +5,7 @@ const config = require('../config.json');
 module.exports = {
     name: Events.ThreadUpdate,
     async execute(oldThread, newThread) {
-        const channelId = config.logChannel;
+        const channelId = config.logChannels.threadUpdate;
         const channel = oldThread.guild.channels.cache.get(channelId) || oldThread.guild.channels.cache.find(ch => ch.name === 'logs');
         
         if (!channel) {

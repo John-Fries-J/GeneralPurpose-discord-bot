@@ -5,7 +5,7 @@ const config = require('../config.json');
 module.exports = {
     name: Events.InteractionCreate,
     async execute(interaction) {
-        const channelId = `${config.logChannel}`;
+        const channelId = `${config.logChannels.logChannel}`;
         const channel = interaction.guild.channels.cache.get(channelId) || interaction.guild.channels.cache.find(channel => channel.name === 'logs');
         
         if (!channel) {
