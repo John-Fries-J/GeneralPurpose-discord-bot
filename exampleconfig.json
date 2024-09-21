@@ -12,5 +12,12 @@
         "threadCreate": "",
         "threadDelete": "",
         "threadUpdate": ""
+    },
+    "WelcomeEmbed": {
+        "title": "Welcome to the server!",
+        "description": "Welcome ${user}!\nGo to <#ChannelID> to get your roles!\nGo to <#ChannelID> to read up on the rules!",
+        "thumbnail": "https://cdn.discordapp.com/attachments/932110932245622865/932110932245622865/unknown.png",
+        "footer": "Welcome to the server!",
+        "footerIcon": "https://cdn.discordapp.com/attachments/932110932245622865/932110932245622865/unknown.png"
     }
 }
