@@ -72,6 +72,13 @@ Ticket
         "threadUpdate": ""
     }
     I set up different channels sending different log messages to allow for cleaner channels. If you dont want this then just put the same channel ID in all of the values and it will work.
+        "WelcomeEmbed": {
+        "title": "Welcome to the server!",
+        "description": "Welcome ${user}!\nGo to <#ChannelID> to get your roles!\nGo to <#ChannelID> to read up on the rules!",
+        "thumbnail": "https://cdn.discordapp.com/attachments/932110932245622865/932110932245622865/unknown.png",
+        "footer": "Welcome to the server!",
+        "footerIcon": "https://cdn.discordapp.com/attachments/932110932245622865/932110932245622865/unknown.png"
+    }
   <br>
 <br>
  
