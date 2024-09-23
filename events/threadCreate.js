@@ -12,7 +12,6 @@ module.exports = {
             console.log('Log channel not found');
             return;
         }
-
         const logEmbed = new EmbedBuilder()
             .setTitle(`Thread created in ${thread.parent.name}`)
             .setDescription(`Thread created by <@${thread.ownerId}>`)
