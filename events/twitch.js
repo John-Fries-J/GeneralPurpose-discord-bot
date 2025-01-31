@@ -96,6 +96,6 @@ module.exports = {
                 }
                 isLive = false;
             }
-        }, 300000); 
+        }, 3000); 
     }
 };
