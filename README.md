@@ -12,7 +12,7 @@
     This is a passion project so don't expect updates immediately and it might not be perfect so feel free to create issues and prs if you want to help but if I can't fix dont be a beg.
   </p>
 
-# IF YOU ARE HAVING ISSUES OR ANY SUPPORT QUESTIONS. JOIN MY DISCORD. https://johnfries.net/discord I have notis on for discord so I'll respond ASAP.
+# IF YOU ARE HAVING ISSUES OR ANY SUPPORT QUESTIONS. JOIN MY DISCORD. https://discord.gg/dCCksYzPWU I have notis on for discord so I'll respond ASAP.
 
 # About The Project
 
@@ -78,7 +78,29 @@ Ticket
         "thumbnail": "https://cdn.discordapp.com/attachments/932110932245622865/932110932245622865/unknown.png",
         "footer": "Welcome to the server!",
         "footerIcon": "https://cdn.discordapp.com/attachments/932110932245622865/932110932245622865/unknown.png"
+    },
+    ,
+    "Twitch": {
+        "ClientId": "",
+        "AccessToken": "",
+        "streamerId": "",
+        "discordChannelId": "",
+        "streamerName": ""
     }
+    This is slightly harder to setup so feel free to join my discord (https://discord.gg/dCCksYzPWU) and I can assist you with your setup. 
+    To get your twitch client ID you need to head over to https://dev.twitch.tv/login and log in with your twitch. Once there you can create an application. Your client ID is the one you need to enter in the config. To get your access token you need to run this command in your CLI (visual studio works well!):<br> 
+    ```
+    curl -X POST "https://id.twitch.tv/oauth2/token" \
+-d "client_id=YOUR_CLIENT_ID" \
+-d "client_secret=YOUR_CLIENT_SECRET" \
+-d "grant_type=client_credentials"
+```<br>
+You can then get your access token. Then to get the streamers ID you need to run this command in your CLI:<br>
+```
+curl -X GET "https://api.twitch.tv/helix/users?login=[THE STREAMERS NAME YOU WANT NOTIFS FOR]" -H "Client-ID: [clientid]" -H "Authorization: Bearer [your access token]"
+```<br>
+THIS IS CRUCIAL. THE ID IS WHAT TWICH USES TO GET THE STREAM.<br>
+once you have done that you should be all sorted and everything should be fine and dandy.
   <br>
 <br>
  
