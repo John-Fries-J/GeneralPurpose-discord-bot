@@ -19,5 +19,13 @@
         "thumbnail": "https://cdn.discordapp.com/attachments/932110932245622865/932110932245622865/unknown.png",
         "footer": "Welcome to the server!",
         "footerIcon": "https://cdn.discordapp.com/attachments/932110932245622865/932110932245622865/unknown.png"
+    },
+    "Twitch": {
+        "ClientId": "",
+        "AccessToken": "",
+        "streamerId": "",
+        "discordChannelId": "",
+        "streamerName": ""
     }
+
 }
