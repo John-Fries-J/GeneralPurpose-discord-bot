@@ -89,16 +89,16 @@ Ticket
     }
     This is slightly harder to setup so feel free to join my discord (https://discord.gg/dCCksYzPWU) and I can assist you with your setup. 
     To get your twitch client ID you need to head over to https://dev.twitch.tv/login and log in with your twitch. Once there you can create an application. Your client ID is the one you need to enter in the config. To get your access token you need to run this command in your CLI (visual studio works well!):<br> 
-    ```
+    
     curl -X POST "https://id.twitch.tv/oauth2/token" \
 -d "client_id=YOUR_CLIENT_ID" \
 -d "client_secret=YOUR_CLIENT_SECRET" \
 -d "grant_type=client_credentials"
-```<br>
+<br>
 You can then get your access token. Then to get the streamers ID you need to run this command in your CLI:<br>
-```
+
 curl -X GET "https://api.twitch.tv/helix/users?login=[THE STREAMERS NAME YOU WANT NOTIFS FOR]" -H "Client-ID: [clientid]" -H "Authorization: Bearer [your access token]"
-```<br>
+<br>
 THIS IS CRUCIAL. THE ID IS WHAT TWICH USES TO GET THE STREAM.<br>
 once you have done that you should be all sorted and everything should be fine and dandy.
   <br>
