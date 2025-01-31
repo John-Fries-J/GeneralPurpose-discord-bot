@@ -1,4 +1,4 @@
-const { Client, Intents, embedBuilder } = require('discord.js');
+const { Client, Intents, EmbedBuilder } = require('discord.js');
 const { statusName, logChannels } = require('../config.json');
 const { green } = require('../colors.json');
 
@@ -16,7 +16,7 @@ module.exports = {
         const logEmbed = new EmbedBuilder()
             .setTitle('Bot is ready')
             .setDescription('Bot is now online and ready to use')
-            .setColor(blue)
+            .setColor(green)
             .setTimestamp();
         channel.send({ embeds: [logEmbed] });
         if (!statusName) return console.log('No status name provided in config.json')
