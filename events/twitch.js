@@ -20,10 +20,19 @@ async function fetchTwitchStreamData() {
         const streamData = response.data.data[0];
 
         if (streamData && streamData.type === 'live') {
+            const userResponse = await axios.get(`https://api.twitch.tv/helix/users?id=${streamerId}`, {
+                headers: {
+                    'Client-ID': clientId,
+                    'Authorization': `Bearer ${accessToken}`
+                }
+            });
+            const profileImage = userResponse.data.data[0].profile_image_url || null;
+
             return {
                 title: streamData.title,
                 description: `Playing ${streamData.game_name}`,
-                thumbnail: streamData.thumbnail_url.replace('{width}', '320').replace('{height}', '180')
+                thumbnail: streamData.thumbnail_url.replace('{width}', '320').replace('{height}', '180'),
+                profileImage: profileImage
             };
         }
 
@@ -47,6 +56,7 @@ async function sendStreamNotification(client) {
                 .setDescription(streamData.description)
                 .setColor(purple)
                 .setImage(streamData.thumbnail)
+                .setThumbnail(streamData.profileImage)
                 .setTimestamp();
 
             channel.send({ embeds: [twitchEmbed] });
