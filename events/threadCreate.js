@@ -13,8 +13,8 @@ module.exports = {
             return;
         }
         const logEmbed = new EmbedBuilder()
-            .setTitle(`Thread created in ${thread.parent.name}`)
-            .setDescription(`Thread created by <@${thread.ownerId}>`)
+            .setTitle(`Thread created`)
+            .setDescription(`Thread ${thread.parent.name} was created by <@${thread.ownerId}>`)
             .setColor(blue)
             .setTimestamp();
         await channel.send({ embeds: [logEmbed] });

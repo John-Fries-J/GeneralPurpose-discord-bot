@@ -14,8 +14,8 @@ module.exports = {
         }
 
         const logEmbed = new EmbedBuilder()
-            .setTitle(`Message edited in ${oldMessage.channel.name}`)
-            .setDescription(`Message edited by ${oldMessage.author.tag}\nOld message: ${oldMessage.content}\nNew message: ${newMessage.content}`)
+            .setTitle(`Message edited in #${oldMessage.channel.name}`)
+            .setDescription(`Message edited by ${oldMessage.author.tag}\nOld message: ${oldMessage.content}\nNew message: ${newMessage.content}\n[Jump to message](${newMessage.url})`)
             .setColor(blue)
             .setTimestamp();
         await channel.send({ embeds: [logEmbed] });
