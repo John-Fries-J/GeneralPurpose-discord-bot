@@ -2,7 +2,6 @@ const { SlashCommandBuilder } = require('@discordjs/builders');
 const { EmbedBuilder } = require('@discordjs/builders');
 const { blue } = require('../../colors.json');
 const { suggestionID } = require('../../config.json');
-const fs = require('fs');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -19,11 +18,19 @@ module.exports = {
             .setTimestamp()
             .setColor(parseInt(blue.replace('#', ''), 16))
             .setFooter({ text: 'Suggested by ' + user.tag });
+
         try {
             const suggestionChannel = await interaction.client.channels.fetch(suggestionID);
             const message = await suggestionChannel.send({ embeds: [embed] });
+            
             await message.react('✅'); 
-            await message.react('❌'); 
+            await message.react('❌');
+            
+            await message.startThread({
+                name: `Suggestion by ${user.tag}`,
+                reason: 'Creating a thread for the suggestion.'
+            });
+            
             await interaction.reply({ content: 'Your suggestion has been submitted!', ephemeral: true });
         } catch (error) {
             console.error('Error sending suggestion:', error);
