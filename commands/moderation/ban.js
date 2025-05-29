@@ -6,7 +6,6 @@ module.exports = {
         .setName('ban')
         .setDescription('Bans a user from the server')
         .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers)
-        .setDMPermission(false)
         .addUserOption(option => option.setName('user').setDescription('The user to ban').setRequired(true))
         .addStringOption(option => option.setName('reason').setDescription('The reason for the ban'))
         .addStringOption(option => option.setName('duration').setDescription('The duration of the ban (e.g., 1d, 1h)').setRequired(false)),
@@ -63,20 +62,38 @@ function parseDuration(duration) {
 
     switch (unit) {
         case 's':
+        case 'sec':
+        case 'secs':
+        case 'second':
+        case 'seconds':
             return value * 1000;
         case 'm':
+        case 'min':
+        case 'mins':
+        case 'minute':
+        case 'minutes':
             return value * 60 * 1000;
         case 'h':
+        case 'hr':
+        case 'hrs':
+        case 'hour':
+        case 'hours':
             return value * 60 * 60 * 1000;
         case 'd':
+        case 'day':
+        case 'days':
             return value * 24 * 60 * 60 * 1000;
         case 'w':
+        case 'week':
+        case 'weeks':
             return value * 7 * 24 * 60 * 60 * 1000;
         case 'mo':
         case 'mon':
+        case 'month':
         case 'mons':
             return value * 30 * 24 * 60 * 60 * 1000;
         case 'y':
+        case 'year':
         case 'yr':
         case 'yrs':
             return value * 365 * 24 * 60 * 60 * 1000;
