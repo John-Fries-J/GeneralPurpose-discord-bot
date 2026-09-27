@@ -1,6 +1,7 @@
 const { Events } = require('discord.js');
 const language = require('../utils/language');
 const { safeReply } = require('../utils/discord');
+const { memberCanUseCommand } = require('../utils/permissions');
 
 module.exports = {
     name: Events.InteractionCreate,
@@ -12,6 +13,10 @@ module.exports = {
         if (!command) {
             console.error(`No command matching ${interaction.commandName} was found.`);
             return;
+        }
+
+        if (!memberCanUseCommand(interaction, command)) {
+            return interaction.reply({ content: 'You do not have permission to use this command.', ephemeral: true });
         }
 
         try {

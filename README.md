@@ -166,6 +166,7 @@ npm test
 - `config.json` is ignored by git so tokens and server IDs stay local.
 - Slash commands refresh automatically when the bot becomes ready.
 - No database is required; setup commands save the IDs they need into `config.json`.
+- Privileged slash commands use Discord default member permissions, so Discord hides them from users without the required server permission. Discord applies this at the command level, not per subcommand.
 
 ## Author
 

@@ -1,6 +1,7 @@
 const { SlashCommandBuilder } = require('discord.js');
 const language = require('../../utils/language');
 const { createEmbed } = require('../../utils/embeds');
+const { memberCanUseCommand } = require('../../utils/permissions');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -15,6 +16,10 @@ module.exports = {
         if (commandName) {
             const command = commands.get(commandName);
             if (!command) {
+                return interaction.reply({ content: language.help.missingCommand, ephemeral: true });
+            }
+
+            if (!memberCanUseCommand(interaction, command)) {
                 return interaction.reply({ content: language.help.missingCommand, ephemeral: true });
             }
 
@@ -39,6 +44,8 @@ module.exports = {
 
         const categories = new Map();
         for (const command of commands.values()) {
+            if (!memberCanUseCommand(interaction, command)) continue;
+
             const category = command.category || 'General';
             const current = categories.get(category) || [];
             current.push(`**/${command.data.name}:** ${command.data.description}`);

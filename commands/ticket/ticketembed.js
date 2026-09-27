@@ -12,6 +12,7 @@ module.exports = {
         .setName('ticket')
         .setDescription('Ticket setup and ticket management.')
         .setDMPermission(false)
+        .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
         .addSubcommand(subcommand =>
             subcommand
                 .setName('setup')
@@ -57,10 +58,6 @@ module.exports = {
         const subcommand = interaction.options.getSubcommand();
 
         if (subcommand === 'setup') {
-            if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
-                return interaction.reply({ content: 'You need Administrator permission to set up tickets.', ephemeral: true });
-            }
-
             return createTicketPanel(
                 interaction,
                 interaction.options.getChannel('channel', true),

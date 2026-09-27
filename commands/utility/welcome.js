@@ -1,4 +1,4 @@
-const { SlashCommandBuilder } = require('discord.js');
+const { PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
 const language = require('../../utils/language');
 const { createEmbed } = require('../../utils/embeds');
 const { formatTemplate } = require('../../utils/template');
@@ -25,6 +25,7 @@ module.exports = {
         .setName('welcome')
         .setDescription('Sends the welcome embed.')
         .setDMPermission(false)
+        .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
         .addUserOption(option => option.setName('user').setDescription('Ping the user with the message.')),
 
     async execute(interaction) {
