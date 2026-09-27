@@ -11,4 +11,37 @@ function loadLanguage() {
     }
 }
 
-module.exports = loadLanguage();
+function saveLanguage(language) {
+    if (!language || typeof language !== 'object' || Array.isArray(language)) {
+        throw new Error('language.json must be a JSON object.');
+    }
+
+    fs.writeFileSync(languagePath, `${JSON.stringify(language, null, 4)}\n`);
+    return language;
+}
+
+const api = {
+    languagePath,
+    loadLanguage,
+    saveLanguage,
+};
+
+module.exports = new Proxy(api, {
+    get(target, property) {
+        if (property in target) return target[property];
+        return loadLanguage()[property];
+    },
+    ownKeys() {
+        return Reflect.ownKeys(loadLanguage());
+    },
+    getOwnPropertyDescriptor(target, property) {
+        if (property in target) {
+            return Object.getOwnPropertyDescriptor(target, property);
+        }
+
+        return {
+            enumerable: true,
+            configurable: true,
+        };
+    },
+});

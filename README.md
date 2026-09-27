@@ -114,7 +114,7 @@ The dashboard is intentionally simple and disabled by default.
 5. Set `dashboard.oauth.clientId` and `dashboard.oauth.clientSecret`, or use the environment variables shown above.
 6. Start the bot and open `http://localhost:3000`.
 
-Dashboard access requires Discord OAuth. Users can manage it if they are listed in `devs` or have `Manage Server` in the configured `guildId`. The panel can edit `config.json`, toggle modules, toggle individual commands, and view recent bot/dashboard logs. Disabled commands are blocked immediately; restart the bot to refresh Discord's visible slash command list.
+Dashboard access requires Discord OAuth. Users can manage it if they are listed in `devs` or have `Manage Server` in the configured `guildId`. The panel can edit `config.json`, toggle modules, toggle individual commands, set per-command user/role access rules, edit `language.json` response text, send messages through the bot, and view recent bot/dashboard logs. Disabled commands are blocked immediately; restart the bot to refresh Discord's visible slash command list.
 
 The dashboard exposes `GET /health` for deployment checks. It returns process uptime, Discord readiness, and the number of cached guilds.
 

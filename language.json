@@ -68,5 +68,11 @@
     "status": {
         "readyTitle": "Bot is ready",
         "readyDescription": "Bot is now online and ready to use."
+    },
+    "dashboard": {
+        "saved": "Changes saved.",
+        "messageSent": "Message sent.",
+        "messageFailed": "Discord rejected the message. Check the bot permissions and message content.",
+        "invalidJson": "The JSON could not be saved. Check the formatting and try again."
     }
 }

@@ -14,6 +14,7 @@ function isCommandEnabled(command, config = getConfig()) {
 
 function getCommandSettings(config = getConfig()) {
     return {
+        access: config.commandSettings?.access || {},
         modules: config.commandSettings?.modules || {},
         commands: config.commandSettings?.commands || {},
     };

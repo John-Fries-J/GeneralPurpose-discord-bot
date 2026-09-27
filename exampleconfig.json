@@ -90,7 +90,8 @@
     },
     "commandSettings": {
         "modules": {},
-        "commands": {}
+        "commands": {},
+        "access": {}
     },
     "moderation": {
         "muteRoleId": "",

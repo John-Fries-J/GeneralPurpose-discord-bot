@@ -168,6 +168,24 @@ function validateConfig(config, options = {}) {
             if (config.commandSettings.commands !== undefined && !isPlainObject(config.commandSettings.commands)) {
                 errors.push('commandSettings.commands must be an object.');
             }
+            if (config.commandSettings.access !== undefined) {
+                if (!isPlainObject(config.commandSettings.access)) {
+                    errors.push('commandSettings.access must be an object.');
+                } else {
+                    for (const [commandName, access] of Object.entries(config.commandSettings.access)) {
+                        if (!isPlainObject(access)) {
+                            errors.push(`commandSettings.access.${commandName} must be an object.`);
+                            continue;
+                        }
+
+                        for (const key of ['allowRoleIds', 'allowUserIds', 'denyRoleIds', 'denyUserIds']) {
+                            if (access[key] !== undefined && (!Array.isArray(access[key]) || !access[key].every(item => typeof item === 'string'))) {
+                                errors.push(`commandSettings.access.${commandName}.${key} must be an array of strings.`);
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
