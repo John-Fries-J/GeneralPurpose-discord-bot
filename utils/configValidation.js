@@ -72,6 +72,18 @@ function validateConfig(config, options = {}) {
         }
     }
 
+    if (config.honeypot !== undefined) {
+        if (!isPlainObject(config.honeypot)) {
+            errors.push('honeypot must be an object.');
+        } else {
+            if (config.honeypot.enabled !== undefined && typeof config.honeypot.enabled !== 'boolean') {
+                errors.push('honeypot.enabled must be a boolean.');
+            }
+            validateString(errors, config, 'honeypot.channelId');
+            validateString(errors, config, 'honeypot.alertChannelId');
+        }
+    }
+
     if (config.database !== undefined) {
         if (!isPlainObject(config.database)) {
             errors.push('database must be an object.');

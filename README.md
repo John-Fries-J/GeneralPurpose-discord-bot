@@ -195,6 +195,15 @@ Config:
 - `/config set-log-channel type channel` updates a log channel.
 - `/autorole set role` sets the join autorole.
 - `/autorole clear` clears join autoroles.
+- `/honeypot configure channel alert_channel` enables the scam honeypot.
+- `/honeypot disable` disables the honeypot.
+- `/honeypot view` shows honeypot settings.
+
+Honeypot:
+
+- Messages in the configured honeypot channel are deleted with up to 10 recent messages from the same user in that channel.
+- A scam alert embed is sent to the alert channel with Softban, Ban, and Ignore buttons.
+- Softban and Ban use the reason `Scam` and update the alert embed after action.
 
 ## Editing Text
 

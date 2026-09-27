@@ -30,6 +30,11 @@
         "autoRoleId": "",
         "autoRoleIds": []
     },
+    "honeypot": {
+        "enabled": false,
+        "channelId": "",
+        "alertChannelId": ""
+    },
     "dashboard": {
         "enabled": false,
         "host": "0.0.0.0",
