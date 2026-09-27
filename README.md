@@ -92,26 +92,51 @@ Moderation:
 - `/mute user duration reason` times out a user.
 - `/unmute user` removes a timeout.
 - `/purge amount` deletes 1 to 100 recent messages.
+- `/slowmode channel seconds reason` sets channel slowmode.
+- `/lock channel reason` locks a channel for everyone.
+- `/unlock channel reason` unlocks a channel.
+- `/nick user nickname reason` changes or clears a nickname.
+- `/role add user role reason` adds a role.
+- `/role remove user role reason` removes a role.
 
 Utility:
 
 - `/ping` shows bot websocket ping.
 - `/user user` shows user information.
+- `/userinfo id` looks up a user by Discord ID.
 - `/server` shows server information.
-- `/avatar user` shows a user's avatar.
+- `/serverstats` shows server stats.
+- `/avatar user user` shows a user's avatar.
+- `/avatar server` shows the server icon.
 - `/member role` lists members with a role.
 - `/welcome user` sends the configured welcome embed.
 - `/help command` lists commands or shows details for one command.
+- `/poll question option1 option2 ...` creates a native Discord poll.
+- `/announce channel message` sends an announcement embed.
+- `/remindme duration message` sends you a DM reminder.
 
 Tickets:
 
-- `/ticket channel role category` posts the ticket panel and saves ticket settings to `config.json`.
+- `/ticket setup channel role category` posts the ticket panel and saves ticket settings to `config.json`.
+- `/ticket add user` adds a user to the current ticket.
+- `/ticket remove user` removes a user from the current ticket.
+- `/ticket rename name` renames the current ticket.
+- `/ticket transcript` generates a ticket transcript.
 - `/close` closes the current ticket channel.
 - `/delete` deletes a closed ticket channel.
 
 Suggestions:
 
 - `/suggest suggestion` sends a suggestion, adds vote reactions, and starts a thread.
+- `/suggestion approve message_id reason` approves a suggestion.
+- `/suggestion deny message_id reason` denies a suggestion.
+
+Config:
+
+- `/config view` shows a safe config summary.
+- `/config set-log-channel type channel` updates a log channel.
+- `/autorole set role` sets the join autorole.
+- `/autorole clear` clears join autoroles.
 
 ## Editing Text
 

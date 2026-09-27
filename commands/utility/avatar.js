@@ -4,10 +4,36 @@ const { createEmbed } = require('../../utils/embeds');
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('avatar')
-        .setDescription('Provides the avatar of the user or mentioned user.')
-        .addUserOption(option => option.setName('user').setDescription('The user to get the avatar of.')),
+        .setDescription('Shows a user or server avatar.')
+        .setDMPermission(false)
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('user')
+                .setDescription('Shows a user avatar.')
+                .addUserOption(option => option.setName('user').setDescription('The user to get the avatar of.')))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('server')
+                .setDescription('Shows the server icon.')),
 
     async execute(interaction) {
+        const subcommand = interaction.options.getSubcommand();
+
+        if (subcommand === 'server') {
+            const icon = interaction.guild.iconURL({ size: 1024 });
+            if (!icon) {
+                return interaction.reply({ content: 'This server does not have an icon.', ephemeral: true });
+            }
+
+            const embed = createEmbed({
+                title: `${interaction.guild.name}'s Icon`,
+                image: icon,
+                color: 'blue',
+            });
+
+            return interaction.reply({ embeds: [embed] });
+        }
+
         const user = interaction.options.getUser('user') || interaction.user;
         const embed = createEmbed({
             title: `${user.tag}'s Avatar`,
@@ -15,6 +41,6 @@ module.exports = {
             color: 'blue',
         });
 
-        await interaction.reply({ embeds: [embed] });
+        return interaction.reply({ embeds: [embed] });
     },
 };

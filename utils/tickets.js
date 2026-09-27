@@ -204,6 +204,129 @@ async function buildTranscript(channel) {
     });
 }
 
+async function sendTicketTranscript(interaction) {
+    const ticketConfig = getTicketConfig();
+    const channel = interaction.channel;
+
+    if (!channel?.name?.startsWith('ticket-') && !channel?.name?.startsWith('closed-')) {
+        return interaction.reply({ content: language.tickets.notTicket, ephemeral: true });
+    }
+
+    if (!userCanManageTicket(interaction, ticketConfig)) {
+        return interaction.reply({ content: language.tickets.noPermission, ephemeral: true });
+    }
+
+    const transcript = await buildTranscript(channel);
+    if (!transcript) {
+        return interaction.reply({ content: 'No messages were found to transcript.', ephemeral: true });
+    }
+
+    return interaction.reply({ content: 'Ticket transcript generated.', files: [transcript], ephemeral: true });
+}
+
+async function addTicketUser(interaction, user) {
+    const ticketConfig = getTicketConfig();
+    const channel = interaction.channel;
+
+    if (!channel?.name?.startsWith('ticket-') && !channel?.name?.startsWith('closed-')) {
+        return interaction.reply({ content: language.tickets.notTicket, ephemeral: true });
+    }
+
+    if (!userCanManageTicket(interaction, ticketConfig)) {
+        return interaction.reply({ content: language.tickets.noPermission, ephemeral: true });
+    }
+
+    await channel.permissionOverwrites.edit(user.id, {
+        ViewChannel: true,
+        SendMessages: true,
+        ReadMessageHistory: true,
+    });
+
+    await sendLog(interaction.guild, {
+        type: 'ticket',
+        title: 'User added to ticket',
+        color: 'green',
+        fields: [
+            { name: 'Ticket', value: `<#${channel.id}>`, inline: true },
+            { name: 'User', value: formatUser(user), inline: true },
+            { name: 'Added by', value: formatUser(interaction.user), inline: true },
+        ],
+    }).catch(() => null);
+
+    return interaction.reply({ content: `<@${user.id}> has been added to this ticket.`, ephemeral: true });
+}
+
+async function removeTicketUser(interaction, user) {
+    const ticketConfig = getTicketConfig();
+    const channel = interaction.channel;
+
+    if (!channel?.name?.startsWith('ticket-') && !channel?.name?.startsWith('closed-')) {
+        return interaction.reply({ content: language.tickets.notTicket, ephemeral: true });
+    }
+
+    if (!userCanManageTicket(interaction, ticketConfig)) {
+        return interaction.reply({ content: language.tickets.noPermission, ephemeral: true });
+    }
+
+    await channel.permissionOverwrites.delete(user.id).catch(async () => {
+        await channel.permissionOverwrites.edit(user.id, { ViewChannel: false });
+    });
+
+    await sendLog(interaction.guild, {
+        type: 'ticket',
+        title: 'User removed from ticket',
+        color: 'orange',
+        fields: [
+            { name: 'Ticket', value: `<#${channel.id}>`, inline: true },
+            { name: 'User', value: formatUser(user), inline: true },
+            { name: 'Removed by', value: formatUser(interaction.user), inline: true },
+        ],
+    }).catch(() => null);
+
+    return interaction.reply({ content: `<@${user.id}> has been removed from this ticket.`, ephemeral: true });
+}
+
+async function renameTicket(interaction, name) {
+    const ticketConfig = getTicketConfig();
+    const channel = interaction.channel;
+
+    if (!channel?.name?.startsWith('ticket-') && !channel?.name?.startsWith('closed-')) {
+        return interaction.reply({ content: language.tickets.notTicket, ephemeral: true });
+    }
+
+    if (!userCanManageTicket(interaction, ticketConfig)) {
+        return interaction.reply({ content: language.tickets.noPermission, ephemeral: true });
+    }
+
+    const prefix = channel.name.startsWith('closed-') ? 'closed-' : 'ticket-';
+    const safeName = name
+        .toLowerCase()
+        .replace(/[^a-z0-9-]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '')
+        .slice(0, 80);
+
+    if (!safeName) {
+        return interaction.reply({ content: 'Please provide a valid ticket name.', ephemeral: true });
+    }
+
+    const oldName = channel.name;
+    await channel.setName(`${prefix}${safeName}`);
+
+    await sendLog(interaction.guild, {
+        type: 'ticket',
+        title: 'Ticket renamed',
+        color: 'blue',
+        fields: [
+            { name: 'Old name', value: oldName, inline: true },
+            { name: 'New name', value: channel.name, inline: true },
+            { name: 'Renamed by', value: formatUser(interaction.user), inline: true },
+        ],
+    }).catch(() => null);
+
+    return interaction.reply({ content: `Ticket renamed to ${channel.name}.`, ephemeral: true });
+}
+
 async function closeTicket(interaction) {
     const ticketConfig = getTicketConfig();
     const channel = interaction.channel;
@@ -291,10 +414,14 @@ async function deleteTicket(interaction) {
 }
 
 module.exports = {
+    addTicketUser,
     closeTicket,
     createTicketPanel,
     customIds,
     deleteTicket,
     getTicketConfig,
     openTicket,
+    removeTicketUser,
+    renameTicket,
+    sendTicketTranscript,
 };
