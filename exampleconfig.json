@@ -43,7 +43,7 @@
         }
     },
     "database": {
-        "provider": "json",
+        "provider": "sqlite",
         "jsonPath": "data/bot-state.json",
         "sqlitePath": "data/bot.sqlite",
         "mysql": {

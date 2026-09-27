@@ -125,9 +125,9 @@ Useful dashboard environment variables:
 
 ## Database / State Storage
 
-No external database is required. The bot ships with JSON storage at `data/bot-state.json`, which is enough for small servers and makes Docker easy when `data/` is mounted.
+No external database is required. The bot uses SQLite at `data/bot.sqlite` by default, which keeps moderation state local while avoiding fragile direct JSON writes.
 
-For bigger installs, SQLite is the best next step because it stays local and needs no separate service. MySQL and MongoDB are also reasonable options if you already run them. The example config includes optional `sqlitePath`, `mysql.url`, and `mongo.url` fields so the deployment shape is clear, but the current plug-and-play adapter is JSON.
+Existing small installs can still use JSON storage by setting `database.provider` to `json`; the JSON file lives at `data/bot-state.json`. MySQL and MongoDB fields remain in the example config as deployment placeholders, but the included adapters are SQLite and JSON.
 
 ## Commands
 

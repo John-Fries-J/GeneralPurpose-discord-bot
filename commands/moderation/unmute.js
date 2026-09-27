@@ -22,10 +22,10 @@ module.exports = {
             return interaction.reply({ content: target.message === language.moderation.cannotModerateUser ? language.moderation.cannotUnmute : target.message, ephemeral: true });
         }
 
-        const muteRecord = getTempMute(interaction.guild.id, user.id);
+        const muteRecord = await getTempMute(interaction.guild.id, user.id);
         const muteRole = await getOrCreateMuteRole(interaction.guild);
         const restoredRoleIds = await restoreMutedMember(target.member, muteRole, muteRecord?.removedRoleIds || [], reason);
-        removeTempMute(interaction.guild.id, user.id);
+        await removeTempMute(interaction.guild.id, user.id);
 
         const embed = createEmbed({
             title: 'User Unmuted',

@@ -63,7 +63,7 @@ module.exports = {
 
         if (duration) {
             const durationInMs = parseDuration(duration);
-            upsertTempBan({
+            await upsertTempBan({
                 guildId: interaction.guild.id,
                 userId: user.id,
                 reason,

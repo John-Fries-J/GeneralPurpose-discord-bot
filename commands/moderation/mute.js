@@ -34,7 +34,7 @@ module.exports = {
         const removedRoleIds = await muteMemberWithRole(target.member, muteRole);
         const expiresAt = Date.now() + durationInMs;
 
-        upsertTempMute({
+        await upsertTempMute({
             guildId: interaction.guild.id,
             userId: user.id,
             reason,

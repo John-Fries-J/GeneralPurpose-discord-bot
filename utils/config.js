@@ -43,6 +43,10 @@ function getConfig() {
         config.database = config.database || {};
         config.database.jsonPath = process.env.DATABASE_JSON_PATH;
     }
+    if (process.env.DATABASE_SQLITE_PATH) {
+        config.database = config.database || {};
+        config.database.sqlitePath = process.env.DATABASE_SQLITE_PATH;
+    }
 
     return config;
 }
