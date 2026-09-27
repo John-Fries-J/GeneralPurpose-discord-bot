@@ -1,4 +1,6 @@
 const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
 const express = require('express');
 const { ChannelType, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const { getConfig, getStoredConfig, saveConfig, updateConfig } = require('../utils/config');
@@ -7,6 +9,20 @@ const { appendDashboardLog, clearDashboardLogs, readDashboardLogs } = require('.
 const { getCommandSettings } = require('../utils/features');
 const language = require('../utils/language');
 const { getCommandAccess, normalizeIdList } = require('../utils/permissions');
+const {
+    createScheduledMessage,
+    deleteEmbedTemplate,
+    listCommandStats,
+    listEmbedTemplates,
+    listModerationCases,
+    listModNotes,
+    listScheduledMessages,
+    listTempVoiceChannelsForGuild,
+    listTicketRecords,
+    listVoiceActivity,
+    readState,
+    upsertEmbedTemplate,
+} = require('../utils/store');
 
 const states = new Map();
 const sessionMaxAgeMs = 30 * 24 * 60 * 60 * 1000;
@@ -291,6 +307,83 @@ function formatIdList(value) {
     return normalizeIdList(value).join(', ');
 }
 
+function parseEmbedColor(value) {
+    const color = String(value || '').trim();
+    if (!color) return 0x5865f2;
+    if (/^#[0-9a-f]{6}$/i.test(color)) return Number.parseInt(color.slice(1), 16);
+    if (/^[0-9a-f]{6}$/i.test(color)) return Number.parseInt(color, 16);
+    return 0x5865f2;
+}
+
+function parseEmbedFields(value) {
+    return String(value || '')
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .filter(Boolean)
+        .map(line => {
+            const [name, ...rest] = line.split('|');
+            return {
+                name: (name || 'Field').trim().slice(0, 256),
+                value: (rest.join('|') || 'No value').trim().slice(0, 1024),
+                inline: false,
+            };
+        })
+        .slice(0, 25);
+}
+
+function buildDashboardMessagePayload(body) {
+    const content = String(body.content || '').trim();
+    const embedTitle = String(body.embedTitle || '').trim();
+    const embedDescription = String(body.embedDescription || '').trim();
+    const embedUrl = String(body.embedUrl || '').trim();
+    const embedThumbnail = String(body.embedThumbnail || '').trim();
+    const embedImage = String(body.embedImage || '').trim();
+    const embedFooter = String(body.embedFooter || '').trim();
+    const embedFields = parseEmbedFields(body.embedFields);
+    const hasEmbed = embedTitle || embedDescription || embedUrl || embedThumbnail || embedImage || embedFooter || embedFields.length;
+    const payload = {};
+
+    if (content) payload.content = content;
+    if (hasEmbed) {
+        const embed = {
+            color: parseEmbedColor(body.embedColor),
+            title: embedTitle,
+            description: embedDescription,
+            url: embedUrl,
+            thumbnail: embedThumbnail,
+            image: embedImage,
+            footer: embedFooter,
+            fields: embedFields,
+        };
+        payload.embed = embed;
+        payload.embeds = [new EmbedBuilder().setColor(embed.color)];
+        if (embed.title) payload.embeds[0].setTitle(embed.title);
+        if (embed.description) payload.embeds[0].setDescription(embed.description);
+        if (embed.url) payload.embeds[0].setURL(embed.url);
+        if (embed.thumbnail) payload.embeds[0].setThumbnail(embed.thumbnail);
+        if (embed.image) payload.embeds[0].setImage(embed.image);
+        if (embed.footer) payload.embeds[0].setFooter({ text: embed.footer });
+        if (embed.fields.length) payload.embeds[0].addFields(embed.fields);
+    }
+
+    return payload;
+}
+
+function buildEmbedFromTemplate(embed) {
+    if (!embed) return null;
+
+    const builder = new EmbedBuilder();
+    if (embed.color) builder.setColor(embed.color);
+    if (embed.title) builder.setTitle(embed.title);
+    if (embed.description) builder.setDescription(embed.description);
+    if (embed.url) builder.setURL(embed.url);
+    if (embed.thumbnail) builder.setThumbnail(embed.thumbnail);
+    if (embed.image) builder.setImage(embed.image);
+    if (embed.footer) builder.setFooter({ text: embed.footer });
+    if (Array.isArray(embed.fields) && embed.fields.length) builder.addFields(embed.fields.slice(0, 25));
+    return builder;
+}
+
 function getEditableLanguageValues(source) {
     const { watermark, ...editable } = source;
     return editable;
@@ -301,11 +394,22 @@ function renderLayout(title, body, user = null, client = null, active = 'overvie
     const botName = client?.user?.username || 'Bot Dashboard';
     const navItems = [
         ['overview', 'Overview', '/'],
+        ['audit', 'Audit', '/audit'],
+        ['analytics', 'Analytics', '/analytics'],
+        ['health', 'Health', '/health-page'],
         ['modules', 'Modules', '/modules'],
         ['commands', 'Commands', '/commands'],
+        ['moderation', 'Moderation', '/moderation'],
+        ['tickets', 'Tickets', '/tickets'],
+        ['community', 'Community', '/community'],
+        ['leveling', 'Leveling', '/leveling'],
+        ['voice', 'Voice', '/voice'],
+        ['media', 'Media', '/media'],
+        ['music', 'Music', '/music'],
         ['language', 'Language', '/language'],
         ['sender', 'Sender', '/sender'],
         ['config', 'Config', '/config'],
+        ['backups', 'Backups', '/backups'],
         ['logs', 'Logs', '/logs'],
     ];
 
@@ -427,6 +531,12 @@ document.querySelectorAll('[data-copy]').forEach(button => {
         setTimeout(() => { button.textContent = button.dataset.copyLabel || 'Copy'; }, 900);
     });
 });
+document.querySelector('[data-audit-filter]')?.addEventListener('input', event => {
+    const query = event.target.value.trim().toLowerCase();
+    document.querySelectorAll('[data-audit-type]').forEach(entry => {
+        entry.style.display = !query || entry.textContent.toLowerCase().includes(query) || entry.dataset.auditType.toLowerCase().includes(query) ? '' : 'none';
+    });
+});
 const messageForm = document.querySelector('[data-message-form]');
 if (messageForm) {
     const renderPreview = () => {
@@ -456,26 +566,112 @@ ${csrfInput(session)}
 </form>`;
 }
 
+function renderRoleMultiSelect(name, roles, selectedIds) {
+    const selected = new Set(normalizeIdList(selectedIds));
+    return `<select name="${escapeHtml(name)}" multiple size="6">
+${roles.map(role => `<option value="${escapeHtml(role.id)}" ${selected.has(role.id) ? 'selected' : ''}>${escapeHtml(role.name)}</option>`).join('')}
+</select>`;
+}
+
 function renderAccessForm(command, settings, roles, session) {
     const commandName = command.data.name;
     const access = getCommandAccess(commandName, { commandSettings: settings });
-    const roleHint = roles.slice(0, 6).map(role => `${role.name}: ${role.id}`).join(' | ');
 
     return `<form method="post" action="/command-access" class="access-form">
 ${csrfInput(session)}
 <input type="hidden" name="command" value="${escapeHtml(commandName)}">
 <div class="access-grid">
 <label>Allowed users<input name="allowUserIds" value="${escapeHtml(formatIdList(access.allowUserIds))}" placeholder="User IDs, comma separated"></label>
-<label>Allowed roles<input name="allowRoleIds" value="${escapeHtml(formatIdList(access.allowRoleIds))}" placeholder="Role IDs, comma separated"></label>
+<label>Allowed roles${renderRoleMultiSelect('allowRoleIds', roles, access.allowRoleIds)}</label>
 <label>Blocked users<input name="denyUserIds" value="${escapeHtml(formatIdList(access.denyUserIds))}" placeholder="User IDs, comma separated"></label>
-<label>Blocked roles<input name="denyRoleIds" value="${escapeHtml(formatIdList(access.denyRoleIds))}" placeholder="Role IDs, comma separated"></label>
+<label>Blocked roles${renderRoleMultiSelect('denyRoleIds', roles, access.denyRoleIds)}</label>
 </div>
-${roleHint ? `<p class="muted">Role IDs: ${escapeHtml(roleHint)}</p>` : ''}
 <p><button class="secondary" type="submit">Save access</button></p>
 </form>`;
 }
 
-function renderDashboard(client, session, notice = '', page = 'overview') {
+function summarizeCounts(items, keySelector, limit = 10) {
+    const counts = new Map();
+    for (const item of items) {
+        const key = keySelector(item);
+        if (!key) continue;
+        counts.set(key, (counts.get(key) || 0) + 1);
+    }
+
+    return [...counts.entries()]
+        .sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))
+        .slice(0, limit);
+}
+
+function renderCountRows(rows, emptyText = 'No data yet.') {
+    return rows.length
+        ? rows.map(([label, count]) => `<div class="row"><span>${escapeHtml(label)}</span><strong>${escapeHtml(count)}</strong></div>`).join('')
+        : `<p class="muted">${escapeHtml(emptyText)}</p>`;
+}
+
+function getConfigBackupDirectory() {
+    return path.resolve(__dirname, '..', 'data', 'config-backups');
+}
+
+function listConfigBackups() {
+    const directory = getConfigBackupDirectory();
+    if (!fs.existsSync(directory)) return [];
+
+    return fs.readdirSync(directory)
+        .filter(file => /^config-\d{4}-\d{2}-\d{2}T/.test(file) && file.endsWith('.json'))
+        .map(file => {
+            const fullPath = path.join(directory, file);
+            return { file, fullPath, createdAt: fs.statSync(fullPath).mtimeMs };
+        })
+        .sort((a, b) => b.createdAt - a.createdAt);
+}
+
+function createConfigBackup(label = 'manual') {
+    const directory = getConfigBackupDirectory();
+    fs.mkdirSync(directory, { recursive: true });
+    const safeLabel = String(label || 'manual').replace(/[^a-z0-9-]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'manual';
+    const file = `config-${new Date().toISOString().replace(/[:.]/g, '-')}-${safeLabel}.json`;
+    const fullPath = path.join(directory, file);
+    fs.writeFileSync(fullPath, `${JSON.stringify(getStoredConfig(), null, 4)}\n`);
+    return file;
+}
+
+function restoreConfigBackup(file) {
+    const backup = listConfigBackups().find(item => item.file === file);
+    if (!backup) throw new Error('Backup was not found.');
+
+    const parsed = JSON.parse(fs.readFileSync(backup.fullPath, 'utf8'));
+    const errors = validateConfig(parsed);
+    if (errors.length) throw new Error(errors.join('\n'));
+    saveConfig(parsed);
+}
+
+function renderJsonEditorPanel(title, description, action, session, object) {
+    return `<section class="panel">
+<h2>${escapeHtml(title)}</h2>
+<p class="muted">${escapeHtml(description)}</p>
+<form method="post" action="${escapeHtml(action)}">
+${csrfInput(session)}
+<textarea class="config-json" name="json">${escapeHtml(JSON.stringify(object || {}, null, 4))}</textarea>
+<p><button class="success" type="submit">Save ${escapeHtml(title)}</button></p>
+</form>
+</section>`;
+}
+
+function renderConfigSectionEditor(section, title, description, session, object) {
+    return `<section class="panel">
+<h2>${escapeHtml(title)}</h2>
+<p class="muted">${escapeHtml(description)}</p>
+<form method="post" action="/config-section">
+${csrfInput(session)}
+<input type="hidden" name="section" value="${escapeHtml(section)}">
+<textarea class="config-json" name="json">${escapeHtml(JSON.stringify(object || {}, null, 4))}</textarea>
+<p><button class="success" type="submit">Save ${escapeHtml(title)}</button></p>
+</form>
+</section>`;
+}
+
+async function renderDashboard(client, session, notice = '', page = 'overview') {
     const config = getStoredConfig();
     const redactedConfig = redactSensitiveConfig(config);
     const settings = getCommandSettings(config);
@@ -487,6 +683,20 @@ function renderDashboard(client, session, notice = '', page = 'overview') {
     const channels = getSendableChannels(client);
     const roles = getGuildRoles(client);
     const avatar = getBotAvatar(client);
+    const dashboardGuild = getDashboardGuild(client);
+    const activeGuildId = dashboardGuild?.id || getDashboardConfig().guildId || config.guildId;
+    const scheduledMessages = await listScheduledMessages(activeGuildId, 25);
+    const templates = await listEmbedTemplates(activeGuildId);
+    const commandStats = await listCommandStats(activeGuildId, Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const allState = await readState();
+    const moderationCases = await listModerationCases(activeGuildId || '', {});
+    const modNotes = activeGuildId
+        ? await Promise.all([...new Set(moderationCases.slice(0, 20).map(item => item.userId))].map(userId => listModNotes(activeGuildId, userId, 5))).then(results => results.flat())
+        : [];
+    const ticketRecords = await listTicketRecords(activeGuildId, 100);
+    const tempVoiceChannels = await listTempVoiceChannelsForGuild(activeGuildId);
+    const voiceActivity = await listVoiceActivity(activeGuildId, 80);
+    const configBackups = listConfigBackups();
 
     const moduleLinks = grouped.map(([category, commands]) => `
 <a class="module-link" href="#module-${escapeHtml(slug(category))}">
@@ -530,6 +740,13 @@ ${includeLanguageEditors ? getLanguageSectionsForCategory(category).map(section 
 
     const channelOptions = channels.map(channel => `<option value="${escapeHtml(channel.id)}">#${escapeHtml(channel.name)}</option>`).join('');
     const rolePills = roles.slice(0, 20).map(role => `<button class="pill" type="button" data-copy="${escapeHtml(role.id)}" data-copy-label="${escapeHtml(role.name)}">${escapeHtml(role.name)} ${escapeHtml(role.id)}</button>`).join('');
+    const scheduledHtml = scheduledMessages.length
+        ? scheduledMessages.map(item => `<div class="row"><span><strong>${escapeHtml(item.status)}</strong><br><span class="muted">${escapeHtml(new Date(Number(item.scheduledFor)).toLocaleString())} -> ${escapeHtml(item.channelId)}</span></span><span class="muted">${escapeHtml((item.content || item.embed?.title || 'Embed').slice(0, 80))}</span></div>`).join('')
+        : '<p class="muted">No scheduled messages yet.</p>';
+    const templateOptions = templates.map(template => `<option value="${escapeHtml(template.id)}">${escapeHtml(template.name)}</option>`).join('');
+    const templatesHtml = templates.length
+        ? templates.map(template => `<div class="row"><span><strong>${escapeHtml(template.name)}</strong><br><span class="muted">${escapeHtml(template.embed?.title || template.content || 'Embed template')}</span></span><form method="post" action="/embed-template/delete">${csrfInput(session)}<input type="hidden" name="id" value="${escapeHtml(template.id)}"><button class="danger" type="submit">Delete</button></form></div>`).join('')
+        : '<p class="muted">No saved templates yet.</p>';
     const commandsHtml = renderCommandSections(true);
     const accessHtml = renderCommandSections(false);
     const topbar = `
@@ -570,15 +787,25 @@ ${notice ? `<div class="notice">${escapeHtml(notice)}</div>` : ''}
     const senderSection = `
 <section class="panel" id="sender">
 <h2>Message Sender</h2>
-<p class="muted">Send a plain message or a simple embed as the bot.</p>
+<p class="muted">Send or schedule a message with embed fields, images, thumbnails, and reusable templates.</p>
 <form method="post" action="/send-message" data-message-form>
 ${csrfInput(session)}
 <div class="access-grid">
 <label>Channel<select name="channelId" required>${channelOptions || '<option value="">No sendable channels cached</option>'}</select></label>
+<label>Saved template<select name="templateId"><option value="">No template</option>${templateOptions}</select></label>
 <label>Embed title<input name="embedTitle" maxlength="256" placeholder="Optional"></label>
+<label>Embed color<input name="embedColor" placeholder="#5865f2"></label>
+<label>Schedule for<input name="scheduleAt" type="datetime-local"></label>
 </div>
 <label>Message<textarea name="content" maxlength="2000" placeholder="Message content"></textarea></label>
 <label>Embed description<textarea name="embedDescription" maxlength="4000" placeholder="Optional"></textarea></label>
+<div class="access-grid">
+<label>Embed URL<input name="embedUrl" placeholder="https://example.com"></label>
+<label>Thumbnail URL<input name="embedThumbnail" placeholder="https://example.com/thumb.png"></label>
+<label>Image URL<input name="embedImage" placeholder="https://example.com/image.png"></label>
+<label>Footer<input name="embedFooter" maxlength="2048" placeholder="Optional footer"></label>
+</div>
+<label>Fields<textarea name="embedFields" placeholder="One per line: Field name | Field value"></textarea></label>
 <div class="preview">
 <p class="muted">Live preview</p>
 <div data-preview-content class="preview-body"></div>
@@ -587,8 +814,20 @@ ${csrfInput(session)}
 <div data-preview-body class="preview-body"></div>
 </div>
 </div>
+<div class="access-grid">
+<label>Template name<input name="templateName" maxlength="80" placeholder="Optional: save this as a template"></label>
+<label><span class="muted">Template action</span><button class="secondary" name="saveTemplate" value="1" type="submit">Save template only</button></label>
+</div>
 <p><button class="success" type="submit">Send through bot</button></p>
 </form>
+<section class="panel" style="box-shadow:none;margin-top:16px">
+<h3>Saved Templates</h3>
+${templatesHtml}
+</section>
+<section class="panel" style="box-shadow:none;margin-top:16px">
+<h3>Scheduled Messages</h3>
+${scheduledHtml}
+</section>
 </section>`;
     const roleReferenceSection = rolePills ? `<section class="panel"><h2>Role Reference</h2><div class="pillrow">${rolePills}</div></section>` : '';
     const languageSection = `
@@ -605,7 +844,8 @@ ${csrfInput(session)}
     const configSection = `
 <section class="panel" id="config">
 <h2>Config</h2>
-<p class="muted">This edits config.json directly. Sensitive values are redacted and preserved if left unchanged.</p>
+<p class="muted">This edits config.json directly. Sensitive values are redacted and preserved if left unchanged. Create a backup before risky edits.</p>
+<form method="post" action="/config/backup" style="margin-bottom:12px">${csrfInput(session)}<input type="hidden" name="label" value="before-config-edit"><button class="secondary" type="submit">Create backup</button></form>
 <form method="post" action="/config-json">
 ${csrfInput(session)}
 <textarea class="config-json" name="config">${escapeHtml(JSON.stringify(redactedConfig, null, 4))}</textarea>
@@ -615,13 +855,96 @@ ${csrfInput(session)}
     const languageEditorsSection = [...new Set(Object.keys(editableLanguageValues))]
         .map(section => renderLanguageEditor(section, editableLanguageValues[section], session))
         .join('');
+    const commandSuccesses = commandStats.filter(item => item.ok).length;
+    const commandFailures = commandStats.filter(item => !item.ok).length;
+    const perDayRows = summarizeCounts(commandStats, item => new Date(item.createdAt).toISOString().slice(0, 10), 14);
+    const analyticsSection = `
+<section class="grid">
+<div class="panel metric"><span>Commands 30d</span><strong>${commandStats.length}</strong></div>
+<div class="panel metric"><span>Successful</span><strong>${commandSuccesses}</strong></div>
+<div class="panel metric"><span>Failed</span><strong>${commandFailures}</strong></div>
+<div class="panel metric"><span>Unique users</span><strong>${new Set(commandStats.map(item => item.userId)).size}</strong></div>
+</section>
+<section class="grid">
+<div class="panel wide"><h2>Most Used Commands</h2>${renderCountRows(summarizeCounts(commandStats, item => `/${item.command}`))}</div>
+<div class="panel side"><h2>Top Users</h2>${renderCountRows(summarizeCounts(commandStats, item => item.userTag || item.userId))}</div>
+<div class="panel wide"><h2>Per-Day Usage</h2>${renderCountRows(perDayRows, 'No command usage in the last 30 days.')}</div>
+<div class="panel side"><h2>Failed Commands</h2>${renderCountRows(summarizeCounts(commandStats.filter(item => !item.ok), item => `/${item.command}`), 'No failed commands recorded.')}</div>
+</section>`;
+    const auditItems = [
+        ...logs.map(log => ({ at: Date.parse(log.at) || 0, type: log.type || 'dashboard', text: log.message })),
+        ...moderationCases.slice(0, 200).map(item => ({ at: item.createdAt, type: 'moderation', text: `#${item.id} ${item.type} ${item.userTag || item.userId}: ${item.reason}` })),
+        ...allState.history.filter(item => item.guildId === activeGuildId).slice(0, 200).map(item => ({ at: item.createdAt, type: item.type, text: `${item.userTag || item.userId}: ${item.summary}` })),
+        ...ticketRecords.map(item => ({ at: item.updatedAt, type: 'ticket', text: `${item.status} <#${item.channelId}> ${item.priority}` })),
+    ].sort((a, b) => b.at - a.at).slice(0, 250);
+    const auditSection = `
+<section class="panel">
+<h2>Audit Timeline</h2>
+<div class="toolbar"><input data-audit-filter placeholder="Filter moderation, tickets, honeypot, config, dashboard"></div>
+<div class="log" data-audit-list>${auditItems.length ? auditItems.map(item => `<div class="log-entry" data-audit-type="${escapeHtml(item.type)}"><span class="muted">${escapeHtml(new Date(item.at || Date.now()).toLocaleString())}</span> [${escapeHtml(item.type)}] ${escapeHtml(item.text)}</div>`).join('') : '<div class="muted">No audit entries yet.</div>'}</div>
+</section>`;
+    const healthSection = `
+<section class="grid">
+<div class="panel metric"><span>Discord</span><strong>${client.isReady?.() ? 'Ready' : 'Offline'}</strong></div>
+<div class="panel metric"><span>Ping</span><strong>${Math.round(client.ws?.ping || 0)}ms</strong></div>
+<div class="panel metric"><span>Guilds</span><strong>${client.guilds?.cache?.size || 0}</strong></div>
+<div class="panel metric"><span>Uptime</span><strong>${Math.floor(process.uptime() / 60)}m</strong></div>
+</section>
+<section class="panel"><h2>Schedulers</h2>
+${['punishmentScheduler', 'memberCounterScheduler', 'mediaAnnouncementScheduler', 'levelingScheduler', 'scheduledMessageScheduler'].map(key => `<div class="row"><span>${escapeHtml(humanize(key))}</span><strong>${client[key] ? 'Running' : 'Stopped'}</strong></div>`).join('')}
+</section>`;
+    const moderationSection = `
+${renderConfigSectionEditor('autoMod', 'Auto-Mod Rules', 'Configure invite links, mass mentions, caps/spam, suspicious domains, exemptions, and escalation ladder.', session, config.autoMod || {
+    enabled: false,
+    deleteMatches: true,
+    rules: { inviteLinks: true, massMentions: true, caps: true, spam: true, suspiciousDomains: true },
+    escalation: [{ after: 3, action: 'mute', durationMs: 600000 }],
+})}
+${renderConfigSectionEditor('moderation', 'Moderation Settings', 'Configure mute role and appeal URL for moderation DMs.', session, config.moderation || {})}
+<section class="grid"><div class="panel wide"><h2>Recent Cases</h2>${moderationCases.slice(0, 20).map(item => `<div class="row"><span>#${escapeHtml(item.id)} ${escapeHtml(item.type)} ${escapeHtml(item.userTag || item.userId)}<br><span class="muted">${escapeHtml(item.reason)}</span></span><span>${escapeHtml(new Date(item.createdAt).toLocaleString())}</span></div>`).join('') || '<p class="muted">No cases yet.</p>'}</div><div class="panel side"><h2>Recent Notes</h2>${modNotes.slice(0, 10).map(item => `<div class="row"><span>${escapeHtml(item.userTag || item.userId)}<br><span class="muted">${escapeHtml(item.note)}</span></span></div>`).join('') || '<p class="muted">No notes yet.</p>'}</div></section>`;
+    const ticketsSection = `
+${renderConfigSectionEditor('tickets', 'Ticket Settings', 'Configure ticket panel channel, category, support role, auto-close days, and transcript behavior.', session, config.tickets || {})}
+<section class="panel"><h2>Tickets</h2>${ticketRecords.length ? ticketRecords.map(item => `<div class="row"><span><strong><#${escapeHtml(item.channelId)}></strong><br><span class="muted">${escapeHtml(item.status)} - ${escapeHtml(item.priority)} - ${escapeHtml(item.tags?.join(', ') || 'no tags')}</span></span><span>${item.claimedById ? `Claimed by ${escapeHtml(item.claimedByTag || item.claimedById)}` : 'Unclaimed'}</span></div>`).join('') : '<p class="muted">No ticket records yet.</p>'}</section>`;
+    const communitySection = `
+${renderConfigSectionEditor('WelcomeEmbed', 'Welcome / Leave Editor', 'Configure welcome copy and media. Leave messages can be added as leaveEmbed in config.json.', session, config.WelcomeEmbed || {})}
+${renderConfigSectionEditor('reactionRoles', 'Reaction Roles', 'Configure reaction-role panels. Use messageId, emoji, and roleId entries for each panel.', session, config.reactionRoles || { enabled: false, panels: [] })}
+${renderConfigSectionEditor('rulesAgreement', 'Rules Agreement Panel', 'Configure a rules acknowledgement panel and verified role.', session, config.rulesAgreement || { enabled: false, channelId: '', roleId: '' })}
+${renderConfigSectionEditor('birthdays', 'Birthday Reminders', 'Configure birthday reminder channel and timezone.', session, config.birthdays || { enabled: false, channelId: '', timezone: 'Europe/London' })}
+${renderConfigSectionEditor('starboard', 'Starboard', 'Configure highlight/starboard emoji, threshold, and destination channel.', session, config.starboard || { enabled: false, channelId: '', emoji: '⭐', threshold: 3 })}
+${renderConfigSectionEditor('pollTemplates', 'Poll Templates', 'Saved poll presets for staff workflows.', session, config.pollTemplates || [])}`;
+    const levelingSection = `
+${renderConfigSectionEditor('leveling', 'Leveling Rewards and Multipliers', 'Configure reward roles, ignored channels/roles, role/channel multipliers, and reset policy.', session, config.leveling || {})}`;
+    const voiceSection = `
+${renderConfigSectionEditor('joinToCreate', 'Temporary Voice Controls', 'Configure join-to-create, naming, limits, categories, and presets.', session, config.joinToCreate || {})}
+<section class="grid"><div class="panel wide"><h2>Active Temporary Channels</h2>${tempVoiceChannels.map(item => `<div class="row"><span><#${escapeHtml(item.channelId)}> owner <@${escapeHtml(item.ownerId)}></span><span>${escapeHtml(new Date(item.createdAt).toLocaleString())}</span></div>`).join('') || '<p class="muted">No active temporary voice channels.</p>'}</div><div class="panel side"><h2>Voice Activity</h2>${voiceActivity.slice(0, 20).map(item => `<div class="row"><span>${escapeHtml(item.userTag)} ${escapeHtml(item.type)}<br><span class="muted">${escapeHtml(item.oldChannelId || '-')} -> ${escapeHtml(item.newChannelId || '-')}</span></span></div>`).join('') || '<p class="muted">No voice activity yet.</p>'}</div></section>`;
+    const mediaSection = `
+${renderConfigSectionEditor('youtube', 'YouTube Targets', 'Manage channels to announce and their Discord destination channels.', session, config.youtube || {})}
+${renderConfigSectionEditor('twitch', 'Twitch Targets', 'Manage Twitch channels, auth status, retry/error settings, and announcement templates.', session, config.twitch || {})}
+${renderConfigSectionEditor('socialAnnouncements', 'Multi-Platform Targets', 'Configure TikTok, Instagram, Bluesky, and custom announcement templates. Integrations require provider APIs or feed endpoints.', session, config.socialAnnouncements || { tiktok: [], instagram: [], bluesky: [] })}`;
+    const backupsSection = `
+<section class="panel"><h2>Config Backups</h2><form method="post" action="/config/backup">${csrfInput(session)}<label>Label<input name="label" placeholder="before-risky-edit"></label><p><button class="success" type="submit">Create backup</button></p></form></section>
+<section class="panel"><h2>Restore</h2>${configBackups.length ? configBackups.map(item => `<div class="row"><span>${escapeHtml(item.file)}<br><span class="muted">${escapeHtml(new Date(item.createdAt).toLocaleString())}</span></span><form method="post" action="/config/restore">${csrfInput(session)}<input type="hidden" name="file" value="${escapeHtml(item.file)}"><button class="danger" type="submit">Restore</button></form></div>`).join('') : '<p class="muted">No backups yet.</p>'}</section>`;
+    const musicSection = `
+${renderConfigSectionEditor('music', 'Music Settings', 'Configure music feature limits, allowed roles/channels, and provider notes. Spotify playback resolves track metadata to a streamable source.', session, config.music || { enabled: true, maxQueueLength: 50, allowFileUploads: true })}
+<section class="panel"><h2>Playback</h2><p class="muted">Use /music play, /music file, /music queue, /music skip, and /music stop in Discord.</p></section>`;
     const pageBodies = {
         overview: `${topbar}${metricsSection}${moduleLinksSection}<section class="grid"><div class="panel wide"><h2>Recent Status</h2><p class="muted">Use the sidebar to manage commands, language, sending, config, and logs without scrolling through one large page.</p></div>${logsSection}</section>`,
+        audit: `${topbar}${auditSection}`,
+        analytics: `${topbar}${analyticsSection}`,
+        health: `${topbar}${healthSection}`,
         modules: `${topbar}${moduleLinksSection}<section>${commandsHtml}</section>`,
         commands: `${topbar}${roleReferenceSection}<section>${accessHtml}</section>`,
+        moderation: `${topbar}${moderationSection}`,
+        tickets: `${topbar}${ticketsSection}`,
+        community: `${topbar}${communitySection}`,
+        leveling: `${topbar}${levelingSection}`,
+        voice: `${topbar}${voiceSection}`,
+        media: `${topbar}${mediaSection}`,
+        music: `${topbar}${musicSection}`,
         language: `${topbar}${languageSection}<section>${languageEditorsSection}</section>`,
         sender: `${topbar}${senderSection}${roleReferenceSection}`,
         config: `${topbar}${configSection}`,
+        backups: `${topbar}${backupsSection}`,
         logs: `${topbar}<section class="grid"><div class="panel full"><h2>Dashboard Logs</h2><div class="log">${logsHtml}</div><form method="post" action="/logs/clear" style="margin-top:12px">${csrfInput(session)}<button class="danger" type="submit">Clear logs</button></form></div></section>`,
     };
 
@@ -690,14 +1013,25 @@ function startDashboard(client) {
         res.redirect('/login');
     });
 
-    const renderPage = page => (req, res) => res.send(renderDashboard(client, req.dashboardSession, req.query.message || '', page));
+    const renderPage = page => async (req, res) => res.send(await renderDashboard(client, req.dashboardSession, req.query.message || '', page));
 
     app.get('/', requireAuth, renderPage('overview'));
+    app.get('/audit', requireAuth, renderPage('audit'));
+    app.get('/analytics', requireAuth, renderPage('analytics'));
+    app.get('/health-page', requireAuth, renderPage('health'));
     app.get('/modules', requireAuth, renderPage('modules'));
     app.get('/commands', requireAuth, renderPage('commands'));
+    app.get('/moderation', requireAuth, renderPage('moderation'));
+    app.get('/tickets', requireAuth, renderPage('tickets'));
+    app.get('/community', requireAuth, renderPage('community'));
+    app.get('/leveling', requireAuth, renderPage('leveling'));
+    app.get('/voice', requireAuth, renderPage('voice'));
+    app.get('/media', requireAuth, renderPage('media'));
+    app.get('/music', requireAuth, renderPage('music'));
     app.get('/language', requireAuth, renderPage('language'));
     app.get('/sender', requireAuth, renderPage('sender'));
     app.get('/config', requireAuth, renderPage('config'));
+    app.get('/backups', requireAuth, renderPage('backups'));
     app.get('/logs', requireAuth, renderPage('logs'));
 
     app.post('/toggle-module', requireAuth, requireCsrf, (req, res) => {
@@ -782,33 +1116,113 @@ function startDashboard(client) {
     app.post('/send-message', requireAuth, requireCsrf, async (req, res) => {
         try {
             const channel = await client.channels.fetch(req.body.channelId).catch(() => null);
-            if (!channel?.send) {
+            if (!channel?.send && req.body.saveTemplate !== '1') {
                 return res.status(400).send(renderLayout('Message not sent', '<section class="panel"><h2>Message not sent</h2><p>I could not find a sendable channel.</p></section>', req.dashboardSession.user, client));
             }
 
-            const content = String(req.body.content || '').trim();
-            const embedTitle = String(req.body.embedTitle || '').trim();
-            const embedDescription = String(req.body.embedDescription || '').trim();
-            const payload = {};
-
-            if (content) payload.content = content;
-            if (embedTitle || embedDescription) {
-                const embed = new EmbedBuilder().setColor(0x5865f2);
-                if (embedTitle) embed.setTitle(embedTitle);
-                if (embedDescription) embed.setDescription(embedDescription);
-                payload.embeds = [embed];
-            }
-
+            const activeGuildId = getDashboardGuild(client)?.id || getDashboardConfig().guildId || getStoredConfig().guildId;
+            const selectedTemplate = req.body.templateId
+                ? (await listEmbedTemplates(activeGuildId)).find(item => item.id === req.body.templateId)
+                : null;
+            const payload = selectedTemplate && !req.body.content && !req.body.embedTitle && !req.body.embedDescription
+                ? {
+                    content: selectedTemplate.content,
+                    embed: selectedTemplate.embed,
+                    embeds: selectedTemplate.embed ? [buildEmbedFromTemplate(selectedTemplate.embed)] : undefined,
+                }
+                : buildDashboardMessagePayload(req.body);
             if (!payload.content && !payload.embeds) {
                 return res.status(400).send(renderLayout('Message not sent', '<section class="panel"><h2>Message not sent</h2><p>Add message content or embed text before sending.</p></section>', req.dashboardSession.user, client));
             }
 
-            await channel.send(payload);
+            if (req.body.saveTemplate === '1') {
+                const templateName = String(req.body.templateName || '').trim();
+                if (!templateName) {
+                    return res.status(400).send(renderLayout('Template not saved', '<section class="panel"><h2>Template not saved</h2><p>Add a template name before saving.</p></section>', req.dashboardSession.user, client));
+                }
+
+                await upsertEmbedTemplate({
+                    guildId: activeGuildId,
+                    name: templateName,
+                    content: payload.content || '',
+                    embed: payload.embed || null,
+                    updatedBy: req.dashboardSession.user.id,
+                });
+                appendDashboardLog('Embed template saved', { name: templateName, userId: req.dashboardSession.user.id });
+                return res.redirect('/sender?message=Template%20saved');
+            }
+
+            const scheduleAt = String(req.body.scheduleAt || '').trim();
+            if (scheduleAt) {
+                const scheduledFor = Date.parse(scheduleAt);
+                if (!Number.isFinite(scheduledFor) || scheduledFor <= Date.now()) {
+                    return res.status(400).send(renderLayout('Message not scheduled', '<section class="panel"><h2>Message not scheduled</h2><p>Choose a future date and time.</p></section>', req.dashboardSession.user, client));
+                }
+
+                await createScheduledMessage({
+                    guildId: channel.guildId || getDashboardConfig().guildId,
+                    channelId: channel.id,
+                    content: payload.content || '',
+                    embed: payload.embed || null,
+                    createdBy: req.dashboardSession.user.id,
+                    scheduledFor,
+                });
+                appendDashboardLog('Dashboard message scheduled', { channelId: channel.id, userId: req.dashboardSession.user.id, scheduledFor });
+                return res.redirect('/sender?message=Message%20scheduled');
+            }
+
+            const sendPayload = {};
+            if (payload.content) sendPayload.content = payload.content;
+            if (payload.embeds) sendPayload.embeds = payload.embeds;
+            await channel.send(sendPayload);
             appendDashboardLog('Dashboard message sent', { channelId: channel.id, userId: req.dashboardSession.user.id });
-            res.redirect('/sender?message=Message%20sent');
+            return res.redirect('/sender?message=Message%20sent');
         } catch (error) {
             console.error('Dashboard message send failed:', error);
             res.status(500).send(renderLayout('Message failed', '<section class="panel"><h2>Message failed</h2><p>Discord rejected the message. Check the bot permissions and message content.</p></section>', req.dashboardSession.user, client));
+        }
+    });
+
+    app.post('/embed-template/delete', requireAuth, requireCsrf, async (req, res) => {
+        const activeGuildId = getDashboardGuild(client)?.id || getDashboardConfig().guildId || getStoredConfig().guildId;
+        await deleteEmbedTemplate(activeGuildId, req.body.id);
+        appendDashboardLog('Embed template deleted', { id: req.body.id, userId: req.dashboardSession.user.id });
+        res.redirect('/sender?message=Template%20deleted');
+    });
+
+    app.post('/config-section', requireAuth, requireCsrf, (req, res) => {
+        try {
+            const section = String(req.body.section || '').trim();
+            if (!section || ['token', 'clientId', 'guildId', 'dashboard', 'database'].includes(section)) {
+                return res.status(400).send(renderLayout('Invalid section', '<section class="panel"><h2>Invalid config section</h2><p>Use the full config editor for this section.</p></section>', req.dashboardSession.user, client));
+            }
+
+            const parsed = JSON.parse(req.body.json || '{}');
+            updateConfig(config => {
+                config[section] = parsed;
+                return config;
+            });
+            appendDashboardLog('Config section saved', { section, userId: req.dashboardSession.user.id });
+            const sectionPages = {
+                autoMod: 'moderation',
+                moderation: 'moderation',
+                tickets: 'tickets',
+                WelcomeEmbed: 'community',
+                reactionRoles: 'community',
+                rulesAgreement: 'community',
+                birthdays: 'community',
+                starboard: 'community',
+                pollTemplates: 'community',
+                leveling: 'leveling',
+                joinToCreate: 'voice',
+                youtube: 'media',
+                twitch: 'media',
+                socialAnnouncements: 'media',
+                music: 'music',
+            };
+            res.redirect(`/${sectionPages[section] || 'config'}?message=Saved`);
+        } catch (error) {
+            res.status(400).send(renderLayout('Invalid JSON', `<section class="panel"><h2>Invalid JSON</h2><p>${escapeHtml(error.message)}</p></section>`, req.dashboardSession.user, client));
         }
     });
 
@@ -827,6 +1241,23 @@ function startDashboard(client) {
             res.redirect('/config');
         } catch {
             res.status(400).send(renderLayout('Invalid JSON', '<section class="panel"><h2>Invalid JSON</h2><p>The config was not saved. Use the browser back button and fix the JSON.</p></section>', req.dashboardSession.user, client));
+        }
+    });
+
+    app.post('/config/backup', requireAuth, requireCsrf, (req, res) => {
+        const file = createConfigBackup(req.body.label);
+        appendDashboardLog('Config backup created', { file, userId: req.dashboardSession.user.id });
+        res.redirect('/backups?message=Backup%20created');
+    });
+
+    app.post('/config/restore', requireAuth, requireCsrf, (req, res) => {
+        try {
+            createConfigBackup('before-restore');
+            restoreConfigBackup(req.body.file);
+            appendDashboardLog('Config backup restored', { file: req.body.file, userId: req.dashboardSession.user.id });
+            res.redirect('/backups?message=Backup%20restored');
+        } catch (error) {
+            res.status(400).send(renderLayout('Restore failed', `<section class="panel"><h2>Restore failed</h2><p>${escapeHtml(error.message)}</p></section>`, req.dashboardSession.user, client));
         }
     });
 

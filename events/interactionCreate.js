@@ -3,6 +3,7 @@ const language = require('../utils/language');
 const { safeReply } = require('../utils/discord');
 const { isCommandEnabled } = require('../utils/features');
 const { memberCanUseCommand } = require('../utils/permissions');
+const { recordCommandUsage } = require('../utils/store');
 
 module.exports = {
     name: Events.InteractionCreate,
@@ -26,8 +27,25 @@ module.exports = {
 
         try {
             await command.execute(interaction);
+            await recordCommandUsage({
+                guildId: interaction.guildId,
+                channelId: interaction.channelId,
+                command: interaction.commandName,
+                userId: interaction.user.id,
+                userTag: interaction.user.tag,
+                ok: true,
+            });
         } catch (error) {
             console.error(`Error executing /${interaction.commandName}:`, error);
+            await recordCommandUsage({
+                guildId: interaction.guildId,
+                channelId: interaction.channelId,
+                command: interaction.commandName,
+                userId: interaction.user.id,
+                userTag: interaction.user.tag,
+                ok: false,
+                error: error.message,
+            }).catch(() => null);
             await safeReply(interaction, { content: language.general.commandError, flags: 64 });
         }
     },

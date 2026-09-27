@@ -6,6 +6,8 @@ const { findSendableChannel } = require('../utils/discord');
 const { startLevelingScheduler } = require('../utils/leveling');
 const { startMemberCounterScheduler } = require('../utils/memberCounters');
 const { startPunishmentScheduler } = require('../utils/punishments');
+const { startScheduledMessageScheduler } = require('../utils/scheduledMessages');
+const { startTicketScheduler } = require('../utils/tickets');
 
 module.exports = {
     name: Events.ClientReady,
@@ -16,6 +18,8 @@ module.exports = {
         client.punishmentScheduler = startPunishmentScheduler(client);
         client.memberCounterScheduler = startMemberCounterScheduler(client);
         client.levelingScheduler = startLevelingScheduler(client);
+        client.scheduledMessageScheduler = startScheduledMessageScheduler(client);
+        client.ticketScheduler = startTicketScheduler(client);
 
         if (config.statusName) {
             client.user.setPresence({ activities: [{ name: config.statusName }] });

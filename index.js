@@ -80,6 +80,12 @@ async function shutdown(signal, exitCode = 0) {
     if (client.levelingScheduler) {
         clearInterval(client.levelingScheduler);
     }
+    if (client.scheduledMessageScheduler) {
+        clearInterval(client.scheduledMessageScheduler);
+    }
+    if (client.ticketScheduler) {
+        clearInterval(client.ticketScheduler);
+    }
 
     if (dashboardServer) {
         await new Promise(resolve => dashboardServer.close(resolve));
