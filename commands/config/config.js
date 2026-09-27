@@ -8,6 +8,7 @@ const logChannelChoices = [
     ['moderation', 'moderation'],
     ['ticket', 'ticket'],
     ['suggestion', 'suggestion'],
+    ['direct_message', 'directMessage'],
     ['message_delete', 'messageDelete'],
     ['message_update', 'editMessage'],
     ['thread_create', 'threadCreate'],

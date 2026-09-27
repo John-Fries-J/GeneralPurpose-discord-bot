@@ -7,6 +7,7 @@ const channelKeys = {
     moderation: 'moderation',
     ticket: 'ticket',
     suggestion: 'suggestion',
+    directMessage: 'directMessage',
     messageDelete: 'messageDelete',
     messageUpdate: 'editMessage',
     threadCreate: 'threadCreate',

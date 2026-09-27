@@ -42,7 +42,7 @@ Copy-Item exampleconfig.json config.json
 - `statusName`: bot status text
 - `welcomeID`: channel ID for join welcome messages
 - `suggestionID`: channel ID for suggestions
-- `logChannels`: channel IDs for general, moderation, ticket, suggestion, message, and thread logs
+- `logChannels`: channel IDs for general, moderation, ticket, suggestion, direct message, message, and thread logs
 - `roles.autoRoleId` or `roles.autoRoleIds`: role IDs given to new members
 - `tickets`: saved by `/ticket`; you can leave this blank on first setup
 - `Twitch`: optional Twitch notification settings
