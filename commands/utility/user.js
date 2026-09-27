@@ -1,35 +1,41 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const { blue } = require('../../colors.json');
+const { SlashCommandBuilder } = require('discord.js');
+const { createEmbed } = require('../../utils/embeds');
+const { fetchMember } = require('../../utils/discord');
+
+function formatDate(date) {
+    if (!date) return 'Unknown';
+
+    return date.toLocaleString('en-GB', {
+        timeZone: 'GMT',
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        timeZoneName: 'short',
+    });
+}
 
 module.exports = {
+    category: 'Utility',
     data: new SlashCommandBuilder()
         .setName('user')
-        .setDescription('Provides information about the user.')
-        .addUserOption(option => option.setName('user').setDescription('Gather info about another user')),
+        .setDescription('Provides information about a user.')
+        .setDMPermission(false)
+        .addUserOption(option => option.setName('user').setDescription('Gather info about another user.')),
+
     async execute(interaction) {
-        if (!interaction.options.getUser('user')) {
-            const user = interaction.user;
+        const user = interaction.options.getUser('user') || interaction.user;
+        const member = await fetchMember(interaction.guild, user.id);
 
-            const userEmbed = new EmbedBuilder()
-                .setTitle('User Info')
-                .setDescription(`**User\'s name:** ${user.tag } *(ID: ${user.id})*\n**Account Created:** ${user.createdAt.toLocaleString('en-GB', {timeZone: 'GMT', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', timeZoneName: 'short'})}\n**Joined __${interaction.guild.name}__:** ${interaction.member.joinedAt.toLocaleString('en-GB', {timeZone: 'GMT', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', timeZoneName: 'short'})}`)
-                .setColor(blue)
-                .setTimestamp()
-                .setThumbnail(user.avatarURL());
+        const embed = createEmbed({
+            title: 'User Info',
+            description: `**User name:** ${user.tag} *(ID: ${user.id})*\n**Account created:** ${formatDate(user.createdAt)}\n**Joined ${interaction.guild.name}:** ${formatDate(member?.joinedAt)}`,
+            thumbnail: user.displayAvatarURL({ dynamic: true }),
+            color: 'blue',
+        });
 
-            interaction.reply({ embeds: [userEmbed] });
-        }
-        if (interaction.options.getUser('user')) {
-            const user = interaction.options.getUser('user');
-
-            const userEmbed = new EmbedBuilder()
-                .setTitle('User Info')
-                .setDescription(`**User\'s name:** ${user.tag} *(ID: ${user.id})* \n**Account Created:** ${user.createdAt.toLocaleString('en-GB', {timeZone: 'GMT', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', timeZoneName: 'short'})}\n**Joined__ ${interaction.guild.name}__:** ${interaction.member.joinedAt.toLocaleString('en-GB', {timeZone: 'GMT', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', timeZoneName: 'short'})}`)
-                .setColor(blue)
-                .setTimestamp()
-                .setThumbnail(user.avatarURL());
-
-            interaction.reply({ embeds: [userEmbed] });
-        }
+        await interaction.reply({ embeds: [embed], ephemeral: true });
     },
 };

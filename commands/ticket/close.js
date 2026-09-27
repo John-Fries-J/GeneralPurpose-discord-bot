@@ -1,34 +1,61 @@
-const { SlashCommandBuilder, PermissionsBitField, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
-const { green } = require('../../colors.json');
+const { SlashCommandBuilder, PermissionsBitField, PermissionFlagsBits } = require('discord.js');
+const language = require('../../utils/language');
+const { getConfig } = require('../../utils/config');
+const { createEmbed } = require('../../utils/embeds');
+const { safeDm } = require('../../utils/discord');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('close')
+        .setDMPermission(false)
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
-        .setDescription('Closes the ticket'),
+        .setDescription('Closes the ticket.'),
+
     async execute(interaction) {
-        if (!interaction.channel.name.startsWith('ticket-')) {
-            return await interaction.reply({ content: 'You can only use this command in a ticket channel', ephemeral: true });
+        const config = getConfig();
+        const channel = interaction.channel;
+
+        if (!channel?.name?.startsWith('ticket-')) {
+            return interaction.reply({ content: language.tickets.notTicket, ephemeral: true });
         }
-        const ticketUser = interaction.channel.topic;
-        await interaction.channel.permissionOverwrites.set([
-              {
-              id: ticketUser,
-              deny: [PermissionsBitField.Flags.ViewChannel]
-              },
-              {
+
+        const ticketUserId = channel.topic;
+        const overwrites = [
+            {
                 id: interaction.guild.roles.everyone,
                 deny: [PermissionsBitField.Flags.ViewChannel],
-              },
-            ]);
-            const closersTicket = new EmbedBuilder()
-                .setTitle('Your ticket has been closed!')
-                .setDescription('If you need further assistance, please open a new ticket.')
-                .setColor(green);
-                const guy = interaction.guild.members.cache.get(ticketUser);
-                guy.send({ embeds: [closersTicket] });
-        const newName = interaction.channel.name.replace('ticket-', 'closed-');
-        await interaction.guild.channels.edit(interaction.channel.id, { name: `${newName}` });
-        await interaction.reply({ content: `Ticket was closed by <@${interaction.user.id}>`});
+            },
+        ];
+
+        if (ticketUserId) {
+            overwrites.push({
+                id: ticketUserId,
+                deny: [PermissionsBitField.Flags.ViewChannel],
+            });
+        }
+
+        if (config.ticketRole) {
+            overwrites.push({
+                id: config.ticketRole,
+                allow: [PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ViewChannel],
+            });
+        }
+
+        await channel.permissionOverwrites.set(overwrites);
+        await channel.setName(channel.name.replace('ticket-', 'closed-'));
+
+        if (ticketUserId) {
+            const ticketUser = await interaction.client.users.fetch(ticketUserId).catch(() => null);
+            if (ticketUser) {
+                const dmEmbed = createEmbed({
+                    title: language.tickets.closedTitle,
+                    description: 'If you need further assistance, please open a new ticket.',
+                    color: 'green',
+                });
+                await safeDm(ticketUser, { embeds: [dmEmbed] });
+            }
+        }
+
+        await interaction.reply({ content: `Ticket was closed by <@${interaction.user.id}>.` });
     },
 };

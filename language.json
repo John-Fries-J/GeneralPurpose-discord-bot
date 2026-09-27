@@ -1,0 +1,59 @@
+{
+    "watermark": {
+        "text": "Developed by johnfries",
+        "userId": "630070645874622494"
+    },
+    "general": {
+        "commandError": "There was an error while executing this command.",
+        "guildOnly": "This command can only be used in a server.",
+        "missingLogChannel": "Log channel not found. Check config.json.",
+        "noReason": "No reason provided."
+    },
+    "help": {
+        "title": "Help",
+        "missingCommand": "That command does not exist."
+    },
+    "moderation": {
+        "cannotBan": "I cannot ban this user.",
+        "cannotModerateSelf": "You cannot use this command on yourself.",
+        "invalidDuration": "Invalid duration. Use a value like 10m, 2h, 3d, or 1w.",
+        "muteMaxDuration": "Discord timeouts cannot be longer than 28 days.",
+        "purgeRange": "You need to input a number between 1 and 100.",
+        "purgeSuccess": "Successfully deleted ${amount} messages.",
+        "dmFailed": "I could not DM the user, but the moderation action still completed."
+    },
+    "tickets": {
+        "panelTitle": "Ticket",
+        "panelDescription": "Click the button below to open a ticket.",
+        "openButton": "Open Ticket",
+        "createdTitle": "Ticket Created",
+        "createdDescription": "Please provide details about your issue while waiting for staff assistance.",
+        "closeButton": "Close Ticket",
+        "deleteButton": "Delete Ticket",
+        "closedTitle": "Ticket Closed",
+        "closedDescription": "This ticket has been closed.",
+        "notTicket": "You can only use this command in a ticket channel.",
+        "notClosedTicket": "You can only use this command in a closed ticket channel.",
+        "setupComplete": "Ticket embed sent to ${channel}.",
+        "alreadyOpen": "You already have an open ticket: ${channel}.",
+        "missingSetup": "Tickets are not set up yet. Run /ticket first."
+    },
+    "suggestions": {
+        "title": "Suggestion",
+        "submitted": "Your suggestion has been submitted.",
+        "failed": "Failed to submit suggestion. Please try again later.",
+        "missingChannel": "Suggestion channel is not set up. Check config.json."
+    },
+    "welcome": {
+        "title": "Welcome to the server!",
+        "description": "Welcome ${user}!\nGo to <#ChannelID> to read up on the rules!",
+        "thumbnail": "https://cdn.discordapp.com/attachments/932110932245622865/932110932245622865/unknown.png",
+        "footer": "Welcome to the server!",
+        "missingConfig": "The welcome embed is not set up properly. Check language.json.",
+        "sent": "Welcome embed has been sent to ${user}."
+    },
+    "status": {
+        "readyTitle": "Bot is ready",
+        "readyDescription": "Bot is now online and ready to use."
+    }
+}

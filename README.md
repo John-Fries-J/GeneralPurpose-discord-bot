@@ -1,112 +1,144 @@
-<br/>
-<p align="center">
-  <a href="https://github.com/John-Fries-J/GeneralPurpose-discord-bot">
-    <img src="https://i.johnfries.net/images/logos/logo1.png" alt="Logo" width="80" height="80">
-  </a>
+# GeneralPurpose Discord Bot
 
-<h3 align="center">A basic Discordjs V14 bot with common commands</h3>
+A Discord.js v14 bot with common moderation, ticket, suggestion, welcome, logging, Twitch notification, and utility commands.
 
-  <p align="center">
-    Free easy discord bot with lots of configurable options
-    <br>
-    This is a passion project so don't expect updates immediately and it might not be perfect so feel free to create issues and prs if you want to help but if I can't fix dont be a beg.
-  </p>
+This project is meant to be easy to run and easy to edit. Runtime IDs and secrets live in `config.json`; public-facing text lives in `language.json`.
 
-# IF YOU ARE HAVING ISSUES OR ANY SUPPORT QUESTIONS. JOIN MY DISCORD. https://discord.gg/dCCksYzPWU I have notis on for discord so I'll respond ASAP.
+## Support
 
-# About The Project
+For support questions, join the Discord: https://discord.gg/dCCksYzPWU
 
-This bot is made with the intention of setting things up without configing beforehand. You can setup most of the channels. Roles ect via commands rather than hard code. There is no need for a database and its 2 commands to get started. Super simple for people that just want to run a bot with some cool features and forget about it. If you're wanting to create something more permenant i.e setting the ticket channel once then never touching it again. Let me know on discord and I'll create a custom repo for you that has your desired needs. Same with custom commands, If you want help setting them up let me know and I'll help on discord!
+## Requirements
 
-Index: <br>
-<a href="#Commands"> Command List</a> <br>
-<a href="#GettingStarted"> Getting Started With the bot</a> <br>
-<a href="#Config"> Config Setup and Explanation</a><br>
+- Node.js 20 or newer
+- A Discord bot token
+- Server member, message content, and moderation intents enabled in the Discord Developer Portal
 
+## Quick Start
 
-# GettingStarted
+1. Install dependencies:
 
-Download all the dependacies using ``npm i`` I'm using node v18.12.1 <br>
-Now fill out the exampleconfig.json config. For more details check <a href="#config">here!</a> <br>
-Make sure to change your config filename to config.json or YOUR FILE WILL NOT WORK.<br>
-Once all your dependancies are downloaded type either ``npm run run`` or ``node index.js`` <br>
+```bash
+npm install
+```
 
+2. Copy the example config:
 
-# Commands:
+```bash
+cp exampleconfig.json config.json
+```
 
-Moderation
-* `/ban [user] [reason] [duration]` - "Bans a user from the server can also have a duration on the ban"
-* `/unban [user]` - "Unbans a user from the server using their discord ID"
-* `/mute [user] [duration] [reason]` - "Mutes a user in the server with the timeout feature."
-* `/unmute [user]` - "Unmutes the user"
-* `/purge [amount]` - "Purges the specified amount of messages"
+On Windows PowerShell:
 
-Utility
-* `/ping` - "Gets the ping of the bot"
-* `/user` - "Provides information about the user"
-* `/server` - "Provides information about the server"
-* `/avatar` - "Provides the users avatar or selected user"
-* `/help [Optionally can specify the command you want more detail on]` - "Provides a list of the commands the bot has." 
+```powershell
+Copy-Item exampleconfig.json config.json
+```
 
-Ticket
-* `/ticket [embedMessageChannel] [supportRole] [ticketCategory]` - "Initiates the ticket system and sends the embed through."
-* `/close` - "Closes the ticket. Allows the support role to still see the channel but disables the ticket owner from seeing the channel"
-* `/delete` - "Deletes the ticket channel. Looks for any channel with the name "closed-" so be careful."
-<br> <br>
+3. Fill in `config.json`:
 
-# Config <br>
+- `token`: Discord bot token
+- `clientId`: Discord application/client ID
+- `guildId`: server ID used for slash command registration
+- `statusName`: bot status text
+- `welcomeID`: channel ID for join welcome messages
+- `suggestionID`: channel ID for suggestions
+- `logChannels`: channel IDs for logs
+- `roles.autoRoleId` or `roles.autoRoleIds`: role IDs given to new members
+- `Twitch`: optional Twitch notification settings
 
-<br>
-    "token":"", This is your discord bot token. Find it <a href="https://discord.com/developers/applications/"> here</a>  under Bot <br>
-    "devs":["630070645874622494"], This is your discord ID by default its mine but you can change it out and put yours in there. If you want to put multiple you should seperate it out like an array like follows: ["630070645874622494", "464107754198663168"] <br>
-    "suggestChannel":"" this is the channel you want the suggestions to be sent to. <br>
-    "statusName": "Bot Status", This is what the bot is "playing" I recomend something like. "/help" but its entirely up to you <br>
-    "clientId": "", This is the bots client ID found <a href="https://discord.com/developers/applications/">here</a> under OAuth2 <br>
-	  "guildId": "" This is the parent servers ID. This is currently not used for anything but if this bot is used in one guild specifically or you have a main server just put the ID there. 
-    "logChannels":{
-        "logChannel": "",
-        "messageDelete": "",
-        "editMessage": "",
-        "threadCreate": "",
-        "threadDelete": "",
-        "threadUpdate": ""
-    }
-    I set up different channels sending different log messages to allow for cleaner channels. If you dont want this then just put the same channel ID in all of the values and it will work.
-        "WelcomeEmbed": {
-        "title": "Welcome to the server!",
-        "description": "Welcome ${user}!\nGo to <#ChannelID> to get your roles!\nGo to <#ChannelID> to read up on the rules!",
-        "thumbnail": "https://cdn.discordapp.com/attachments/932110932245622865/932110932245622865/unknown.png",
-        "footer": "Welcome to the server!",
-        "footerIcon": "https://cdn.discordapp.com/attachments/932110932245622865/932110932245622865/unknown.png"
-    },
-    ,
-    "Twitch": {
-        "ClientId": "",
-        "AccessToken": "",
-        "streamerId": "",
-        "discordChannelId": "",
-        "streamerName": ""
-    }
-    This is slightly harder to setup so feel free to join my discord (https://discord.gg/dCCksYzPWU) and I can assist you with your setup. 
-    To get your twitch client ID you need to head over to https://dev.twitch.tv/login and log in with your twitch. Once there you can create an application. Your client ID is the one you need to enter in the config. To get your access token you need to run this command in your CLI (visual studio works well!):<br> 
-    
-    curl -X POST "https://id.twitch.tv/oauth2/token" \
-    -d "client_id=YOUR_CLIENT_ID" \
-    -d "client_secret=YOUR_CLIENT_SECRET" \
-    -d "grant_type=client_credentials"
-<br>
-You can then get your access token. Then to get the streamers ID you need to run this command in your CLI:<br>
+4. Edit bot wording in `language.json`.
 
-    curl -X GET "https://api.twitch.tv/helix/users?login=[THE STREAMERS NAME YOU WANT NOTIFS FOR]" -H "Client-ID: [clientid]" -H "Authorization: Bearer [your access token]"
-<br>
-THIS IS CRUCIAL. THE ID IS WHAT TWICH USES TO GET THE STREAM.<br>
-once you have done that you should be all sorted and everything should be fine and dandy.
-  <br>
-<br>
- 
-<br>
-<br>
+5. Run the bot:
 
-## Authors
+```bash
+npm run run
+```
 
-* **John Fries** - *Developer* - [John Fries](https://github.com/John-Fries-J/) - *Made everything*
+## Docker
+
+Build the image:
+
+```bash
+docker build -t generalpurpose-discord-bot .
+```
+
+Run with a mounted config:
+
+```bash
+docker run --rm -it -v "${PWD}/config.json:/app/config.json" generalpurpose-discord-bot
+```
+
+You can also provide the core Discord values with environment variables:
+
+```bash
+docker run --rm -it \
+  -e DISCORD_TOKEN="your-token" \
+  -e DISCORD_CLIENT_ID="your-client-id" \
+  -e DISCORD_GUILD_ID="your-server-id" \
+  generalpurpose-discord-bot
+```
+
+Mount `config.json` when you need channel IDs, roles, tickets, Twitch, or logging.
+
+## Commands
+
+Moderation:
+
+- `/ban user reason duration` bans a user, with an optional temporary duration.
+- `/unban user_id` unbans a user by Discord ID.
+- `/mute user duration reason` times out a user.
+- `/unmute user` removes a timeout.
+- `/purge amount` deletes 1 to 100 recent messages.
+
+Utility:
+
+- `/ping` shows bot websocket ping.
+- `/user user` shows user information.
+- `/server` shows server information.
+- `/avatar user` shows a user's avatar.
+- `/member role` lists members with a role.
+- `/welcome user` sends the configured welcome embed.
+- `/help command` lists commands or shows details for one command.
+
+Tickets:
+
+- `/ticket channel role category` posts the ticket panel and saves ticket settings to `config.json`.
+- `/close` closes the current ticket channel.
+- `/delete` deletes a closed ticket channel.
+
+Suggestions:
+
+- `/suggest suggestion` sends a suggestion, adds vote reactions, and starts a thread.
+
+## Editing Text
+
+Use `language.json` for text users see in embeds, replies, ticket buttons, welcome messages, and the embed watermark.
+
+Every embed uses the footer watermark:
+
+```json
+"watermark": {
+    "text": "Developed by johnfries",
+    "userId": "630070645874622494"
+}
+```
+
+Discord embed footers cannot ping users, so the user ID is included as footer text.
+
+## Checks
+
+Run a syntax check before committing:
+
+```bash
+npm test
+```
+
+## Notes
+
+- `config.json` is ignored by git so tokens and server IDs stay local.
+- Slash commands refresh automatically when the bot becomes ready.
+- No database is required; setup commands save the IDs they need into `config.json`.
+
+## Author
+
+**John Fries** - [John-Fries-J](https://github.com/John-Fries-J/)

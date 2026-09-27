@@ -1,23 +1,25 @@
-const { Events, EmbedBuilder } = require('discord.js');
-const { blue } = require('../colors.json');
-const config = require('../config.json');
+const { Events } = require('discord.js');
+const { getConfig } = require('../utils/config');
+const { createEmbed } = require('../utils/embeds');
+const { findSendableChannel } = require('../utils/discord');
 
 module.exports = {
     name: Events.ThreadUpdate,
     async execute(oldThread, newThread) {
-        const channelId = config.logChannels.threadUpdate;
-        const channel = oldThread.guild.channels.cache.get(channelId) || oldThread.guild.channels.cache.find(ch => ch.name === 'logs');
-        
-        if (!channel) {
-            console.log('Log channel not found');
-            return;
-        }
+        if (!oldThread.guild || oldThread.name === newThread.name) return;
 
-        const logEmbed = new EmbedBuilder()
-            .setTitle(`Thread edited in ${oldThread.parent.name}`)
-            .setDescription(`Thread edited by <@${oldThread.ownerId}>\nOld thread: ${oldThread.name}\nNew thread: ${newThread.name}`)
-            .setColor(blue)
-            .setTimestamp();
-        await channel.send({ embeds: [logEmbed] });
-    }
+        const config = getConfig();
+        const channel = findSendableChannel(oldThread.guild, config.logChannels?.threadUpdate, 'logs');
+        if (!channel) return;
+
+        const logEmbed = createEmbed({
+            title: 'Thread edited',
+            description: `**Old name:** ${oldThread.name}\n**New name:** ${newThread.name}\n**Channel:** ${oldThread.parent || 'unknown channel'}`,
+            color: 'blue',
+        });
+
+        await channel.send({ embeds: [logEmbed] }).catch(error => {
+            console.error('Error sending thread update log:', error);
+        });
+    },
 };

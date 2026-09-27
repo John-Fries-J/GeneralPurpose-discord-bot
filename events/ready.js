@@ -1,27 +1,33 @@
-const { Client, Intents, EmbedBuilder } = require('discord.js');
-const { statusName, logChannels } = require('../config.json');
-const { green } = require('../colors.json');
+const { Events } = require('discord.js');
+const { getConfig } = require('../utils/config');
+const language = require('../utils/language');
+const { createEmbed } = require('../utils/embeds');
+const { findSendableChannel } = require('../utils/discord');
 
 module.exports = {
-    name: 'ready',
+    name: Events.ClientReady,
     once: true,
     execute(client) {
+        const config = getConfig();
         console.log(`Ready! Logged in as ${client.user.tag}`);
-        const channelId = logChannels.logChannel;
-        const channel = client.channels.cache.get(channelId);
-        if (!channel) {
-            console.log('Log channel not found');
-            return;
+
+        if (config.statusName) {
+            client.user.setPresence({ activities: [{ name: config.statusName }] });
         }
-        const logEmbed = new EmbedBuilder()
-            .setTitle('Bot is ready')
-            .setDescription('Bot is now online and ready to use')
-            .setColor(green)
-            .setTimestamp();
-        channel.send({ embeds: [logEmbed] });
-        if (!statusName) return console.log('No status name provided in config.json')
-        else {
-        client.user.setPresence({ activities: [{ name: `${statusName}` }] });
-    }
+
+        const channel = findSendableChannel(client.guilds.cache.get(config.guildId), config.logChannels?.logChannel, 'logs')
+            || client.channels.cache.get(config.logChannels?.logChannel);
+
+        if (!channel?.send) return;
+
+        const logEmbed = createEmbed({
+            title: language.status.readyTitle,
+            description: language.status.readyDescription,
+            color: 'green',
+        });
+
+        channel.send({ embeds: [logEmbed] }).catch(error => {
+            console.error('Failed to send ready log:', error);
+        });
     },
 };

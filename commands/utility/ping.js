@@ -1,16 +1,19 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const { blue } = require('../../colors.json');
+const { SlashCommandBuilder } = require('discord.js');
+const { createEmbed } = require('../../utils/embeds');
 
 module.exports = {
-	data: new SlashCommandBuilder()
-		.setName('ping')
-		.setDescription('Replies with the bots Ping'),
-	async execute(interaction) {
-		const embed = new EmbedBuilder()
-		.setTitle('Ping 📈')
-		.setDescription(`Ping is: ${interaction.client.ws.ping}ms`)
-		.setColor(blue)
-		.setTimestamp();
-		await interaction.reply({ embeds: [embed] });
-	},
+    category: 'Utility',
+    data: new SlashCommandBuilder()
+        .setName('ping')
+        .setDescription('Replies with the bot ping.'),
+
+    async execute(interaction) {
+        const embed = createEmbed({
+            title: 'Ping',
+            description: `Ping is: ${interaction.client.ws.ping}ms`,
+            color: 'blue',
+        });
+
+        await interaction.reply({ embeds: [embed], ephemeral: true });
+    },
 };

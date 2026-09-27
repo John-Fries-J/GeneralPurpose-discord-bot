@@ -1,17 +1,35 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const { blue } = require('../../colors.json');
+const { SlashCommandBuilder } = require('discord.js');
+const { createEmbed } = require('../../utils/embeds');
+
+function formatDate(date) {
+    return date.toLocaleString('en-GB', {
+        timeZone: 'GMT',
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        timeZoneName: 'short',
+    });
+}
 
 module.exports = {
-	data: new SlashCommandBuilder()
-		.setName('server')
-		.setDMPermission(false)
-		.setDescription('Provides information about the server.'),
-	async execute(interaction) {
-		const embed = new EmbedBuilder()
-		.setTitle('Server Info')
-		.setDescription(`**Server's name:** ${interaction.guild.name} *(ID: ${interaction.guild.id})*\n**Server Owner:** <@${interaction.guild.ownerId}> \n**Members:** ${interaction.guild.memberCount}\n**Created:** ${interaction.guild.createdAt.toLocaleString('en-GB', {timeZone: 'GMT', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', timeZoneName: 'short'})}`)		.setColor(blue)
-		.setTimestamp()
-		.setThumbnail(interaction.guild.iconURL());
-		await interaction.reply({ embeds: [embed] });
-	},
+    category: 'Utility',
+    data: new SlashCommandBuilder()
+        .setName('server')
+        .setDMPermission(false)
+        .setDescription('Provides information about the server.'),
+
+    async execute(interaction) {
+        const guild = interaction.guild;
+        const embed = createEmbed({
+            title: 'Server Info',
+            description: `**Server name:** ${guild.name} *(ID: ${guild.id})*\n**Server owner:** <@${guild.ownerId}>\n**Members:** ${guild.memberCount}\n**Created:** ${formatDate(guild.createdAt)}`,
+            thumbnail: guild.iconURL(),
+            color: 'blue',
+        });
+
+        await interaction.reply({ embeds: [embed], ephemeral: true });
+    },
 };

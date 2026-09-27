@@ -1,101 +1,97 @@
 const axios = require('axios');
-const { EmbedBuilder } = require('discord.js');
-const { purple } = require('../colors.json');
-const config = require('../config.json');
+const { Events } = require('discord.js');
+const { getConfig } = require('../utils/config');
+const { createEmbed } = require('../utils/embeds');
 
-const clientId = config.Twitch.ClientId;
-const accessToken = config.Twitch.AccessToken;
-const streamerId = config.Twitch.streamerId;
-const channelId = config.Twitch.discordChannelId;
+async function fetchTwitchStreamData(twitchConfig) {
+    const response = await axios.get(`https://api.twitch.tv/helix/streams?user_id=${twitchConfig.streamerId}`, {
+        headers: {
+            'Client-ID': twitchConfig.ClientId,
+            Authorization: `Bearer ${twitchConfig.AccessToken}`,
+        },
+    });
 
-async function fetchTwitchStreamData() {
-    try {
-        const response = await axios.get(`https://api.twitch.tv/helix/streams?user_id=${streamerId}`, {
-            headers: {
-                'Client-ID': clientId,
-                'Authorization': `Bearer ${accessToken}`
-            }
-        });
+    const streamData = response.data.data[0];
+    if (!streamData || streamData.type !== 'live') return null;
 
-        const streamData = response.data.data[0];
+    const userResponse = await axios.get(`https://api.twitch.tv/helix/users?id=${twitchConfig.streamerId}`, {
+        headers: {
+            'Client-ID': twitchConfig.ClientId,
+            Authorization: `Bearer ${twitchConfig.AccessToken}`,
+        },
+    });
 
-        if (streamData && streamData.type === 'live') {
-            const userResponse = await axios.get(`https://api.twitch.tv/helix/users?id=${streamerId}`, {
-                headers: {
-                    'Client-ID': clientId,
-                    'Authorization': `Bearer ${accessToken}`
-                }
-            });
-            const profileImage = userResponse.data.data[0].profile_image_url || null;
+    const userData = userResponse.data.data[0];
 
-            return {
-                title: streamData.title,
-                description: `Playing ${streamData.game_name}`,
-                thumbnail: streamData.thumbnail_url.replace('{width}', '320').replace('{height}', '180'),
-                profileImage: profileImage
-            };
-        }
-
-        return null;
-    } catch (error) {
-        console.error('Error fetching Twitch stream data:', error);
-        return null;
-    }
+    return {
+        title: streamData.title,
+        description: `Playing ${streamData.game_name || 'Unknown'}`,
+        thumbnail: streamData.thumbnail_url.replace('{width}', '320').replace('{height}', '180'),
+        profileImage: userData?.profile_image_url,
+    };
 }
 
-async function sendStreamNotification(client) {
-    const streamData = await fetchTwitchStreamData();
-
-    if (streamData) {
-        const channel = client.channels.cache.get(channelId);
-        if (channel) {
-            const streamURL = `https://www.twitch.tv/${config.Twitch.streamerName}`;
-            const twitchEmbed = new EmbedBuilder()
-                .setTitle(streamData.title)
-                .setURL(streamURL)
-                .setDescription(streamData.description)
-                .setColor(purple)
-                .setImage(streamData.thumbnail)
-                .setThumbnail(streamData.profileImage)
-                .setTimestamp();
-
-            channel.send({ embeds: [twitchEmbed] });
-        } else {
-            console.error('Channel not found');
-        }
-    } else {
-        console.log('Streamer is not live.');
+async function sendStreamNotification(client, twitchConfig, streamData) {
+    const channel = await client.channels.fetch(twitchConfig.discordChannelId).catch(() => null);
+    if (!channel?.send) {
+        console.error('Twitch notification channel not found.');
+        return;
     }
+
+    const streamUrl = `https://www.twitch.tv/${twitchConfig.streamerName}`;
+    const twitchEmbed = createEmbed({
+        title: streamData.title,
+        url: streamUrl,
+        description: streamData.description,
+        image: streamData.thumbnail,
+        thumbnail: streamData.profileImage,
+        color: 'purple',
+    });
+
+    await channel.send({ embeds: [twitchEmbed] });
 }
 
-let isLive = false;
+function hasTwitchConfig(twitchConfig) {
+    return Boolean(
+        twitchConfig?.ClientId
+        && twitchConfig?.AccessToken
+        && twitchConfig?.streamerId
+        && twitchConfig?.discordChannelId
+        && twitchConfig?.streamerName
+    );
+}
 
 module.exports = {
-    name: 'ready',
-    once: false,
+    name: Events.ClientReady,
+    once: true,
     async execute(client) {
-        if (!clientId) {console.error('You have set your ClientID in the twitch configuration incorrectly or there is an error.');return;}
-        if (!accessToken) {console.error('You have set your accessToken in the twitch configuration incorrectly or there is an error.');return;}
-        if (!streamerId) {console.error('You have set your streamerId in the twitch configuration incorrectly or there is an error.');return;}
-        if (!channelId) {console.error('You have set your channelId in the twitch configuration incorrectly or there is an error.');return;}
-        console.log('Twitch Live event is active.');
+        const twitchConfig = getConfig().Twitch;
+        if (!hasTwitchConfig(twitchConfig)) {
+            console.log('Twitch notifications disabled. Add Twitch config values to enable them.');
+            return;
+        }
+
+        let isLive = false;
+        console.log('Twitch live event is active.');
 
         setInterval(async () => {
-            const streamData = await fetchTwitchStreamData();
+            try {
+                const streamData = await fetchTwitchStreamData(twitchConfig);
 
-            if (streamData) {
-                if (!isLive) {
+                if (streamData && !isLive) {
                     isLive = true;
-                    await sendStreamNotification(client);
-                    console.log('Streamer is live & notification sent.');
+                    await sendStreamNotification(client, twitchConfig, streamData);
+                    console.log('Streamer is live and notification sent.');
+                    return;
                 }
-            } else {
-                if (isLive) {
+
+                if (!streamData && isLive) {
                     isLive = false;
                     console.log('Streamer is not live or stream ended.');
                 }
-                isLive = false;
+            } catch (error) {
+                console.error('Error checking Twitch stream:', error.response?.data || error.message);
             }
-        }, 3000); 
-    }
+        }, 60 * 1000);
+    },
 };

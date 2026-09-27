@@ -1,13 +1,13 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const { blue } = require('../../colors.json');
-const fs = require('fs');
-const path = require('path');
+const { SlashCommandBuilder } = require('discord.js');
+const language = require('../../utils/language');
+const { createEmbed } = require('../../utils/embeds');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('help')
-        .setDescription('Shows all available commands')
-        .addStringOption(option => option.setName('command').setDescription('The command to get help for')),
+        .setDescription('Shows all available commands.')
+        .addStringOption(option => option.setName('command').setDescription('The command to get help for.')),
+
     async execute(interaction) {
         const commandName = interaction.options.getString('command');
         const commands = interaction.client.commands;
@@ -15,39 +15,47 @@ module.exports = {
         if (commandName) {
             const command = commands.get(commandName);
             if (!command) {
-                return await interaction.reply({ content: 'That command does not exist.', ephemeral: true });
+                return interaction.reply({ content: language.help.missingCommand, ephemeral: true });
             }
 
-            const embed = new EmbedBuilder()
-                .setTitle(`Help for **${commandName}** command`)
-                .setDescription(`**Description:**\n${command.data.description}`);
-
-            if (command.data.options && command.data.options.length > 0) {
-                const optionsDescription = command.data.options.map(option => {
-                    return `**${option.name}:** ${option.description}`;
-                }).join('\n');
-                embed.addFields({ name: 'Options', value: optionsDescription });
-            }
-
-            await interaction.reply({ embeds: [embed.setColor(blue).setTimestamp()] });
-        } else {
-            const commandCategories = fs.readdirSync("./commands").filter(file => fs.lstatSync(path.join("./commands", file)).isDirectory());
-            const embed = new EmbedBuilder()
-                .setTitle('Help 📚')
-                .setColor(blue)
-                .setTimestamp();
-
-            commandCategories.forEach(category => {
-                const categoryCommands = fs.readdirSync(`./commands/${category}`).filter(file => file.endsWith('.js'));
-                const commands = categoryCommands.map(command => {
-                    const commandName = require(`../${category}/${command}`).data.name;
-                    const commandDescription = require(`../${category}/${command}`).data.description;
-                    return `**${commandName}:** ${commandDescription}`;
+            const fields = [];
+            const options = command.data.options || [];
+            if (options.length > 0) {
+                fields.push({
+                    name: 'Options',
+                    value: options.map(option => `**${option.name}:** ${option.description}`).join('\n'),
                 });
-                embed.addFields({ name: "**__" + category.charAt(0).toUpperCase() + category.slice(1) + ":__**", value: commands.join('\n') });
+            }
+
+            const embed = createEmbed({
+                title: `Help for /${commandName}`,
+                description: command.data.description,
+                fields,
+                color: 'blue',
             });
 
-            await interaction.reply({ embeds: [embed] });
+            return interaction.reply({ embeds: [embed], ephemeral: true });
         }
+
+        const categories = new Map();
+        for (const command of commands.values()) {
+            const category = command.category || 'General';
+            const current = categories.get(category) || [];
+            current.push(`**/${command.data.name}:** ${command.data.description}`);
+            categories.set(category, current);
+        }
+
+        const fields = [...categories.entries()].map(([category, categoryCommands]) => ({
+            name: category,
+            value: categoryCommands.sort().join('\n').slice(0, 1024),
+        }));
+
+        const embed = createEmbed({
+            title: language.help.title,
+            fields,
+            color: 'blue',
+        });
+
+        await interaction.reply({ embeds: [embed], ephemeral: true });
     },
 };

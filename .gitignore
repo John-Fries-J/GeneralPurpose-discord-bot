@@ -1,5 +1,7 @@
 config.json
 node_modules/
 .vscode/settings.json
+.idea/
+.env
 events/botDms.js
 commands/utility/start.js

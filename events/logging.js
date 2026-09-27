@@ -1,32 +1,33 @@
-const { Events, EmbedBuilder } = require('discord.js');
-const { blue } = require('../colors.json');
-const config = require('../config.json');
+const { Events } = require('discord.js');
+const { getConfig } = require('../utils/config');
+const { createEmbed } = require('../utils/embeds');
+const { findSendableChannel } = require('../utils/discord');
 
 module.exports = {
     name: Events.InteractionCreate,
     async execute(interaction) {
-        const channelId = `${config.logChannels.logChannel}`;
-        const channel = interaction.guild.channels.cache.get(channelId) || interaction.guild.channels.cache.find(channel => channel.name === 'logs');
-        
-        if (!channel) {
-            console.log('Log channel not found please check your config.json');
-            return;
-        }
+        if (!interaction.guild || interaction.user?.bot) return;
 
-        if (interaction.isButton()) {
-            const logEmbed = new EmbedBuilder()
-                .setTitle(`${interaction.user.tag} Clicked a button`)
-                .setDescription(`${interaction.user.tag} clicked a button in ${interaction.channel}`)
-                .setColor(blue)
-                .setTimestamp();
-            channel.send({ embeds: [logEmbed] });
-        } else {
-            const logEmbed = new EmbedBuilder()
-                .setTitle(`${interaction.user.tag} ran a command`)
-                .setDescription(`Command ran in ${interaction.channel}, by ${interaction.user.tag}.\nCommand: ${interaction.commandName}\n[Go there](https://discord.com/channels/${interaction.guild.id}/${interaction.channel.id}/${interaction.id})`)
-                .setColor(blue)
-                .setTimestamp();
-            channel.send({ embeds: [logEmbed] });
-        }
-    }
+        const config = getConfig();
+        const channel = findSendableChannel(interaction.guild, config.logChannels?.logChannel, 'logs');
+        if (!channel) return;
+
+        const isButton = interaction.isButton();
+        const title = isButton
+            ? `${interaction.user.tag} clicked a button`
+            : `${interaction.user.tag} ran a command`;
+        const description = isButton
+            ? `${interaction.user.tag} clicked ${interaction.customId} in ${interaction.channel}.`
+            : `Command ran in ${interaction.channel} by ${interaction.user.tag}.\nCommand: /${interaction.commandName}`;
+
+        const logEmbed = createEmbed({
+            title,
+            description,
+            color: 'blue',
+        });
+
+        await channel.send({ embeds: [logEmbed] }).catch(error => {
+            console.error('Failed to send interaction log:', error);
+        });
+    },
 };

@@ -1,36 +1,45 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const { blue } = require('../../colors.json');
+const { SlashCommandBuilder } = require('discord.js');
+const language = require('../../utils/language');
+const { createEmbed } = require('../../utils/embeds');
+const { formatTemplate } = require('../../utils/template');
+
+function buildWelcomeEmbed(user, guild) {
+    const welcome = language.welcome;
+    const description = formatTemplate(welcome.description, {
+        user: user ? `<@${user.id}>` : 'there',
+    });
+
+    return createEmbed({
+        title: welcome.title,
+        description,
+        thumbnail: welcome.thumbnail,
+        footerText: welcome.footer,
+        footerIcon: guild?.iconURL() || undefined,
+        color: 'blue',
+    });
+}
 
 module.exports = {
+    category: 'Utility',
     data: new SlashCommandBuilder()
         .setName('welcome')
-        .setDescription('Sends welcome embed reminding the user to read the rules.')
-        .addUserOption(option => option.setName('user').setDescription('Ping the user with the message')),
+        .setDescription('Sends the welcome embed.')
+        .setDMPermission(false)
+        .addUserOption(option => option.setName('user').setDescription('Ping the user with the message.')),
+
     async execute(interaction) {
-        if (!$config.welcomeEmbed.title || !$config.welcomeEmbed.description || !$config.welcomeEmbed.footer || !$config.welcomeEmbed.thumbnail) {
-            interaction.reply({ content: 'The welcome embed is not set up properly. Please check the config file.', ephemeral: true });
-            console.log('The welcome embed is not set up properly. Please check the config file.');
+        const user = interaction.options.getUser('user');
+        const embed = buildWelcomeEmbed(user, interaction.guild);
+
+        if (user) {
+            await interaction.channel.send({ content: `<@${user.id}>`, embeds: [embed] });
+            return interaction.reply({
+                content: formatTemplate(language.welcome.sent, { user: `<@${user.id}>` }),
+                ephemeral: true,
+            });
         }
-        else if (!interaction.options.getUser('user')) {
-            const newembed = new EmbedBuilder()
-            .setTitle(`${config.welcomeEmbed.title}`)
-            .setDescription(`${config.welcomeEmbed.description}`)
-            .setFooter({ text: `${config.welcomeEmbed.footer}` })
-            .setThumbnail({ url: `${config.welcomeEmbed.thumbnail}` })
-            .setCiolor(blue);     
-            interaction.reply({ embeds: [welcomeEmbed] });
-        }
-        else if (interaction.options.getUser('user')) {
-            const user = interaction.options.getUser('user');
-            channel = interaction.guild.channels.cache.get(interaction.channelId);
-            const newembed = new EmbedBuilder()
-            .setTitle(`${config.welcomeEmbed.title}`)
-            .setDescription(`${config.welcomeEmbed.description}`)
-            .setFooter({ text: `${config.welcomeEmbed.footer}` })
-            .setThumbnail({ url: `${config.welcomeEmbed.thumbnail}` })
-            .setCiolor(blue);     
-            channel.send({content: `${user}`, embeds: [welcomeEmbed] });
-            interaction.reply({ content: `Welcome embed has been sent to ${user}`, ephemeral: true });
-        }
-    }
-}
+
+        await interaction.reply({ embeds: [embed] });
+    },
+    buildWelcomeEmbed,
+};

@@ -1,28 +1,30 @@
-const { Events, EmbedBuilder } = require('discord.js');
-const { blue } = require('../colors.json');
-const config = require('../config.json');
+const { Events } = require('discord.js');
+const { getConfig } = require('../utils/config');
+const { createEmbed } = require('../utils/embeds');
+const { findSendableChannel, truncate } = require('../utils/discord');
 
 module.exports = {
     name: Events.MessageDelete,
     async execute(message) {
-        if (!message.guild || message.author?.bot) return;
-        const channelId = config.logChannels?.MessageDelete;
-        const channel = message.guild.channels.cache.get(channelId) || message.guild.channels.cache.find(ch => ch.name === 'logs');
-        if (!channel) {
-            console.warn('Logging channel not found for message deletion.');
-            return;
+        if (message.partial) {
+            await message.fetch().catch(() => null);
         }
-        const messageContent = message.content || '[No content]';
-        const logEmbed = new EmbedBuilder()
-            .setTitle(`Message deleted in #${message.channel.name}`)
-            .setDescription(`**Author:** ${message.author.tag}\n**Message:** ${messageContent}\n**Location:** [Jump to message](${message.url})`)
-            .setColor(blue)
-            .setTimestamp();
 
-        try {
-            await channel.send({ embeds: [logEmbed] });
-        } catch (error) {
-            console.error('Error sending log message:', error);
-        }
-    }
+        if (!message.guild || message.author?.bot) return;
+
+        const config = getConfig();
+        const channelId = config.logChannels?.messageDelete;
+        const channel = findSendableChannel(message.guild, channelId, 'logs');
+        if (!channel) return;
+
+        const logEmbed = createEmbed({
+            title: `Message deleted in #${message.channel?.name || 'unknown'}`,
+            description: `**Author:** ${message.author?.tag || 'Unknown'}\n**Message:** ${truncate(message.content)}\n**Channel:** ${message.channel}`,
+            color: 'blue',
+        });
+
+        await channel.send({ embeds: [logEmbed] }).catch(error => {
+            console.error('Error sending delete log:', error);
+        });
+    },
 };

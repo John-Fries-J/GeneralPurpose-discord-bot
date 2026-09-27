@@ -1,24 +1,28 @@
-const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
-const { blue } = require('../../colors.json');
+const { SlashCommandBuilder } = require('discord.js');
+const { createEmbed } = require('../../utils/embeds');
 
 module.exports = {
-	data: new SlashCommandBuilder()
-		.setName('member')
-		.setDescription('Lists all members within a role.')
-		.addRoleOption(option => option.setName('role').setDescription('The role to list members from').setRequired(true)),
-	async execute(interaction) {
-		const role = interaction.options.getRole('role');
-		const membersWithRole = interaction.guild.members.cache.filter(member => member.roles.cache.has(role.id));
-		const mentions = membersWithRole
-			.map(member => `<@${member.id}>`)
-			.slice(0, 90);
+    category: 'Utility',
+    data: new SlashCommandBuilder()
+        .setName('member')
+        .setDescription('Lists members within a role.')
+        .setDMPermission(false)
+        .addRoleOption(option => option.setName('role').setDescription('The role to list members from.').setRequired(true)),
 
-		const embed = new EmbedBuilder()
-			.setTitle('Members with the role:')
-			.setDescription(mentions.join('\n') || 'No members found with this role.')
-			.setColor(blue)
-			.setTimestamp();
+    async execute(interaction) {
+        const role = interaction.options.getRole('role', true);
+        await interaction.guild.members.fetch();
 
-		await interaction.reply({ embeds: [embed] });
-	},
+        const mentions = role.members
+            .map(member => `<@${member.id}>`)
+            .slice(0, 90);
+
+        const embed = createEmbed({
+            title: `Members with ${role.name}`,
+            description: mentions.join('\n') || 'No members found with this role.',
+            color: 'blue',
+        });
+
+        await interaction.reply({ embeds: [embed], ephemeral: true });
+    },
 };
