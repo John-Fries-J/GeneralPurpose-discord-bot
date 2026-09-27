@@ -1,6 +1,6 @@
 const { ChannelType, PermissionFlagsBits } = require('discord.js');
 const { getConfig } = require('./config');
-const { getTempVoiceChannel, removeTempVoiceChannel, removeTempVoiceChannelsForGuild, upsertTempVoiceChannel } = require('./store');
+const { getTempVoiceChannel, listTempVoiceChannelsForGuild, removeTempVoiceChannel, upsertTempVoiceChannel } = require('./store');
 
 function getJoinToCreateConfig(config = getConfig()) {
     return {
@@ -42,14 +42,18 @@ async function sendJoinToCreateIntro(channel, member) {
 }
 
 async function deleteJoinToCreateChannels(guild) {
-    const records = await removeTempVoiceChannelsForGuild(guild.id);
+    const records = await listTempVoiceChannelsForGuild(guild.id);
     let deleted = 0;
 
     for (const record of records) {
         const channel = guild.channels.cache.get(record.channelId) || await guild.channels.fetch(record.channelId).catch(() => null);
-        if (!channel) continue;
+        if (!channel) {
+            await removeTempVoiceChannel(record.channelId);
+            continue;
+        }
         await channel.delete('Join-to-create disabled').then(() => {
             deleted += 1;
+            return removeTempVoiceChannel(record.channelId);
         }).catch(error => {
             console.error(`Failed to delete join-to-create channel ${record.channelId}:`, error);
         });

@@ -249,6 +249,17 @@ Leveling:
 
 Use `language.json` for text users see in embeds, replies, ticket buttons, welcome messages, and the embed watermark.
 
+Every embed uses the footer watermark:
+
+```json
+"watermark": {
+    "text": "Developed by johnfries",
+    "userId": "630070645874622494"
+}
+```
+
+Discord embed footers cannot ping users, so the user ID is included as footer text.
+
 ## Checks
 
 Run a syntax check before committing:

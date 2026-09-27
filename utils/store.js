@@ -290,16 +290,8 @@ async function removeTempVoiceChannel(channelId) {
     });
 }
 
-async function removeTempVoiceChannelsForGuild(guildId) {
-    let removed = [];
-
-    await updateState(state => {
-        removed = state.tempVoiceChannels.filter(item => item.guildId === guildId);
-        state.tempVoiceChannels = state.tempVoiceChannels.filter(item => item.guildId !== guildId);
-        return state;
-    });
-
-    return removed;
+async function listTempVoiceChannelsForGuild(guildId) {
+    return (await readState()).tempVoiceChannels.filter(item => item.guildId === guildId);
 }
 
 async function getTempVoiceChannel(channelId) {
@@ -419,13 +411,13 @@ module.exports = {
     getTempVoiceChannel,
     getUserLevelRecord,
     listLevelLeaderboard,
+    listTempVoiceChannelsForGuild,
     listUserHistory,
     listModerationCases,
     readState,
     removeTempBan,
     removeTempMute,
     removeTempVoiceChannel,
-    removeTempVoiceChannelsForGuild,
     updateModerationCaseReason,
     upsertTempBan,
     upsertTempMute,
