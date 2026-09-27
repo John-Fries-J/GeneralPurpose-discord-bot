@@ -1,7 +1,7 @@
 {
   "name": "generalpurpose-discord-bot",
   "version": "1.0.0",
-  "description": "basic discord bot with simple commands",
+  "description": "A Discord.js v14 moderation, ticket, suggestion, utility, and dashboard bot.",
   "engines": {
     "node": ">=20"
   },
@@ -16,6 +16,7 @@
     "check": "node scripts/check.js",
     "lint": "node scripts/lint.js",
     "test": "npm run check && node --test",
+    "start": "node index.js",
     "run": "node index.js"
   },
   "repository": {
@@ -28,7 +29,7 @@
     "discordjs"
   ],
   "author": "john-fries-j",
-  "license": "ISC",
+  "license": "Apache-2.0",
   "bugs": {
     "url": "https://github.com/John-Fries-J/GeneralPurpose-discord-bot/issues"
   },
