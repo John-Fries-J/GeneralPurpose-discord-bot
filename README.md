@@ -208,6 +208,9 @@ Config:
 - `/twitch set-credentials client_id access_token` saves Twitch API credentials.
 - `/twitch add streamer_id streamer_name text_channel message` adds Twitch announcements.
 - `/twitch remove streamer_id text_channel` removes Twitch announcements.
+- `/jointocreate setup trigger_channel category name_format max_limit` enables join-to-create.
+- `/jointocreate disable` disables join-to-create.
+- `/voice limit amount`, `/voice name name`, `/voice lock`, `/voice unlock`, `/voice permit user`, and `/voice reject user` manage owned temporary voice channels.
 
 Honeypot:
 
@@ -225,6 +228,12 @@ Media Announcements:
 - YouTube and Twitch support multiple source channels and different Discord destination channels.
 - YouTube messages can be configured separately for videos, shorts, live streams, and community posts. Without a YouTube API key, the bot falls back to the YouTube RSS feed and uses heuristics for shorts/streams.
 - Twitch live messages support `{streamer}`, `{title}`, `{game}`, and `{url}`.
+
+Join-to-Create:
+
+- Users join the configured trigger voice channel and the bot creates a temporary channel for them.
+- Empty temporary channels are deleted automatically.
+- Owners can set a limit within the configured maximum, rename, lock, unlock, permit users, and reject users.
 
 ## Editing Text
 

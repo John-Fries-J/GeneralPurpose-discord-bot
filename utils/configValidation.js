@@ -104,6 +104,19 @@ function validateConfig(config, options = {}) {
         }
     }
 
+    if (config.joinToCreate !== undefined) {
+        if (!isPlainObject(config.joinToCreate)) {
+            errors.push('joinToCreate must be an object.');
+        } else {
+            if (config.joinToCreate.enabled !== undefined && typeof config.joinToCreate.enabled !== 'boolean') {
+                errors.push('joinToCreate.enabled must be a boolean.');
+            }
+            if (config.joinToCreate.userLimitMax !== undefined && (!Number.isInteger(config.joinToCreate.userLimitMax) || config.joinToCreate.userLimitMax < 1 || config.joinToCreate.userLimitMax > 99)) {
+                errors.push('joinToCreate.userLimitMax must be an integer from 1 to 99.');
+            }
+        }
+    }
+
     if (config.database !== undefined) {
         if (!isPlainObject(config.database)) {
             errors.push('database must be an object.');

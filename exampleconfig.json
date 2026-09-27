@@ -45,6 +45,13 @@
         "accessToken": "",
         "channels": []
     },
+    "joinToCreate": {
+        "enabled": false,
+        "triggerChannelId": "",
+        "categoryId": "",
+        "nameFormat": "{username}'s Channel",
+        "userLimitMax": 25
+    },
     "dashboard": {
         "enabled": false,
         "host": "0.0.0.0",

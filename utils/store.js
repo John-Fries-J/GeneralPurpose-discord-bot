@@ -19,6 +19,7 @@ function createEmptyState() {
         nextCaseId: 1,
         tempBans: [],
         tempMutes: [],
+        tempVoiceChannels: [],
     };
 }
 
@@ -267,6 +268,25 @@ async function listUserHistory(guildId, userId, limit = 15) {
         .slice(0, limit);
 }
 
+async function upsertTempVoiceChannel(record) {
+    return updateState(state => {
+        state.tempVoiceChannels = state.tempVoiceChannels.filter(item => item.channelId !== record.channelId);
+        state.tempVoiceChannels.push(record);
+        return state;
+    });
+}
+
+async function removeTempVoiceChannel(channelId) {
+    return updateState(state => {
+        state.tempVoiceChannels = state.tempVoiceChannels.filter(item => item.channelId !== channelId);
+        return state;
+    });
+}
+
+async function getTempVoiceChannel(channelId) {
+    return (await readState()).tempVoiceChannels.find(item => item.channelId === channelId) || null;
+}
+
 async function getModerationCase(guildId, caseId) {
     return (await readState()).cases.find(item => item.guildId === guildId && item.id === Number(caseId)) || null;
 }
@@ -325,12 +345,15 @@ module.exports = {
     createEmptyState,
     getTempMute,
     getModerationCase,
+    getTempVoiceChannel,
     listUserHistory,
     listModerationCases,
     readState,
     removeTempBan,
     removeTempMute,
+    removeTempVoiceChannel,
     updateModerationCaseReason,
     upsertTempBan,
     upsertTempMute,
+    upsertTempVoiceChannel,
 };
