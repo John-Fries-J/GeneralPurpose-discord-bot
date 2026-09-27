@@ -261,6 +261,11 @@ function formatIdList(value) {
     return normalizeIdList(value).join(', ');
 }
 
+function getEditableLanguageValues(source) {
+    const { watermark, ...editable } = source;
+    return editable;
+}
+
 function renderLayout(title, body, user = null, client = null, active = 'overview') {
     const avatar = getBotAvatar(client);
     const botName = client?.user?.username || 'Bot Dashboard';
@@ -310,12 +315,15 @@ p{line-height:1.55}
 .row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid #edf2f7}
 .row:last-child{border-bottom:0}
 .module-card{scroll-margin-top:18px}
+.module-card.is-collapsed .module-body{display:none}
 .module-head{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:12px}
 .module-link{display:block;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--panel-2)}
-.module-link strong{display:block;margin-bottom:4px}
+.module-link strong{display:block;margin-bottom:4px}.module-link:hover{border-color:var(--brand);transform:translateY(-1px)}
 .command{border:1px solid var(--line);border-radius:8px;padding:12px;margin:10px 0;background:#fff}
+.command.is-hidden{display:none}
 .command-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .command-title{font-family:Consolas,monospace;font-size:14px}
+.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0}.toolbar input{max-width:340px}
 .access-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:12px}
 label{display:grid;gap:6px;font-size:13px;color:#344054}
 input,select,textarea{width:100%;border:1px solid #cfd8e3;border-radius:8px;padding:9px 10px;font:inherit;background:white;color:var(--text)}
@@ -332,6 +340,7 @@ button.danger{background:var(--danger)}
 .log{font-family:Consolas,monospace;font-size:12px;background:#101828;color:#d9e1ee;padding:12px;border-radius:8px;overflow:auto;max-height:360px}
 .log-entry{padding:7px 0;border-bottom:1px solid #263144}
 .notice{border-left:4px solid var(--brand);background:#eef2ff;padding:12px;border-radius:8px;margin-bottom:16px}
+.preview{border:1px solid var(--line);border-radius:8px;background:#f8fafc;padding:12px;margin-top:12px}.preview-title{font-weight:700;margin-bottom:6px}.preview-body{white-space:pre-wrap;color:#344054}
 .split-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .auth-card{max-width:520px;margin:12vh auto;background:white;border:1px solid var(--line);border-radius:8px;padding:24px;box-shadow:var(--shadow)}
 @media (max-width:960px){.shell{grid-template-columns:1fr}.sidebar{position:relative;height:auto}.content{padding:18px}.metric,.wide,.side{grid-column:1/-1}.access-grid{grid-template-columns:1fr}.topbar{display:block}}
@@ -346,6 +355,46 @@ button.danger{background:var(--danger)}
 </aside>
 <main class="content">${body}</main>
 </div>
+<script>
+document.querySelectorAll('[data-command-search]').forEach(input => {
+    input.addEventListener('input', () => {
+        const root = document.querySelector(input.dataset.commandSearch);
+        if (!root) return;
+        const query = input.value.trim().toLowerCase();
+        root.querySelectorAll('.command').forEach(command => {
+            command.classList.toggle('is-hidden', query && !command.textContent.toLowerCase().includes(query));
+        });
+    });
+});
+document.querySelectorAll('[data-collapse-target]').forEach(button => {
+    button.addEventListener('click', () => {
+        const target = document.querySelector(button.dataset.collapseTarget);
+        if (!target) return;
+        target.classList.toggle('is-collapsed');
+        button.textContent = target.classList.contains('is-collapsed') ? 'Expand' : 'Collapse';
+    });
+});
+document.querySelectorAll('[data-copy]').forEach(button => {
+    button.addEventListener('click', async () => {
+        await navigator.clipboard?.writeText(button.dataset.copy);
+        button.textContent = 'Copied';
+        setTimeout(() => { button.textContent = button.dataset.copyLabel || 'Copy'; }, 900);
+    });
+});
+const messageForm = document.querySelector('[data-message-form]');
+if (messageForm) {
+    const renderPreview = () => {
+        const title = messageForm.embedTitle.value.trim() || 'Embed title';
+        const description = messageForm.embedDescription.value.trim() || 'Embed description preview';
+        const content = messageForm.content.value.trim() || 'Message content preview';
+        document.querySelector('[data-preview-content]').textContent = content;
+        document.querySelector('[data-preview-title]').textContent = title;
+        document.querySelector('[data-preview-body]').textContent = description;
+    };
+    messageForm.addEventListener('input', renderPreview);
+    renderPreview();
+}
+</script>
 </body>
 </html>`;
 }
@@ -386,6 +435,8 @@ function renderDashboard(client, session, notice = '') {
     const settings = getCommandSettings(config);
     const grouped = groupCommands(client);
     const languageValues = language.loadLanguage();
+    const editableLanguageValues = getEditableLanguageValues(languageValues);
+    const lockedWatermark = language.getLockedWatermark();
     const logs = readDashboardLogs(120);
     const channels = getSendableChannels(client);
     const roles = getGuildRoles(client);
@@ -401,12 +452,17 @@ function renderDashboard(client, session, notice = '') {
 <section class="panel module-card" id="module-${escapeHtml(slug(category))}">
 <div class="module-head">
 <div><h2>${escapeHtml(humanize(category))}</h2><p class="muted">${commands.length} command${commands.length === 1 ? '' : 's'} in this module.</p></div>
+<div class="split-actions">
+<button class="secondary" type="button" data-collapse-target="#module-${escapeHtml(slug(category))}">Collapse</button>
 <form method="post" action="/toggle-module">
 ${csrfInput(session)}
 <input type="hidden" name="module" value="${escapeHtml(category)}">
 <label><input type="checkbox" name="enabled" ${settings.modules[category] === false ? '' : 'checked'} onchange="this.form.submit()"> Module enabled</label>
 </form>
 </div>
+</div>
+<div class="module-body">
+<div class="toolbar"><input data-command-search="#module-${escapeHtml(slug(category))}" placeholder="Search ${escapeHtml(humanize(category))} commands"></div>
 ${commands.map(command => `
 <div class="command">
 <div class="command-head">
@@ -420,13 +476,14 @@ ${csrfInput(session)}
 ${renderAccessForm(command, settings, roles, session)}
 </div>`).join('')}
 ${getLanguageSectionsForCategory(category).map(section => renderLanguageEditor(section, languageValues[section], session)).join('')}
+</div>
 </section>`).join('');
 
     const logsHtml = logs.length ? logs.map(log => `
 <div class="log-entry"><span class="muted">${escapeHtml(log.at)}</span> ${escapeHtml(log.message)} ${log.type ? `<span class="muted">[${escapeHtml(log.type)}]</span>` : ''}</div>`).join('') : '<div class="muted">No dashboard logs yet.</div>';
 
     const channelOptions = channels.map(channel => `<option value="${escapeHtml(channel.id)}">#${escapeHtml(channel.name)}</option>`).join('');
-    const rolePills = roles.slice(0, 20).map(role => `<span class="pill">${escapeHtml(role.name)} ${escapeHtml(role.id)}</span>`).join('');
+    const rolePills = roles.slice(0, 20).map(role => `<button class="pill" type="button" data-copy="${escapeHtml(role.id)}" data-copy-label="${escapeHtml(role.name)}">${escapeHtml(role.name)} ${escapeHtml(role.id)}</button>`).join('');
 
     return renderLayout('Bot Dashboard', `
 ${notice ? `<div class="notice">${escapeHtml(notice)}</div>` : ''}
@@ -455,7 +512,7 @@ ${notice ? `<div class="notice">${escapeHtml(notice)}</div>` : ''}
 <section class="panel" id="sender">
 <h2>Message Sender</h2>
 <p class="muted">Send a plain message or a simple embed as the bot.</p>
-<form method="post" action="/send-message">
+<form method="post" action="/send-message" data-message-form>
 ${csrfInput(session)}
 <div class="access-grid">
 <label>Channel<select name="channelId" required>${channelOptions || '<option value="">No sendable channels cached</option>'}</select></label>
@@ -463,6 +520,14 @@ ${csrfInput(session)}
 </div>
 <label>Message<textarea name="content" maxlength="2000" placeholder="Message content"></textarea></label>
 <label>Embed description<textarea name="embedDescription" maxlength="4000" placeholder="Optional"></textarea></label>
+<div class="preview">
+<p class="muted">Live preview</p>
+<div data-preview-content class="preview-body"></div>
+<div class="panel" style="box-shadow:none;margin:10px 0 0;border-left:4px solid var(--brand)">
+<div data-preview-title class="preview-title"></div>
+<div data-preview-body class="preview-body"></div>
+</div>
+</div>
 <p><button class="success" type="submit">Send through bot</button></p>
 </form>
 </section>
@@ -470,10 +535,11 @@ ${rolePills ? `<section class="panel"><h2>Role Reference</h2><div class="pillrow
 <section>${commandsHtml}</section>
 <section class="panel">
 <h2>All Language</h2>
-<p class="muted">For broad edits, update the full language file here. Module cards above expose the common response groups.</p>
+<p class="muted">For broad edits, update response text here. The footer watermark is locked in code and will be preserved on save.</p>
+<p class="pill">Locked watermark: ${escapeHtml(lockedWatermark.text)} (${escapeHtml(lockedWatermark.userId)})</p>
 <form method="post" action="/language-json">
 ${csrfInput(session)}
-<textarea class="config-json" name="language">${escapeHtml(JSON.stringify(languageValues, null, 4))}</textarea>
+<textarea class="config-json" name="language">${escapeHtml(JSON.stringify(editableLanguageValues, null, 4))}</textarea>
 <p><button class="success" type="submit">Save language.json</button></p>
 </form>
 </section>

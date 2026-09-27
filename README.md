@@ -103,9 +103,39 @@ docker run --rm -it \
   generalpurpose-discord-bot
 ```
 
+### Dashboard With A Domain
+
+The included `docker-compose.dashboard.yml` runs the bot behind nginx. It expects TLS files at `deploy/certs/fullchain.pem` and `deploy/certs/privkey.pem`, which can come from certbot, Cloudflare origin certificates, or another certificate provider.
+
+1. Create a deployment env file:
+
+```bash
+cp deploy/dashboard.env.example .env
+```
+
+2. Edit `.env` and set:
+
+```bash
+DASHBOARD_DOMAIN=dashboard.example.com
+```
+
+3. In the Discord Developer Portal, add this OAuth redirect URL:
+
+```text
+https://dashboard.example.com/auth/discord/callback
+```
+
+4. Start the dashboard stack:
+
+```bash
+docker compose -f docker-compose.dashboard.yml --env-file .env up -d --build
+```
+
+5. Point your domain's DNS record at the server running Docker. nginx listens on ports `80` and `443` and proxies the dashboard to the bot container.
+
 ## Web Dashboard
 
-The dashboard is intentionally simple and disabled by default.
+The dashboard is disabled by default.
 
 1. In the Discord Developer Portal, open your application and go to **OAuth2**.
 2. Add this redirect URL: `http://localhost:3000/auth/discord/callback`.
@@ -115,6 +145,8 @@ The dashboard is intentionally simple and disabled by default.
 6. Start the bot and open `http://localhost:3000`.
 
 Dashboard access requires Discord OAuth. Users can manage it if they are listed in `devs` or have `Manage Server` in the configured `guildId`. The panel can edit `config.json`, toggle modules, toggle individual commands, set per-command user/role access rules, edit `language.json` response text, send messages through the bot, and view recent bot/dashboard logs. Disabled commands are blocked immediately; restart the bot to refresh Discord's visible slash command list.
+
+The dashboard language editor cannot change the embed footer watermark. The watermark is locked by code in `utils/language.js`, so changing it requires a code edit rather than a dashboard save.
 
 The dashboard exposes `GET /health` for deployment checks. It returns process uptime, Discord readiness, and the number of cached guilds.
 
@@ -247,7 +279,7 @@ Leveling:
 
 ## Editing Text
 
-Use `language.json` for text users see in embeds, replies, ticket buttons, welcome messages, and the embed watermark.
+Use `language.json` for text users see in embeds, replies, ticket buttons, and welcome messages.
 
 Every embed uses the footer watermark:
 
@@ -258,7 +290,17 @@ Every embed uses the footer watermark:
 }
 ```
 
-Discord embed footers cannot ping users, so the user ID is included as footer text.
+Discord embed footers cannot ping users, so the user ID is included as footer text. Dashboard edits preserve this watermark; change `utils/language.js` if you intentionally need different coded branding.
+
+## Feature Ideas
+
+- Audit timeline: show recent moderation, ticket, honeypot, and dashboard actions in one searchable view.
+- Scheduled announcements: queue messages or embeds from the dashboard for a later date.
+- Embed builder: add fields, thumbnails, images, colors, and reusable templates to the dashboard message sender.
+- Ticket analytics: open/close counts, average close time, and staff activity.
+- Leveling editor: manage XP rewards, cooldowns, and leaderboard settings without JSON editing.
+- Permission presets: save reusable command-access profiles for staff, moderators, and helpers.
+- Health page: show Discord latency, uptime, scheduler status, and failed API integrations.
 
 ## Checks
 
