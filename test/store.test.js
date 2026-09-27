@@ -112,3 +112,39 @@ test('moderation case helpers create, edit, list, and clear warnings', async () 
         fs.rmSync(directory, { recursive: true, force: true });
     }
 });
+
+test('user history helpers keep recent user events', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'bot-store-'));
+    const sqlitePath = path.join(directory, 'history.sqlite');
+    const { store, restore } = loadStoreWithEnvironment({
+        DATABASE_PROVIDER: 'sqlite',
+        DATABASE_SQLITE_PATH: sqlitePath,
+    });
+
+    try {
+        await store.addUserHistory({
+            guildId: 'guild',
+            userId: 'user',
+            userTag: 'User#0001',
+            type: 'message',
+            summary: 'hello',
+            channelId: 'channel',
+            createdAt: 1,
+        });
+        await store.addUserHistory({
+            guildId: 'guild',
+            userId: 'user',
+            userTag: 'User#0001',
+            type: 'moderation:warn',
+            summary: 'warned',
+            createdAt: 2,
+        });
+
+        const history = await store.listUserHistory('guild', 'user');
+        assert.equal(history.length, 2);
+        assert.equal(history[0].summary, 'warned');
+    } finally {
+        restore();
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});

@@ -15,6 +15,7 @@ function resolveSqlitePath(config = getConfig()) {
 function createEmptyState() {
     return {
         cases: [],
+        history: [],
         nextCaseId: 1,
         tempBans: [],
         tempMutes: [],
@@ -234,6 +235,38 @@ async function createModerationCase(record) {
     return createdCase;
 }
 
+async function addUserHistory(record) {
+    const createdAt = record.createdAt || Date.now();
+    const entry = {
+        guildId: record.guildId,
+        userId: record.userId,
+        userTag: record.userTag,
+        type: record.type,
+        summary: record.summary,
+        channelId: record.channelId || null,
+        moderatorId: record.moderatorId || null,
+        metadata: record.metadata || {},
+        createdAt,
+    };
+
+    await updateState(state => {
+        state.history.push(entry);
+        state.history = state.history
+            .sort((a, b) => b.createdAt - a.createdAt)
+            .slice(0, 5000);
+        return state;
+    });
+
+    return entry;
+}
+
+async function listUserHistory(guildId, userId, limit = 15) {
+    return (await readState()).history
+        .filter(item => item.guildId === guildId && item.userId === userId)
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .slice(0, limit);
+}
+
 async function getModerationCase(guildId, caseId) {
     return (await readState()).cases.find(item => item.guildId === guildId && item.id === Number(caseId)) || null;
 }
@@ -286,11 +319,13 @@ async function clearWarningCases(guildId, userId, moderatorId, reason) {
 }
 
 module.exports = {
+    addUserHistory,
     clearWarningCases,
     createModerationCase,
     createEmptyState,
     getTempMute,
     getModerationCase,
+    listUserHistory,
     listModerationCases,
     readState,
     removeTempBan,

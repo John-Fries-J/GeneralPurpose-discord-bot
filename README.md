@@ -143,6 +143,7 @@ Moderation:
 - `/warn user reason` warns a user and logs it.
 - `/case id` shows a moderation case.
 - `/cases user` lists recent moderation cases for a user.
+- `/history user` shows recent database-backed user history.
 - `/reason case_id reason` updates a moderation case reason.
 - `/clearwarns user reason` clears active warning cases for a user.
 - `/unban user_id` unbans a user by Discord ID.

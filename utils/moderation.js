@@ -4,7 +4,7 @@ const { fetchMember, safeDm } = require('./discord');
 const { sendLog, formatUser } = require('./logging');
 const { getConfig, updateConfig } = require('./config');
 const { PermissionFlagsBits } = require('discord.js');
-const { createModerationCase } = require('./store');
+const { addUserHistory, createModerationCase } = require('./store');
 
 function isSelfAction(interaction, user) {
     return user.id === interaction.user.id;
@@ -68,6 +68,22 @@ async function logModerationAction(interaction, options) {
             duration: options.duration,
         })
         : null;
+
+    if (options.user && options.caseType) {
+        await addUserHistory({
+            guildId: interaction.guild.id,
+            userId: options.user.id,
+            userTag: options.user.tag,
+            type: `moderation:${options.caseType}`,
+            summary: `${options.title}${caseRecord ? ` (#${caseRecord.id})` : ''}: ${options.reason || language.general.noReason}`,
+            channelId: interaction.channelId,
+            moderatorId: interaction.user.id,
+            metadata: {
+                caseId: caseRecord?.id,
+                duration: options.duration || null,
+            },
+        });
+    }
 
     return sendLog(interaction.guild, {
         type: 'moderation',
