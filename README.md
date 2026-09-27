@@ -144,7 +144,9 @@ The dashboard is disabled by default.
 5. Set `dashboard.oauth.clientId` and `dashboard.oauth.clientSecret`, or use the environment variables shown above.
 6. Start the bot and open `http://localhost:3000`.
 
-Dashboard access requires Discord OAuth. Users can manage it if they are listed in `devs` or have `Manage Server` in the configured `guildId`. The panel can edit `config.json`, toggle modules, toggle individual commands, set per-command user/role access rules, edit `language.json` response text, send messages through the bot, and view recent bot/dashboard logs. Disabled commands are blocked immediately; restart the bot to refresh Discord's visible slash command list.
+Dashboard access requires Discord OAuth. Users can manage it if they are listed in `devs` or have `Manage Server` in the configured `guildId`. The panel is split into focused pages for overview, modules, commands, language, message sending, config, and logs. It can edit `config.json`, toggle modules, toggle individual commands, set per-command user/role access rules, edit `language.json` response text, send messages through the bot, and view recent bot/dashboard logs. Disabled commands are blocked immediately; restart the bot to refresh Discord's visible slash command list.
+
+The dashboard includes a light/dark theme toggle stored in the browser. Login sessions use signed cookies that last 30 days, so users do not need to re-authorize after every dashboard restart. Set `DASHBOARD_SESSION_SECRET` if you want a dedicated signing secret instead of using the configured dashboard OAuth secret or bot token.
 
 The dashboard language editor cannot change the embed footer watermark. The watermark is locked by code in `utils/language.js`, so changing it requires a code edit rather than a dashboard save.
 
@@ -155,6 +157,7 @@ Useful dashboard environment variables:
 - `DASHBOARD_ENABLED=true`
 - `DASHBOARD_PORT=3000`
 - `DASHBOARD_PUBLIC_URL=http://localhost:3000`
+- `DASHBOARD_SESSION_SECRET=...`
 - `DISCORD_OAUTH_CLIENT_ID=...`
 - `DISCORD_OAUTH_CLIENT_SECRET=...`
 - `DISCORD_OAUTH_REDIRECT_URI=http://localhost:3000/auth/discord/callback`
