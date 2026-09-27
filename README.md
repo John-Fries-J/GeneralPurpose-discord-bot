@@ -286,27 +286,6 @@ Leveling:
 
 Use `language.json` for text users see in embeds, replies, ticket buttons, and welcome messages.
 
-Every embed uses the footer watermark:
-
-```json
-"watermark": {
-    "text": "Developed by johnfries",
-    "userId": "630070645874622494"
-}
-```
-
-Discord embed footers cannot ping users, so the user ID is included as footer text. Dashboard edits preserve this watermark; change `utils/language.js` if you intentionally need different coded branding.
-
-## Feature Ideas
-
-- Audit timeline: show recent moderation, ticket, honeypot, and dashboard actions in one searchable view.
-- Scheduled announcements: queue messages or embeds from the dashboard for a later date.
-- Embed builder: add fields, thumbnails, images, colors, and reusable templates to the dashboard message sender.
-- Ticket analytics: open/close counts, average close time, and staff activity.
-- Leveling editor: manage XP rewards, cooldowns, and leaderboard settings without JSON editing.
-- Permission presets: save reusable command-access profiles for staff, moderators, and helpers.
-- Health page: show Discord latency, uptime, scheduler status, and failed API integrations.
-
 ## Checks
 
 Run a syntax check before committing:
@@ -314,14 +293,6 @@ Run a syntax check before committing:
 ```bash
 npm test
 ```
-
-## Notes
-
-- `config.json` is ignored by git so tokens and server IDs stay local.
-- Slash commands refresh automatically when the bot becomes ready.
-- The bot handles `SIGINT` and `SIGTERM` by stopping the punishment scheduler, closing the dashboard server, and destroying the Discord client.
-- No external database is required; setup commands save the IDs they need into `config.json`, and temporary punishments use `data/bot-state.json`.
-- Privileged slash commands use Discord default member permissions, so Discord hides them from users without the required server permission. Discord applies this at the command level, not per subcommand.
 
 ## Author
 
