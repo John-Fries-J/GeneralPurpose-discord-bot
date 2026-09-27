@@ -2,10 +2,13 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { Client, Collection, GatewayIntentBits, Partials } = require('discord.js');
 const { getConfig } = require('./utils/config');
+const { assertValidConfig } = require('./utils/configValidation');
 const { loadCommands } = require('./utils/commands');
 const { startDashboard } = require('./web/dashboard');
 
-const { token } = getConfig();
+const config = getConfig();
+assertValidConfig(config, { requireToken: true });
+const { token } = config;
 
 const client = new Client({
     intents: [

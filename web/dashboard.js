@@ -2,6 +2,7 @@ const crypto = require('node:crypto');
 const express = require('express');
 const { PermissionFlagsBits } = require('discord.js');
 const { getConfig, getStoredConfig, saveConfig, updateConfig } = require('../utils/config');
+const { validateConfig } = require('../utils/configValidation');
 const { appendDashboardLog, clearDashboardLogs, readDashboardLogs } = require('../utils/dashboardLogs');
 const { getCommandSettings } = require('../utils/features');
 
@@ -379,7 +380,14 @@ function startDashboard(client) {
     app.post('/config-json', requireAuth, requireCsrf, (req, res) => {
         try {
             const parsedConfig = JSON.parse(req.body.config);
-            saveConfig(restoreRedactedSecrets(parsedConfig, getStoredConfig()));
+            const restoredConfig = restoreRedactedSecrets(parsedConfig, getStoredConfig());
+            const errors = validateConfig(restoredConfig);
+            if (errors.length) {
+                const items = errors.map(error => `<li>${escapeHtml(error)}</li>`).join('');
+                return res.status(400).send(renderLayout('Invalid config', `<section class="panel"><h2>Invalid config</h2><ul>${items}</ul><p>Use the browser back button and fix the JSON.</p></section>`, req.dashboardSession.user));
+            }
+
+            saveConfig(restoredConfig);
             appendDashboardLog('Config saved from dashboard', { userId: req.dashboardSession.user.id });
             res.redirect('/');
         } catch {

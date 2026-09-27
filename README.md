@@ -61,6 +61,8 @@ Copy-Item exampleconfig.json config.json
 npm run run
 ```
 
+The bot validates `config.json` on startup and the dashboard validates config edits before saving. If a value has the wrong shape, the error lists the exact field to fix.
+
 ## Docker
 
 Build the image:
