@@ -2,6 +2,7 @@ const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionFla
 const { getConfig } = require('./config');
 const { fetchMember } = require('./discord');
 const { createEmbed } = require('./embeds');
+const { softbanUser } = require('./softban');
 const { addUserHistory } = require('./store');
 
 const customIds = {
@@ -154,13 +155,6 @@ async function handleHoneypotMessage(message) {
     return true;
 }
 
-async function softbanUser(guild, userId, reason = 'Scam') {
-    const user = await guild.client.users.fetch(userId).catch(() => null);
-    await guild.members.ban(userId, { reason, deleteMessageSeconds: 7 * 24 * 60 * 60 });
-    await guild.members.unban(userId, reason);
-    return user;
-}
-
 async function banUser(guild, userId, reason = 'Scam') {
     const user = await guild.client.users.fetch(userId).catch(() => null);
     await guild.members.ban(userId, { reason, deleteMessageSeconds: 7 * 24 * 60 * 60 });
@@ -245,8 +239,9 @@ async function handleHoneypotButton(interaction) {
         }
 
         if (action === 'softban') {
-            user = await softbanUser(interaction.guild, userId);
-            status = `Softbanned by ${interaction.user.tag}. Reason: Scam`;
+            const result = await softbanUser(interaction.guild, userId, { reason: 'Scam' });
+            user = result.user;
+            status = `Softbanned by ${interaction.user.tag}. Reason: Scam. Invite DM sent: ${result.dmSent ? 'Yes' : 'No'}`;
         } else if (action === 'ban') {
             user = await banUser(interaction.guild, userId);
             status = `Banned by ${interaction.user.tag}. Reason: Scam`;

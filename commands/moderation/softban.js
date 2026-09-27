@@ -2,24 +2,7 @@ const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const language = require('../../utils/language');
 const { fetchMember } = require('../../utils/discord');
 const { logModerationAction, validateTarget } = require('../../utils/moderation');
-
-async function createSoftbanInvite(guild, reason) {
-    const botMember = guild.members.me;
-    const channel = guild.channels.cache.find(candidate => {
-        if (!candidate?.createInvite) return false;
-        const permissions = candidate.permissionsFor(botMember);
-        return permissions?.has(PermissionFlagsBits.CreateInstantInvite);
-    });
-
-    if (!channel) return null;
-
-    return channel.createInvite({
-        maxAge: 24 * 60 * 60,
-        maxUses: 1,
-        unique: true,
-        reason,
-    });
-}
+const { softbanUser } = require('../../utils/softban');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -44,24 +27,15 @@ module.exports = {
             }
         }
 
-        const invite = await createSoftbanInvite(interaction.guild, `Softban invite for ${user.tag}: ${reason}`);
-        if (!invite) {
-            return interaction.reply({ content: 'I could not create an invite link for this softban.', flags: 64 });
-        }
-
-        let dmSent = true;
+        let result;
         try {
-            await user.send(`you have been softbanned heres a invite link: ${invite.url}`);
-        } catch {
-            dmSent = false;
+            result = await softbanUser(interaction.guild, user.id, {
+                reason,
+                deleteMessageSeconds: deleteDays * 24 * 60 * 60,
+            });
+        } catch (error) {
+            return interaction.reply({ content: error.message || 'Softban failed.', flags: 64 });
         }
-
-        await interaction.guild.bans.create(user.id, {
-            reason,
-            deleteMessageSeconds: deleteDays * 24 * 60 * 60,
-        });
-
-        await interaction.guild.members.unban(user.id, 'Softban complete');
 
         await logModerationAction(interaction, {
             caseType: 'softban',
@@ -71,12 +45,12 @@ module.exports = {
             reason,
             extraFields: [
                 { name: 'Deleted days', value: `${deleteDays}`, inline: true },
-                { name: 'DM sent', value: dmSent ? 'Yes' : 'No', inline: true },
+                { name: 'Invite DM sent', value: result.dmSent ? 'Yes' : 'No', inline: true },
             ],
         });
 
         await interaction.reply({
-            content: `${user.tag} has been softbanned.${dmSent ? '' : `\n${language.moderation.dmFailed}`}`,
+            content: `${user.tag} has been softbanned.${result.dmSent ? '' : `\n${language.moderation.dmFailed}`}`,
             flags: 64,
         });
     },
