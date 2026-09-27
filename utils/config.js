@@ -10,7 +10,7 @@ function readJson(filePath, fallback = {}) {
 }
 
 function getConfig() {
-    const config = readJson(configPath, readJson(exampleConfigPath));
+    const config = getStoredConfig();
 
     if (process.env.DISCORD_TOKEN) config.token = process.env.DISCORD_TOKEN;
     if (process.env.DISCORD_CLIENT_ID) config.clientId = process.env.DISCORD_CLIENT_ID;
@@ -47,6 +47,10 @@ function getConfig() {
     return config;
 }
 
+function getStoredConfig() {
+    return readJson(configPath, readJson(exampleConfigPath));
+}
+
 function saveConfig(config) {
     fs.writeFileSync(configPath, `${JSON.stringify(config, null, 4)}\n`);
 }
@@ -75,6 +79,7 @@ function getNestedValue(source, pathParts, fallback = undefined) {
 module.exports = {
     configPath,
     getConfig,
+    getStoredConfig,
     saveConfig,
     updateConfig,
     getNestedValue,

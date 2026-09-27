@@ -1,12 +1,15 @@
 const crypto = require('node:crypto');
 const express = require('express');
 const { PermissionFlagsBits } = require('discord.js');
-const { getConfig, saveConfig, updateConfig } = require('../utils/config');
+const { getConfig, getStoredConfig, saveConfig, updateConfig } = require('../utils/config');
 const { appendDashboardLog, clearDashboardLogs, readDashboardLogs } = require('../utils/dashboardLogs');
 const { getCommandSettings } = require('../utils/features');
 
 const states = new Map();
 const sessions = new Map();
+const sessionMaxAgeMs = 24 * 60 * 60 * 1000;
+const redactedSecret = '[redacted]';
+const sensitiveKeys = new Set(['token', 'clientSecret', 'client_secret', 'password', 'secret']);
 
 function escapeHtml(value) {
     return String(value ?? '')
@@ -28,6 +31,17 @@ function parseCookies(header = '') {
         }));
 }
 
+function cleanupExpiringMaps() {
+    const now = Date.now();
+    for (const [state, expiresAt] of states.entries()) {
+        if (expiresAt <= now) states.delete(state);
+    }
+
+    for (const [sessionId, session] of sessions.entries()) {
+        if (!session.expiresAt || session.expiresAt <= now) sessions.delete(sessionId);
+    }
+}
+
 function getDashboardConfig() {
     const config = getConfig();
     return {
@@ -45,8 +59,15 @@ function getDashboardConfig() {
 }
 
 function getSession(req) {
+    cleanupExpiringMaps();
     const cookie = parseCookies(req.headers.cookie);
-    return sessions.get(cookie.dashboard_session) || null;
+    const session = sessions.get(cookie.dashboard_session);
+    if (!session || session.expiresAt <= Date.now()) {
+        if (cookie.dashboard_session) sessions.delete(cookie.dashboard_session);
+        return null;
+    }
+
+    return session;
 }
 
 function requireAuth(req, res, next) {
@@ -56,7 +77,63 @@ function requireAuth(req, res, next) {
     return next();
 }
 
+function requireCsrf(req, res, next) {
+    const session = req.dashboardSession || getSession(req);
+    if (!session || !req.body?._csrf || req.body._csrf !== session.csrfToken) {
+        return res.status(403).send('Invalid dashboard request.');
+    }
+
+    return next();
+}
+
+function isSensitiveKey(key) {
+    return sensitiveKeys.has(String(key));
+}
+
+function redactSensitiveConfig(value, key = '') {
+    if (Array.isArray(value)) {
+        return value.map(item => redactSensitiveConfig(item));
+    }
+
+    if (value && typeof value === 'object') {
+        return Object.fromEntries(Object.entries(value).map(([childKey, childValue]) => [
+            childKey,
+            redactSensitiveConfig(childValue, childKey),
+        ]));
+    }
+
+    if (isSensitiveKey(key) && typeof value === 'string' && value) {
+        return redactedSecret;
+    }
+
+    return value;
+}
+
+function restoreRedactedSecrets(submitted, current) {
+    if (Array.isArray(submitted)) {
+        return submitted.map((item, index) => restoreRedactedSecrets(item, current?.[index]));
+    }
+
+    if (submitted && typeof submitted === 'object') {
+        return Object.fromEntries(Object.entries(submitted).map(([key, value]) => [
+            key,
+            restoreRedactedSecrets(value, current?.[key]),
+        ]));
+    }
+
+    if (submitted === redactedSecret) {
+        return current ?? '';
+    }
+
+    return submitted;
+}
+
+function csrfInput(session) {
+    return `<input type="hidden" name="_csrf" value="${escapeHtml(session.csrfToken)}">`;
+}
+
 function makeDiscordOauthUrl(settings) {
+    cleanupExpiringMaps();
     const state = crypto.randomBytes(24).toString('hex');
     states.set(state, Date.now() + 10 * 60 * 1000);
 
@@ -160,13 +237,15 @@ input[type="checkbox"]{width:18px;height:18px}
 }
 
 function renderDashboard(client, session) {
-    const config = getConfig();
+    const config = getStoredConfig();
+    const redactedConfig = redactSensitiveConfig(config);
     const settings = getCommandSettings(config);
     const grouped = groupCommands(client);
     const logs = readDashboardLogs(120);
 
     const modulesHtml = grouped.map(([category]) => `
 <form class="row" method="post" action="/toggle-module">
+${csrfInput(session)}
 <input type="hidden" name="module" value="${escapeHtml(category)}">
 <span><strong>${escapeHtml(category)}</strong></span>
 <label><input type="checkbox" name="enabled" ${settings.modules[category] === false ? '' : 'checked'} onchange="this.form.submit()"> Enabled</label>
@@ -175,6 +254,7 @@ function renderDashboard(client, session) {
     const commandsHtml = grouped.map(([category, commands]) => `
 <div class="panel"><h3>${escapeHtml(category)}</h3>${commands.map(command => `
 <form class="row" method="post" action="/toggle-command">
+${csrfInput(session)}
 <input type="hidden" name="command" value="${escapeHtml(command.data.name)}">
 <span>/${escapeHtml(command.data.name)}</span>
 <label><input type="checkbox" name="enabled" ${settings.commands[command.data.name] === false ? '' : 'checked'} onchange="this.form.submit()"> Enabled</label>
@@ -193,7 +273,7 @@ ${modulesHtml}
 <section class="panel">
 <h2>Logs</h2>
 <div class="log">${logsHtml}</div>
-<form method="post" action="/logs/clear" style="margin-top:12px"><button class="danger" type="submit">Clear logs</button></form>
+<form method="post" action="/logs/clear" style="margin-top:12px">${csrfInput(session)}<button class="danger" type="submit">Clear logs</button></form>
 </section>
 </div>
 <section>
@@ -202,9 +282,10 @@ ${commandsHtml}
 </section>
 <section class="panel">
 <h2>Config</h2>
-<p class="muted">This edits config.json directly. Keep valid JSON.</p>
+<p class="muted">This edits config.json directly. Sensitive values are redacted and preserved if left unchanged.</p>
 <form method="post" action="/config-json">
-<textarea name="config">${escapeHtml(JSON.stringify(config, null, 4))}</textarea>
+${csrfInput(session)}
+<textarea name="config">${escapeHtml(JSON.stringify(redactedConfig, null, 4))}</textarea>
 <p><button type="submit">Save config</button></p>
 </form>
 </section>`, session.user);
@@ -216,6 +297,12 @@ function startDashboard(client) {
 
     const app = express();
     app.use(express.urlencoded({ extended: false, limit: '1mb' }));
+    app.use((req, res, next) => {
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('X-Frame-Options', 'DENY');
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        next();
+    });
 
     app.get('/health', (req, res) => res.json({ ok: true }));
 
@@ -240,9 +327,15 @@ function startDashboard(client) {
             if (!canManageDashboard(user, guilds, currentSettings)) return res.status(403).send('You are not allowed to manage this dashboard.');
 
             const sessionId = crypto.randomBytes(32).toString('hex');
-            sessions.set(sessionId, { user, createdAt: Date.now() });
+            sessions.set(sessionId, {
+                user,
+                createdAt: Date.now(),
+                expiresAt: Date.now() + sessionMaxAgeMs,
+                csrfToken: crypto.randomBytes(32).toString('hex'),
+            });
             appendDashboardLog('Dashboard login', { userId: user.id });
-            res.setHeader('Set-Cookie', `dashboard_session=${encodeURIComponent(sessionId)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400`);
+            const secureCookie = currentSettings.publicUrl.startsWith('https://') || process.env.NODE_ENV === 'production';
+            res.setHeader('Set-Cookie', `dashboard_session=${encodeURIComponent(sessionId)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400${secureCookie ? '; Secure' : ''}`);
             return res.redirect('/');
         } catch (error) {
             console.error('Dashboard OAuth failed:', error);
@@ -259,7 +352,7 @@ function startDashboard(client) {
 
     app.get('/', requireAuth, (req, res) => res.send(renderDashboard(client, req.dashboardSession)));
 
-    app.post('/toggle-module', requireAuth, (req, res) => {
+    app.post('/toggle-module', requireAuth, requireCsrf, (req, res) => {
         const enabled = req.body.enabled === 'on';
         updateConfig(config => {
             config.commandSettings = config.commandSettings || {};
@@ -271,7 +364,7 @@ function startDashboard(client) {
         res.redirect('/');
     });
 
-    app.post('/toggle-command', requireAuth, (req, res) => {
+    app.post('/toggle-command', requireAuth, requireCsrf, (req, res) => {
         const enabled = req.body.enabled === 'on';
         updateConfig(config => {
             config.commandSettings = config.commandSettings || {};
@@ -283,9 +376,10 @@ function startDashboard(client) {
         res.redirect('/');
     });
 
-    app.post('/config-json', requireAuth, (req, res) => {
+    app.post('/config-json', requireAuth, requireCsrf, (req, res) => {
         try {
-            saveConfig(JSON.parse(req.body.config));
+            const parsedConfig = JSON.parse(req.body.config);
+            saveConfig(restoreRedactedSecrets(parsedConfig, getStoredConfig()));
             appendDashboardLog('Config saved from dashboard', { userId: req.dashboardSession.user.id });
             res.redirect('/');
         } catch {
@@ -293,7 +387,7 @@ function startDashboard(client) {
         }
     });
 
-    app.post('/logs/clear', requireAuth, (req, res) => {
+    app.post('/logs/clear', requireAuth, requireCsrf, (req, res) => {
         clearDashboardLogs();
         appendDashboardLog('Dashboard logs cleared', { userId: req.dashboardSession.user.id });
         res.redirect('/');
@@ -308,5 +402,7 @@ function startDashboard(client) {
 }
 
 module.exports = {
+    redactSensitiveConfig,
+    restoreRedactedSecrets,
     startDashboard,
 };
