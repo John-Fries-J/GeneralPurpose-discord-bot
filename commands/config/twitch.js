@@ -13,7 +13,8 @@ module.exports = {
                 .setName('set-credentials')
                 .setDescription('Set Twitch API credentials.')
                 .addStringOption(option => option.setName('client_id').setDescription('Twitch Client ID.').setRequired(true))
-                .addStringOption(option => option.setName('access_token').setDescription('Twitch app access token.').setRequired(true)))
+                .addStringOption(option => option.setName('client_secret').setDescription('Twitch Client Secret for automatic token refresh.'))
+                .addStringOption(option => option.setName('access_token').setDescription('Optional existing Twitch app access token.')))
         .addSubcommand(subcommand =>
             subcommand
                 .setName('add')
@@ -37,11 +38,17 @@ module.exports = {
             updateConfig(config => {
                 config.twitch ||= {};
                 config.twitch.clientId = interaction.options.getString('client_id', true);
-                config.twitch.accessToken = interaction.options.getString('access_token', true);
+                const clientSecret = interaction.options.getString('client_secret');
+                const accessToken = interaction.options.getString('access_token');
+                if (clientSecret !== null) config.twitch.clientSecret = clientSecret;
+                if (accessToken !== null) {
+                    config.twitch.accessToken = accessToken;
+                    config.twitch.accessTokenExpiresAt = 0;
+                }
                 config.twitch.channels ||= [];
                 return config;
             });
-            return interaction.reply({ content: 'Twitch credentials saved.', ephemeral: true });
+            return interaction.reply({ content: 'Twitch credentials saved.', flags: 64 });
         }
 
         if (subcommand === 'add') {
@@ -64,7 +71,7 @@ module.exports = {
                 return config;
             });
 
-            return interaction.reply({ content: `Twitch announcements for ${streamerName} will go to <#${textChannel.id}>.`, ephemeral: true });
+            return interaction.reply({ content: `Twitch announcements for ${streamerName} will go to <#${textChannel.id}>.`, flags: 64 });
         }
 
         if (subcommand === 'remove') {
@@ -78,7 +85,7 @@ module.exports = {
                 });
                 return config;
             });
-            return interaction.reply({ content: 'Twitch announcement target removed.', ephemeral: true });
+            return interaction.reply({ content: 'Twitch announcement target removed.', flags: 64 });
         }
 
         const channels = getConfig().twitch?.channels || [];
@@ -89,6 +96,6 @@ module.exports = {
                 ? channels.map(item => `${item.streamerName} -> <#${item.discordChannelId}>`).join('\n')
                 : 'No Twitch announcement channels configured.',
         });
-        return interaction.reply({ embeds: [embed], ephemeral: true });
+        return interaction.reply({ embeds: [embed], flags: 64 });
     },
 };

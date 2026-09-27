@@ -24,13 +24,13 @@ module.exports = {
         const member = await fetchMember(interaction.guild, user.id);
 
         if (duration && !parseDuration(duration)) {
-            return interaction.reply({ content: language.moderation.invalidDuration, ephemeral: true });
+            return interaction.reply({ content: language.moderation.invalidDuration, flags: 64 });
         }
 
         if (member) {
             const target = await validateTarget(interaction, user, 'bannable');
             if (!target.ok) {
-                return interaction.reply({ content: target.message === language.moderation.cannotModerateUser ? language.moderation.cannotBan : target.message, ephemeral: true });
+                return interaction.reply({ content: target.message === language.moderation.cannotModerateUser ? language.moderation.cannotBan : target.message, flags: 64 });
             }
         }
 
@@ -60,7 +60,7 @@ module.exports = {
 
         await interaction.reply({
             content: `User ${user.tag} has been banned. Reason: ${reason}${dmSent ? '' : `\n${language.moderation.dmFailed}`}`,
-            ephemeral: true,
+            flags: 64,
         });
 
         if (duration) {

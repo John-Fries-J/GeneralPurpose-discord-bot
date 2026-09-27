@@ -17,7 +17,7 @@ module.exports = {
 
         return interaction.reply({
             content: `Cleared ${cleared} active warning case${cleared === 1 ? '' : 's'} for ${user.tag}.`,
-            ephemeral: true,
+            flags: 64,
         });
     },
 };

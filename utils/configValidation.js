@@ -81,6 +81,11 @@ function validateConfig(config, options = {}) {
             }
             validateString(errors, config, 'honeypot.channelId');
             validateString(errors, config, 'honeypot.alertChannelId');
+            validateString(errors, config, 'honeypot.mentionId');
+            validateString(errors, config, 'honeypot.mentionType');
+            if (config.honeypot.mentionType !== undefined && config.honeypot.mentionType !== '' && !['user', 'role'].includes(config.honeypot.mentionType)) {
+                errors.push('honeypot.mentionType must be "user", "role", or an empty string.');
+            }
         }
     }
 
@@ -99,8 +104,16 @@ function validateConfig(config, options = {}) {
     if (config.twitch !== undefined) {
         if (!isPlainObject(config.twitch)) {
             errors.push('twitch must be an object.');
-        } else if (config.twitch.channels !== undefined && !Array.isArray(config.twitch.channels)) {
-            errors.push('twitch.channels must be an array.');
+        } else {
+            validateString(errors, config, 'twitch.clientId');
+            validateString(errors, config, 'twitch.clientSecret');
+            validateString(errors, config, 'twitch.accessToken');
+            if (config.twitch.accessTokenExpiresAt !== undefined && (!Number.isInteger(config.twitch.accessTokenExpiresAt) || config.twitch.accessTokenExpiresAt < 0)) {
+                errors.push('twitch.accessTokenExpiresAt must be a non-negative integer.');
+            }
+            if (config.twitch.channels !== undefined && !Array.isArray(config.twitch.channels)) {
+                errors.push('twitch.channels must be an array.');
+            }
         }
     }
 

@@ -12,7 +12,7 @@ module.exports = {
         const records = await listLevelLeaderboard(interaction.guild.id, 10);
 
         if (!records.length) {
-            return interaction.reply({ content: 'No XP has been recorded yet.', ephemeral: true });
+            return interaction.reply({ content: 'No XP has been recorded yet.', flags: 64 });
         }
 
         const embed = createEmbed({

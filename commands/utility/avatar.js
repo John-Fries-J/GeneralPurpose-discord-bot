@@ -22,7 +22,7 @@ module.exports = {
         if (subcommand === 'server') {
             const icon = interaction.guild.iconURL({ size: 1024 });
             if (!icon) {
-                return interaction.reply({ content: 'This server does not have an icon.', ephemeral: true });
+                return interaction.reply({ content: 'This server does not have an icon.', flags: 64 });
             }
 
             const embed = createEmbed({

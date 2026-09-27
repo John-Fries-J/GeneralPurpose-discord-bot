@@ -148,3 +148,28 @@ test('user history helpers keep recent user events', async () => {
         fs.rmSync(directory, { recursive: true, force: true });
     }
 });
+
+test('state updates serialize concurrent writes', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'bot-store-'));
+    const jsonPath = path.join(directory, 'state.json');
+    const { store, restore } = loadStoreWithEnvironment({
+        DATABASE_PROVIDER: 'json',
+        DATABASE_JSON_PATH: jsonPath,
+    });
+
+    try {
+        await Promise.all(Array.from({ length: 10 }, (_, index) => store.addUserHistory({
+            guildId: 'guild',
+            userId: 'user',
+            userTag: 'User#0001',
+            type: 'message',
+            summary: `message ${index}`,
+            createdAt: index,
+        })));
+
+        assert.equal((await store.listUserHistory('guild', 'user', 20)).length, 10);
+    } finally {
+        restore();
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});

@@ -98,6 +98,17 @@ async function fetchYoutubeFeedItems(target) {
     return getYoutubeEntriesFromFeed(response.data);
 }
 
+async function fetchYoutubeItems(config, target) {
+    try {
+        const apiItems = await fetchYoutubeApiItems(config, target);
+        if (apiItems) return apiItems;
+    } catch (error) {
+        console.error(`YouTube API check failed for ${target.channelId}, falling back to RSS:`, error.response?.data || error.message);
+    }
+
+    return fetchYoutubeFeedItems(target);
+}
+
 async function sendYoutubeAnnouncement(client, target, item) {
     const channel = await client.channels.fetch(target.discordChannelId).catch(() => null);
     if (!channel?.send) return false;
@@ -128,7 +139,7 @@ async function pollYoutube(client) {
 
     for (const target of targets) {
         try {
-            const items = await fetchYoutubeApiItems(config, target) || await fetchYoutubeFeedItems(target);
+            const items = await fetchYoutubeItems(config, target);
             const newest = items.sort((a, b) => b.publishedAt - a.publishedAt)[0];
             if (!newest || newest.id === target.lastItemId) continue;
 
@@ -168,6 +179,43 @@ async function fetchTwitchStream(twitchConfig, target) {
     };
 }
 
+async function refreshTwitchAccessToken(twitchConfig) {
+    if (!twitchConfig.clientId || !twitchConfig.clientSecret) return null;
+
+    const response = await axios.post('https://id.twitch.tv/oauth2/token', null, {
+        params: {
+            client_id: twitchConfig.clientId,
+            client_secret: twitchConfig.clientSecret,
+            grant_type: 'client_credentials',
+        },
+    });
+
+    const accessToken = response.data.access_token;
+    const expiresIn = Number(response.data.expires_in || 0);
+    const expiresAt = Date.now() + Math.max(expiresIn - 60, 60) * 1000;
+
+    updateConfig(config => {
+        config.twitch ||= {};
+        config.twitch.accessToken = accessToken;
+        config.twitch.accessTokenExpiresAt = expiresAt;
+        return config;
+    });
+
+    return { ...twitchConfig, accessToken, accessTokenExpiresAt: expiresAt };
+}
+
+async function getFreshTwitchConfig(twitchConfig) {
+    if (twitchConfig.accessToken && Number(twitchConfig.accessTokenExpiresAt || 0) > Date.now() + 60 * 1000) {
+        return twitchConfig;
+    }
+
+    if (twitchConfig.clientSecret) {
+        return refreshTwitchAccessToken(twitchConfig);
+    }
+
+    return twitchConfig.accessToken ? twitchConfig : null;
+}
+
 async function sendTwitchAnnouncement(client, target, stream) {
     const channel = await client.channels.fetch(target.discordChannelId).catch(() => null);
     if (!channel?.send) return false;
@@ -195,11 +243,25 @@ async function pollTwitch(client) {
     const config = getConfig();
     const twitchConfig = config.twitch || {};
     const targets = (twitchConfig.channels || []).filter(target => target.enabled !== false && target.streamerId && target.streamerName && target.discordChannelId);
-    if (!twitchConfig.clientId || !twitchConfig.accessToken || !targets.length) return;
+    if (!twitchConfig.clientId || !targets.length) return;
+
+    let freshTwitchConfig = await getFreshTwitchConfig(twitchConfig).catch(error => {
+        console.error('Failed to refresh Twitch access token:', error.response?.data || error.message);
+        return null;
+    });
+    if (!freshTwitchConfig?.accessToken) return;
 
     for (const target of targets) {
         try {
-            const stream = await fetchTwitchStream(twitchConfig, target);
+            let stream;
+            try {
+                stream = await fetchTwitchStream(freshTwitchConfig, target);
+            } catch (error) {
+                if (error.response?.status !== 401 || !freshTwitchConfig.clientSecret) throw error;
+                freshTwitchConfig = await refreshTwitchAccessToken(freshTwitchConfig);
+                stream = await fetchTwitchStream(freshTwitchConfig, target);
+            }
+
             if (stream && stream.id !== target.lastStreamId) {
                 await sendTwitchAnnouncement(client, target, stream);
                 updateConfig(current => {
@@ -234,8 +296,11 @@ function startMediaAnnouncementScheduler(client) {
 
 module.exports = {
     classifyYoutubeItem,
+    fetchYoutubeItems,
     fillTemplate,
     getYoutubeEntriesFromFeed,
+    getFreshTwitchConfig,
     parseIsoDurationSeconds,
+    refreshTwitchAccessToken,
     startMediaAnnouncementScheduler,
 };

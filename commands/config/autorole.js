@@ -24,7 +24,7 @@ module.exports = {
         if (subcommand === 'set') {
             const role = interaction.options.getRole('role', true);
             if (!role.editable) {
-                return interaction.reply({ content: 'I cannot assign that role. Check my role position and permissions.', ephemeral: true });
+                return interaction.reply({ content: 'I cannot assign that role. Check my role position and permissions.', flags: 64 });
             }
 
             updateConfig(config => {
@@ -44,7 +44,7 @@ module.exports = {
                 ],
             }).catch(() => null);
 
-            return interaction.reply({ content: `New members will now receive <@&${role.id}>.`, ephemeral: true });
+            return interaction.reply({ content: `New members will now receive <@&${role.id}>.`, flags: 64 });
         }
 
         updateConfig(config => {
@@ -61,6 +61,6 @@ module.exports = {
             fields: [{ name: 'Updated by', value: formatUser(interaction.user), inline: true }],
         }).catch(() => null);
 
-        return interaction.reply({ content: 'Autoroles have been cleared.', ephemeral: true });
+        return interaction.reply({ content: 'Autoroles have been cleared.', flags: 64 });
     },
 };

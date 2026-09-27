@@ -1,7 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const axios = require('axios');
 const {
     classifyYoutubeItem,
+    fetchYoutubeItems,
     fillTemplate,
     getYoutubeEntriesFromFeed,
     parseIsoDurationSeconds,
@@ -41,4 +43,36 @@ test('getYoutubeEntriesFromFeed parses RSS entries', () => {
     assert.equal(entries.length, 1);
     assert.equal(entries[0].id, 'abc123');
     assert.equal(entries[0].title, 'New & Good');
+});
+
+test('fetchYoutubeItems falls back to RSS when the API fails', async () => {
+    const originalGet = axios.get;
+    const calls = [];
+
+    axios.get = async url => {
+        calls.push(url);
+        if (url.includes('/youtube/v3/activities')) {
+            throw new Error('quota exceeded');
+        }
+
+        return {
+            data: `
+                <feed>
+                    <entry>
+                        <yt:videoId>rss123</yt:videoId>
+                        <title>RSS Video</title>
+                        <published>2026-01-01T00:00:00+00:00</published>
+                    </entry>
+                </feed>
+            `,
+        };
+    };
+
+    try {
+        const items = await fetchYoutubeItems({ youtube: { apiKey: 'key' } }, { channelId: 'channel' });
+        assert.equal(items[0].id, 'rss123');
+        assert.equal(calls.length, 2);
+    } finally {
+        axios.get = originalGet;
+    }
 });

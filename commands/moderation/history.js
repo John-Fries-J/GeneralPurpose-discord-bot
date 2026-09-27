@@ -16,7 +16,7 @@ module.exports = {
         const history = await listUserHistory(interaction.guild.id, user.id, 15);
 
         if (!history.length) {
-            return interaction.reply({ content: `${user.tag} has no recorded history.`, ephemeral: true });
+            return interaction.reply({ content: `${user.tag} has no recorded history.`, flags: 64 });
         }
 
         const embed = createEmbed({
@@ -29,6 +29,6 @@ module.exports = {
             }).join('\n'),
         });
 
-        return interaction.reply({ embeds: [embed], ephemeral: true });
+        return interaction.reply({ embeds: [embed], flags: 64 });
     },
 };

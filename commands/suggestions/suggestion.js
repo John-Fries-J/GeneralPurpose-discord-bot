@@ -9,17 +9,17 @@ async function updateSuggestion(interaction, status) {
     const reason = interaction.options.getString('reason') || 'No reason provided.';
 
     if (!config.suggestionID) {
-        return interaction.reply({ content: 'Suggestion channel is not set up. Check config.json.', ephemeral: true });
+        return interaction.reply({ content: 'Suggestion channel is not set up. Check config.json.', flags: 64 });
     }
 
     const channel = await interaction.client.channels.fetch(config.suggestionID).catch(() => null);
     if (!channel?.messages) {
-        return interaction.reply({ content: 'I could not find the suggestion channel.', ephemeral: true });
+        return interaction.reply({ content: 'I could not find the suggestion channel.', flags: 64 });
     }
 
     const message = await channel.messages.fetch(messageId).catch(() => null);
     if (!message) {
-        return interaction.reply({ content: 'I could not find that suggestion message.', ephemeral: true });
+        return interaction.reply({ content: 'I could not find that suggestion message.', flags: 64 });
     }
 
     const originalEmbed = message.embeds[0];
@@ -51,7 +51,7 @@ async function updateSuggestion(interaction, status) {
         ],
     }).catch(() => null);
 
-    return interaction.reply({ content: `Suggestion ${status.toLowerCase()}.`, ephemeral: true });
+    return interaction.reply({ content: `Suggestion ${status.toLowerCase()}.`, flags: 64 });
 }
 
 module.exports = {

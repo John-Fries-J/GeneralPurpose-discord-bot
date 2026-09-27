@@ -40,13 +40,13 @@ module.exports = {
         if (member) {
             const target = await validateTarget(interaction, user, 'bannable');
             if (!target.ok) {
-                return interaction.reply({ content: target.message === language.moderation.cannotModerateUser ? language.moderation.cannotBan : target.message, ephemeral: true });
+                return interaction.reply({ content: target.message === language.moderation.cannotModerateUser ? language.moderation.cannotBan : target.message, flags: 64 });
             }
         }
 
         const invite = await createSoftbanInvite(interaction.guild, `Softban invite for ${user.tag}: ${reason}`);
         if (!invite) {
-            return interaction.reply({ content: 'I could not create an invite link for this softban.', ephemeral: true });
+            return interaction.reply({ content: 'I could not create an invite link for this softban.', flags: 64 });
         }
 
         let dmSent = true;
@@ -77,7 +77,7 @@ module.exports = {
 
         await interaction.reply({
             content: `${user.tag} has been softbanned.${dmSent ? '' : `\n${language.moderation.dmFailed}`}`,
-            ephemeral: true,
+            flags: 64,
         });
     },
 };

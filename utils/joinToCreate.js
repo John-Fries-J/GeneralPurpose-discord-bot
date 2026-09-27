@@ -1,6 +1,6 @@
 const { ChannelType, PermissionFlagsBits } = require('discord.js');
 const { getConfig } = require('./config');
-const { getTempVoiceChannel, removeTempVoiceChannel, upsertTempVoiceChannel } = require('./store');
+const { getTempVoiceChannel, removeTempVoiceChannel, removeTempVoiceChannelsForGuild, upsertTempVoiceChannel } = require('./store');
 
 function getJoinToCreateConfig(config = getConfig()) {
     return {
@@ -13,10 +13,49 @@ function getJoinToCreateConfig(config = getConfig()) {
 }
 
 function formatVoiceChannelName(template, member) {
-    return template
-        .replaceAll('{username}', member.user.username)
-        .replaceAll('{displayName}', member.displayName)
+    const values = {
+        displayName: member.displayName || member.user?.globalName || member.user?.username || 'User',
+        globalName: member.user?.globalName || member.displayName || member.user?.username || 'User',
+        id: member.id,
+        mention: `<@${member.id}>`,
+        tag: member.user?.tag || member.user?.username || member.id,
+        user: member.user?.username || member.displayName || 'User',
+        username: member.user?.username || member.displayName || 'User',
+    };
+
+    return String(template || "{username}'s Channel")
+        .replace(/\{(\w+)\}/g, (match, key) => values[key] ?? match)
         .slice(0, 100);
+}
+
+async function sendJoinToCreateIntro(channel, member) {
+    if (!channel?.send) return false;
+
+    return channel.send({
+        content: [
+            `<@${member.id}> this is your temporary voice channel.`,
+            'Use `/voice rename`, `/voice limit`, `/voice lock`, `/voice unlock`, `/voice permit`, and `/voice reject` to edit it.',
+            'It will be deleted automatically when everyone leaves.',
+        ].join('\n'),
+        allowedMentions: { users: [member.id] },
+    }).then(() => true).catch(() => false);
+}
+
+async function deleteJoinToCreateChannels(guild) {
+    const records = await removeTempVoiceChannelsForGuild(guild.id);
+    let deleted = 0;
+
+    for (const record of records) {
+        const channel = guild.channels.cache.get(record.channelId) || await guild.channels.fetch(record.channelId).catch(() => null);
+        if (!channel) continue;
+        await channel.delete('Join-to-create disabled').then(() => {
+            deleted += 1;
+        }).catch(error => {
+            console.error(`Failed to delete join-to-create channel ${record.channelId}:`, error);
+        });
+    }
+
+    return deleted;
 }
 
 async function handleJoinToCreate(oldState, newState) {
@@ -53,6 +92,7 @@ async function handleJoinToCreate(oldState, newState) {
             createdAt: Date.now(),
         });
         await newState.setChannel(channel, 'Moving user to join-to-create channel').catch(() => null);
+        await sendJoinToCreateIntro(channel, newState.member);
         return;
     }
 
@@ -81,6 +121,7 @@ async function getOwnedVoiceChannel(interaction) {
 }
 
 module.exports = {
+    deleteJoinToCreateChannels,
     formatVoiceChannelName,
     getJoinToCreateConfig,
     getOwnedVoiceChannel,

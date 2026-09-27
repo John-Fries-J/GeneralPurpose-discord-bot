@@ -23,7 +23,7 @@ module.exports = {
                 .addStringOption(option => option.setName('type').setDescription('Counter type.').setRequired(true).addChoices(...typeChoices))
                 .addChannelOption(option => option.setName('channel').setDescription('Voice channel to rename.').addChannelTypes(ChannelType.GuildVoice).setRequired(true))
                 .addRoleOption(option => option.setName('role').setDescription('Role to count when type is role.'))
-                .addStringOption(option => option.setName('name_format').setDescription('Name format, using {count}. Example: Members: {count}')))
+                .addStringOption(option => option.setName('name_format').setDescription('Use {count}, {type}, and for role counters {roleName}.')))
         .addSubcommand(subcommand =>
             subcommand
                 .setName('remove')
@@ -42,7 +42,7 @@ module.exports = {
             const nameFormat = interaction.options.getString('name_format') || null;
 
             if (type === 'role' && !role) {
-                return interaction.reply({ content: 'A role is required for role counters.', ephemeral: true });
+                return interaction.reply({ content: 'A role is required for role counters.', flags: 64 });
             }
 
             updateConfig(config => {
@@ -53,13 +53,14 @@ module.exports = {
                     channelId: channel.id,
                     type,
                     roleId: role?.id || '',
+                    roleName: role?.name || '',
                     nameFormat,
                 });
                 return config;
             });
 
             await refreshMemberCounters(interaction.guild);
-            return interaction.reply({ content: `Counter configured for <#${channel.id}>.`, ephemeral: true });
+            return interaction.reply({ content: `Counter configured for <#${channel.id}>.`, flags: 64 });
         }
 
         if (subcommand === 'remove') {
@@ -69,12 +70,12 @@ module.exports = {
                 return config;
             });
 
-            return interaction.reply({ content: `Counter removed for <#${channel.id}>.`, ephemeral: true });
+            return interaction.reply({ content: `Counter removed for <#${channel.id}>.`, flags: 64 });
         }
 
         if (subcommand === 'refresh') {
             const refreshed = await refreshMemberCounters(interaction.guild);
-            return interaction.reply({ content: `Refreshed ${refreshed} counter channel${refreshed === 1 ? '' : 's'}.`, ephemeral: true });
+            return interaction.reply({ content: `Refreshed ${refreshed} counter channel${refreshed === 1 ? '' : 's'}.`, flags: 64 });
         }
 
         const counters = (getConfig().memberCounters || []).filter(counter => !counter.guildId || counter.guildId === interaction.guild.id);
@@ -86,6 +87,6 @@ module.exports = {
                 : 'No member counters configured.',
         });
 
-        return interaction.reply({ embeds: [embed], ephemeral: true });
+        return interaction.reply({ embeds: [embed], flags: 64 });
     },
 };

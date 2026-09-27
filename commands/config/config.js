@@ -68,7 +68,7 @@ module.exports = {
                 ],
             });
 
-            return interaction.reply({ embeds: [embed], ephemeral: true });
+            return interaction.reply({ embeds: [embed], flags: 64 });
         }
 
         if (subcommand === 'set-log-channel') {
@@ -93,7 +93,7 @@ module.exports = {
                 ],
             }).catch(() => null);
 
-            return interaction.reply({ content: `${type} logs will now go to <#${channel.id}>.`, ephemeral: true });
+            return interaction.reply({ content: `${type} logs will now go to <#${channel.id}>.`, flags: 64 });
         }
     },
 };

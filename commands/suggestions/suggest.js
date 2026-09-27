@@ -24,11 +24,11 @@ module.exports = {
         const user = interaction.user;
 
         if (!config.suggestionID) {
-            return interaction.reply({ content: language.suggestions.missingChannel, ephemeral: true });
+            return interaction.reply({ content: language.suggestions.missingChannel, flags: 64 });
         }
 
         if (suggestion.length > 1900) {
-            return interaction.reply({ content: language.suggestions.tooLong, ephemeral: true });
+            return interaction.reply({ content: language.suggestions.tooLong, flags: 64 });
         }
 
         const embed = createEmbed({
@@ -46,7 +46,7 @@ module.exports = {
         try {
             const suggestionChannel = await interaction.client.channels.fetch(config.suggestionID);
             if (!suggestionChannel?.send) {
-                return interaction.reply({ content: language.suggestions.missingChannel, ephemeral: true });
+                return interaction.reply({ content: language.suggestions.missingChannel, flags: 64 });
             }
 
             const message = await suggestionChannel.send({ embeds: [embed] });
@@ -68,10 +68,10 @@ module.exports = {
                 ],
             }).catch(() => null);
 
-            await interaction.reply({ content: language.suggestions.submitted, ephemeral: true });
+            await interaction.reply({ content: language.suggestions.submitted, flags: 64 });
         } catch (error) {
             console.error('Error sending suggestion:', error);
-            await interaction.reply({ content: language.suggestions.failed, ephemeral: true });
+            await interaction.reply({ content: language.suggestions.failed, flags: 64 });
         }
     },
 };

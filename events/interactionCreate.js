@@ -17,18 +17,18 @@ module.exports = {
         }
 
         if (!isCommandEnabled(command)) {
-            return interaction.reply({ content: 'That command is currently disabled.', ephemeral: true });
+            return interaction.reply({ content: 'That command is currently disabled.', flags: 64 });
         }
 
         if (!memberCanUseCommand(interaction, command)) {
-            return interaction.reply({ content: 'You do not have permission to use this command.', ephemeral: true });
+            return interaction.reply({ content: 'You do not have permission to use this command.', flags: 64 });
         }
 
         try {
             await command.execute(interaction);
         } catch (error) {
             console.error(`Error executing /${interaction.commandName}:`, error);
-            await safeReply(interaction, { content: language.general.commandError, ephemeral: true });
+            await safeReply(interaction, { content: language.general.commandError, flags: 64 });
         }
     },
 };

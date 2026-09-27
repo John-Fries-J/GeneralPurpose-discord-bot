@@ -23,7 +23,7 @@ module.exports = {
                 .addStringOption(option => option.setName('video_message').setDescription('Template for videos. {title} {url} {channel} {type}'))
                 .addStringOption(option => option.setName('short_message').setDescription('Template for shorts.'))
                 .addStringOption(option => option.setName('stream_message').setDescription('Template for streams.'))
-                .addStringOption(option => option.setName('community_message').setDescription('Template for community posts.')))
+                .addStringOption(option => option.setName('community_message').setDescription('Best-effort only; YouTube RSS does not include community posts.')))
         .addSubcommand(subcommand =>
             subcommand
                 .setName('remove')
@@ -43,7 +43,7 @@ module.exports = {
                 config.youtube.channels ||= [];
                 return config;
             });
-            return interaction.reply({ content: 'YouTube API key saved.', ephemeral: true });
+            return interaction.reply({ content: 'YouTube API key saved.', flags: 64 });
         }
 
         if (subcommand === 'add') {
@@ -71,7 +71,7 @@ module.exports = {
                 return config;
             });
 
-            return interaction.reply({ content: `YouTube announcements for ${name} will go to <#${textChannel.id}>.`, ephemeral: true });
+            return interaction.reply({ content: `YouTube announcements for ${name} will go to <#${textChannel.id}>.`, flags: 64 });
         }
 
         if (subcommand === 'remove') {
@@ -85,7 +85,7 @@ module.exports = {
                 });
                 return config;
             });
-            return interaction.reply({ content: 'YouTube announcement target removed.', ephemeral: true });
+            return interaction.reply({ content: 'YouTube announcement target removed.', flags: 64 });
         }
 
         const channels = getConfig().youtube?.channels || [];
@@ -96,6 +96,6 @@ module.exports = {
                 ? channels.map(item => `${item.name || item.channelId} -> <#${item.discordChannelId}>`).join('\n')
                 : 'No YouTube announcement channels configured.',
         });
-        return interaction.reply({ embeds: [embed], ephemeral: true });
+        return interaction.reply({ embeds: [embed], flags: 64 });
     },
 };

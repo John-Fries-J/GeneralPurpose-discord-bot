@@ -36,6 +36,6 @@ module.exports = {
             ],
         }).catch(() => null);
 
-        return interaction.reply({ content: `<#${channel.id}> has been locked.`, ephemeral: true });
+        return interaction.reply({ content: `<#${channel.id}> has been locked.`, flags: 64 });
     },
 };

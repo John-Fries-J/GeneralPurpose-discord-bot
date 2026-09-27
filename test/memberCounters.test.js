@@ -9,3 +9,7 @@ test('formatCounterName applies custom count format', () => {
 test('formatCounterName falls back by counter type', () => {
     assert.equal(formatCounterName({ type: 'bots' }, 7), 'Bots: 7');
 });
+
+test('formatCounterName supports role placeholders', () => {
+    assert.equal(formatCounterName({ type: 'role', roleName: 'Helpers', nameFormat: '{roleName}: {count}' }, 3), 'Helpers: 3');
+});

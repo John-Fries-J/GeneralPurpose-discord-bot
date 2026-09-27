@@ -12,3 +12,18 @@ test('formatVoiceChannelName supports username and display name placeholders', (
 
     assert.equal(formatVoiceChannelName('{displayName} / {username}', member), 'Mars / marsden');
 });
+
+test('formatVoiceChannelName supports username aliases', () => {
+    const member = {
+        id: '123',
+        displayName: 'Mars',
+        user: {
+            globalName: 'Marsden',
+            tag: 'marsden#0001',
+            username: 'marsden',
+        },
+    };
+
+    assert.equal(formatVoiceChannelName("{user}'s epic call", member), "marsden's epic call");
+    assert.equal(formatVoiceChannelName('{globalName}', member), 'Marsden');
+});

@@ -36,6 +36,6 @@ module.exports = {
             ],
         }).catch(() => null);
 
-        return interaction.reply({ content: `<#${channel.id}> has been unlocked.`, ephemeral: true });
+        return interaction.reply({ content: `<#${channel.id}> has been unlocked.`, flags: 64 });
     },
 };

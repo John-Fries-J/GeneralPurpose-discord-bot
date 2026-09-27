@@ -16,9 +16,9 @@ module.exports = {
         const updated = await updateModerationCaseReason(interaction.guild.id, caseId, reason);
 
         if (!updated) {
-            return interaction.reply({ content: `Case #${caseId} was not found.`, ephemeral: true });
+            return interaction.reply({ content: `Case #${caseId} was not found.`, flags: 64 });
         }
 
-        return interaction.reply({ content: `Case #${caseId} reason updated.`, ephemeral: true });
+        return interaction.reply({ content: `Case #${caseId} reason updated.`, flags: 64 });
     },
 };

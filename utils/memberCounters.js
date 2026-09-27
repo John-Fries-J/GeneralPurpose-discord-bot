@@ -6,18 +6,23 @@ function getMemberCounters(config = getConfig()) {
 }
 
 async function countCounter(guild, counter) {
-    await guild.members.fetch().catch(() => null);
+    const fetchedMembers = await guild.members.fetch().catch(error => {
+        console.error(`Failed to fetch members for counter ${counter.channelId}:`, error);
+        return null;
+    });
+    const members = fetchedMembers || guild.members.cache;
 
     if (counter.type === 'bots') {
-        return guild.members.cache.filter(member => member.user.bot).size;
+        return members.filter(member => member.user?.bot).size;
     }
 
     if (counter.type === 'boosters') {
-        return guild.members.cache.filter(member => Boolean(member.premiumSince)).size;
+        return members.filter(member => Boolean(member.premiumSince)).size;
     }
 
     if (counter.type === 'role') {
-        return guild.members.cache.filter(member => member.roles.cache.has(counter.roleId)).size;
+        if (!counter.roleId) return 0;
+        return members.filter(member => member.roles.cache.has(counter.roleId)).size;
     }
 
     return guild.memberCount || guild.members.cache.size;
@@ -31,8 +36,13 @@ function formatCounterName(counter, count) {
         role: 'Role Members: {count}',
     };
 
+    const roleName = counter.roleName || (counter.roleId ? `<@&${counter.roleId}>` : 'Role Members');
+
     return (counter.nameFormat || fallbackNames[counter.type] || '{count}')
         .replaceAll('{count}', `${count}`)
+        .replaceAll('{role}', roleName)
+        .replaceAll('{roleName}', roleName)
+        .replaceAll('{type}', counter.type || 'members')
         .slice(0, 100);
 }
 

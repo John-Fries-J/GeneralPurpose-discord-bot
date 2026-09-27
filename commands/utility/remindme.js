@@ -17,11 +17,11 @@ module.exports = {
         const durationMs = parseDuration(duration);
 
         if (!durationMs) {
-            return interaction.reply({ content: 'Invalid duration. Use something like 10m, 2h, or 3d.', ephemeral: true });
+            return interaction.reply({ content: 'Invalid duration. Use something like 10m, 2h, or 3d.', flags: 64 });
         }
 
         if (durationMs > maxReminderMs) {
-            return interaction.reply({ content: 'Reminders can be up to 24 days while this bot has no database.', ephemeral: true });
+            return interaction.reply({ content: 'Reminders can be up to 24 days while this bot has no database.', flags: 64 });
         }
 
         setTimeout(async () => {
@@ -33,6 +33,6 @@ module.exports = {
             await interaction.user.send({ embeds: [embed] }).catch(() => null);
         }, durationMs);
 
-        return interaction.reply({ content: `I will remind you in ${duration}.`, ephemeral: true });
+        return interaction.reply({ content: `I will remind you in ${duration}.`, flags: 64 });
     },
 };

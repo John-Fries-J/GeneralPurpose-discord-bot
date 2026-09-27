@@ -23,11 +23,11 @@ module.exports = {
         const target = await validateTarget(interaction, user, 'moderatable');
 
         if (!target.ok) {
-            return interaction.reply({ content: target.message === language.moderation.cannotModerateUser ? language.moderation.cannotMute : target.message, ephemeral: true });
+            return interaction.reply({ content: target.message === language.moderation.cannotModerateUser ? language.moderation.cannotMute : target.message, flags: 64 });
         }
 
         if (!durationInMs) {
-            return interaction.reply({ content: language.moderation.invalidDuration, ephemeral: true });
+            return interaction.reply({ content: language.moderation.invalidDuration, flags: 64 });
         }
 
         const muteRole = await getOrCreateMuteRole(interaction.guild);
@@ -71,6 +71,6 @@ module.exports = {
             ],
         });
 
-        await interaction.reply({ embeds: [embed], ephemeral: true });
+        await interaction.reply({ embeds: [embed], flags: 64 });
     },
 };

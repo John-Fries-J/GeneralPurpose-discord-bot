@@ -18,7 +18,7 @@ module.exports = {
         const target = await validateTarget(interaction, user);
 
         if (!target.ok) {
-            return interaction.reply({ content: target.message, ephemeral: true });
+            return interaction.reply({ content: target.message, flags: 64 });
         }
 
         const dmSent = await sendModerationDm(user, {
@@ -42,6 +42,6 @@ module.exports = {
             color: 'orange',
         });
 
-        await interaction.reply({ embeds: [embed], ephemeral: true });
+        await interaction.reply({ embeds: [embed], flags: 64 });
     },
 };

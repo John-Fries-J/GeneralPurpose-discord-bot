@@ -20,11 +20,11 @@ module.exports = {
         const member = await fetchMember(interaction.guild, user.id);
 
         if (!member) {
-            return interaction.reply({ content: language.moderation.userNotInServer, ephemeral: true });
+            return interaction.reply({ content: language.moderation.userNotInServer, flags: 64 });
         }
 
         if (!member.manageable) {
-            return interaction.reply({ content: 'I cannot change this user nickname. Check my role position and permissions.', ephemeral: true });
+            return interaction.reply({ content: 'I cannot change this user nickname. Check my role position and permissions.', flags: 64 });
         }
 
         const oldNickname = member.nickname || member.user.username;
@@ -43,6 +43,6 @@ module.exports = {
             ],
         }).catch(() => null);
 
-        return interaction.reply({ content: `Nickname updated for ${user.tag}.`, ephemeral: true });
+        return interaction.reply({ content: `Nickname updated for ${user.tag}.`, flags: 64 });
     },
 };

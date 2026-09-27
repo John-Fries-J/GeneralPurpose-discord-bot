@@ -1,6 +1,7 @@
 const { ChannelType, PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
 const { getConfig, updateConfig } = require('../../utils/config');
 const { createEmbed } = require('../../utils/embeds');
+const { deleteJoinToCreateChannels } = require('../../utils/joinToCreate');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -39,7 +40,7 @@ module.exports = {
                 return config;
             });
 
-            return interaction.reply({ content: `Join-to-create enabled using <#${triggerChannel.id}>.`, ephemeral: true });
+            return interaction.reply({ content: `Join-to-create enabled using <#${triggerChannel.id}>.`, flags: 64 });
         }
 
         if (subcommand === 'disable') {
@@ -48,7 +49,8 @@ module.exports = {
                 config.joinToCreate.enabled = false;
                 return config;
             });
-            return interaction.reply({ content: 'Join-to-create disabled.', ephemeral: true });
+            const deleted = await deleteJoinToCreateChannels(interaction.guild);
+            return interaction.reply({ content: `Join-to-create disabled. Deleted ${deleted} active temporary voice channel${deleted === 1 ? '' : 's'}.`, flags: 64 });
         }
 
         const settings = getConfig().joinToCreate || {};
@@ -63,6 +65,6 @@ module.exports = {
                 { name: 'Max Limit', value: `${settings.userLimitMax || 25}`, inline: true },
             ],
         });
-        return interaction.reply({ embeds: [embed], ephemeral: true });
+        return interaction.reply({ embeds: [embed], flags: 64 });
     },
 };

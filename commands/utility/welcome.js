@@ -36,7 +36,7 @@ module.exports = {
             await interaction.channel.send({ content: `<@${user.id}>`, embeds: [embed] });
             return interaction.reply({
                 content: formatTemplate(language.welcome.sent, { user: `<@${user.id}>` }),
-                ephemeral: true,
+                flags: 64,
             });
         }
 

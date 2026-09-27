@@ -32,7 +32,7 @@ module.exports = {
 
     async execute(interaction) {
         const owned = await getOwnedVoiceChannel(interaction);
-        if (!owned.ok) return interaction.reply({ content: owned.message, ephemeral: true });
+        if (!owned.ok) return interaction.reply({ content: owned.message, flags: 64 });
 
         const subcommand = interaction.options.getSubcommand();
         const { channel } = owned;
@@ -41,32 +41,32 @@ module.exports = {
             const amount = interaction.options.getInteger('amount', true);
             const max = Number(getConfig().joinToCreate?.userLimitMax || 25);
             if (amount > max) {
-                return interaction.reply({ content: `The maximum allowed limit is ${max}.`, ephemeral: true });
+                return interaction.reply({ content: `The maximum allowed limit is ${max}.`, flags: 64 });
             }
             await channel.setUserLimit(amount, 'Voice owner changed user limit');
-            return interaction.reply({ content: `Voice channel limit set to ${amount || 'unlimited'}.`, ephemeral: true });
+            return interaction.reply({ content: `Voice channel limit set to ${amount || 'unlimited'}.`, flags: 64 });
         }
 
         if (subcommand === 'name') {
             const name = interaction.options.getString('name', true);
             await channel.setName(name, 'Voice owner renamed channel');
-            return interaction.reply({ content: `Voice channel renamed to ${name}.`, ephemeral: true });
+            return interaction.reply({ content: `Voice channel renamed to ${name}.`, flags: 64 });
         }
 
         if (subcommand === 'lock') {
             await channel.permissionOverwrites.edit(interaction.guild.roles.everyone, { Connect: false });
-            return interaction.reply({ content: 'Voice channel locked.', ephemeral: true });
+            return interaction.reply({ content: 'Voice channel locked.', flags: 64 });
         }
 
         if (subcommand === 'unlock') {
             await channel.permissionOverwrites.edit(interaction.guild.roles.everyone, { Connect: true });
-            return interaction.reply({ content: 'Voice channel unlocked.', ephemeral: true });
+            return interaction.reply({ content: 'Voice channel unlocked.', flags: 64 });
         }
 
         const user = interaction.options.getUser('user', true);
         if (subcommand === 'permit') {
             await channel.permissionOverwrites.edit(user.id, { Connect: true, ViewChannel: true });
-            return interaction.reply({ content: `<@${user.id}> can now join your channel.`, ephemeral: true });
+            return interaction.reply({ content: `<@${user.id}> can now join your channel.`, flags: 64 });
         }
 
         if (subcommand === 'reject') {
@@ -75,7 +75,7 @@ module.exports = {
             if (member?.voice?.channelId === channel.id && interaction.guild.members.me.permissions.has(PermissionFlagsBits.MoveMembers)) {
                 await member.voice.disconnect('Rejected from join-to-create channel').catch(() => null);
             }
-            return interaction.reply({ content: `<@${user.id}> has been rejected from your channel.`, ephemeral: true });
+            return interaction.reply({ content: `<@${user.id}> has been rejected from your channel.`, flags: 64 });
         }
     },
 };

@@ -23,7 +23,7 @@ module.exports = {
         const title = interaction.options.getString('title') || 'Announcement';
 
         if (!channel?.send) {
-            return interaction.reply({ content: 'That channel cannot receive announcements.', ephemeral: true });
+            return interaction.reply({ content: 'That channel cannot receive announcements.', flags: 64 });
         }
 
         const embed = createEmbed({
@@ -45,6 +45,6 @@ module.exports = {
             ],
         }).catch(() => null);
 
-        return interaction.reply({ content: `Announcement sent to <#${channel.id}>.`, ephemeral: true });
+        return interaction.reply({ content: `Announcement sent to <#${channel.id}>.`, flags: 64 });
     },
 };

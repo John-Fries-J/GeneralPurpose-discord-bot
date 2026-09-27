@@ -19,7 +19,7 @@ module.exports = {
         const target = await validateTarget(interaction, user, 'moderatable');
 
         if (!target.ok) {
-            return interaction.reply({ content: target.message === language.moderation.cannotModerateUser ? language.moderation.cannotUnmute : target.message, ephemeral: true });
+            return interaction.reply({ content: target.message === language.moderation.cannotModerateUser ? language.moderation.cannotUnmute : target.message, flags: 64 });
         }
 
         const muteRecord = await getTempMute(interaction.guild.id, user.id);
@@ -51,6 +51,6 @@ module.exports = {
             ],
         });
 
-        await interaction.reply({ embeds: [embed], ephemeral: true });
+        await interaction.reply({ embeds: [embed], flags: 64 });
     },
 };

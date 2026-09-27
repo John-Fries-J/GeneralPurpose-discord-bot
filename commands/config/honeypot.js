@@ -23,7 +23,11 @@ module.exports = {
                         .setName('alert_channel')
                         .setDescription('Where scam alerts should be sent.')
                         .addChannelTypes(ChannelType.GuildText)
-                        .setRequired(true)))
+                        .setRequired(true))
+                .addMentionableOption(option =>
+                    option
+                        .setName('ping')
+                        .setDescription('Optional user or role to ping when the honeypot triggers.')))
         .addSubcommand(subcommand =>
             subcommand
                 .setName('disable')
@@ -39,19 +43,24 @@ module.exports = {
         if (subcommand === 'configure') {
             const channel = interaction.options.getChannel('channel', true);
             const alertChannel = interaction.options.getChannel('alert_channel', true);
+            const ping = interaction.options.getMentionable('ping');
+            const pingType = ping?.user || ping?.username ? 'user' : ping?.id ? 'role' : '';
+            const pingMention = ping?.id ? (pingType === 'role' ? `<@&${ping.id}>` : `<@${ping.id}>`) : '';
 
             updateConfig(config => {
                 config.honeypot = {
                     enabled: true,
                     channelId: channel.id,
                     alertChannelId: alertChannel.id,
+                    mentionId: ping?.id || '',
+                    mentionType: pingType,
                 };
                 return config;
             });
 
             return interaction.reply({
-                content: `Honeypot enabled in <#${channel.id}>. Scam alerts will go to <#${alertChannel.id}>.`,
-                ephemeral: true,
+                content: `Honeypot enabled in <#${channel.id}>. Scam alerts will go to <#${alertChannel.id}>${pingMention ? ` and ping ${pingMention}` : ''}.`,
+                flags: 64,
             });
         }
 
@@ -62,7 +71,7 @@ module.exports = {
                 return config;
             });
 
-            return interaction.reply({ content: 'Honeypot disabled.', ephemeral: true });
+            return interaction.reply({ content: 'Honeypot disabled.', flags: 64 });
         }
 
         const settings = getConfig().honeypot || {};
@@ -73,9 +82,10 @@ module.exports = {
                 { name: 'Enabled', value: settings.enabled ? 'Yes' : 'No', inline: true },
                 { name: 'Channel', value: settings.channelId ? `<#${settings.channelId}>` : 'Not set', inline: true },
                 { name: 'Alert Channel', value: settings.alertChannelId ? `<#${settings.alertChannelId}>` : 'Not set', inline: true },
+                { name: 'Ping', value: settings.mentionId ? `${settings.mentionType === 'role' ? `<@&${settings.mentionId}>` : `<@${settings.mentionId}>`}` : 'None', inline: true },
             ],
         });
 
-        return interaction.reply({ embeds: [embed], ephemeral: true });
+        return interaction.reply({ embeds: [embed], flags: 64 });
     },
 };

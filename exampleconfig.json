@@ -33,7 +33,9 @@
     "honeypot": {
         "enabled": false,
         "channelId": "",
-        "alertChannelId": ""
+        "alertChannelId": "",
+        "mentionId": "",
+        "mentionType": ""
     },
     "memberCounters": [],
     "youtube": {
@@ -42,7 +44,9 @@
     },
     "twitch": {
         "clientId": "",
+        "clientSecret": "",
         "accessToken": "",
+        "accessTokenExpiresAt": 0,
         "channels": []
     },
     "joinToCreate": {

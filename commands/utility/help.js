@@ -16,11 +16,11 @@ module.exports = {
         if (commandName) {
             const command = commands.get(commandName);
             if (!command) {
-                return interaction.reply({ content: language.help.missingCommand, ephemeral: true });
+                return interaction.reply({ content: language.help.missingCommand, flags: 64 });
             }
 
             if (!memberCanUseCommand(interaction, command)) {
-                return interaction.reply({ content: language.help.missingCommand, ephemeral: true });
+                return interaction.reply({ content: language.help.missingCommand, flags: 64 });
             }
 
             const fields = [];
@@ -39,7 +39,7 @@ module.exports = {
                 color: 'blue',
             });
 
-            return interaction.reply({ embeds: [embed], ephemeral: true });
+            return interaction.reply({ embeds: [embed], flags: 64 });
         }
 
         const categories = new Map();
@@ -63,6 +63,6 @@ module.exports = {
             color: 'blue',
         });
 
-        await interaction.reply({ embeds: [embed], ephemeral: true });
+        await interaction.reply({ embeds: [embed], flags: 64 });
     },
 };

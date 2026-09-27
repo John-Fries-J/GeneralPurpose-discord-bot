@@ -28,7 +28,7 @@ module.exports = {
         const reason = interaction.options.getString('reason') || 'Slowmode updated';
 
         if (typeof channel.setRateLimitPerUser !== 'function') {
-            return interaction.reply({ content: 'That channel does not support slowmode.', ephemeral: true });
+            return interaction.reply({ content: 'That channel does not support slowmode.', flags: 64 });
         }
 
         await channel.setRateLimitPerUser(seconds, reason);
@@ -44,6 +44,6 @@ module.exports = {
             ],
         }).catch(() => null);
 
-        return interaction.reply({ content: `Slowmode for <#${channel.id}> is now ${seconds} seconds.`, ephemeral: true });
+        return interaction.reply({ content: `Slowmode for <#${channel.id}> is now ${seconds} seconds.`, flags: 64 });
     },
 };

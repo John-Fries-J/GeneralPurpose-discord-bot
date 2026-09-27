@@ -15,7 +15,7 @@ module.exports = {
         const amount = interaction.options.getInteger('amount', true);
 
         if (amount < 1 || amount > 100) {
-            return interaction.reply({ content: language.moderation.purgeRange, ephemeral: true });
+            return interaction.reply({ content: language.moderation.purgeRange, flags: 64 });
         }
 
         try {
@@ -33,11 +33,11 @@ module.exports = {
 
             await interaction.reply({
                 content: formatTemplate(language.moderation.purgeSuccess, { amount: deleted.size }),
-                ephemeral: true,
+                flags: 64,
             });
         } catch (error) {
             console.error('Purge failed:', error);
-            await interaction.reply({ content: `There was an error trying to delete messages in this channel: ${error.message}`, ephemeral: true });
+            await interaction.reply({ content: `There was an error trying to delete messages in this channel: ${error.message}`, flags: 64 });
         }
     },
 };

@@ -19,7 +19,7 @@ module.exports = {
         const record = await getModerationCase(interaction.guild.id, caseId);
 
         if (!record) {
-            return interaction.reply({ content: `Case #${caseId} was not found.`, ephemeral: true });
+            return interaction.reply({ content: `Case #${caseId} was not found.`, flags: 64 });
         }
 
         const embed = createEmbed({
@@ -37,6 +37,6 @@ module.exports = {
             ],
         });
 
-        return interaction.reply({ embeds: [embed], ephemeral: true });
+        return interaction.reply({ embeds: [embed], flags: 64 });
     },
 };

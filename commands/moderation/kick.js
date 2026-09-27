@@ -17,7 +17,7 @@ module.exports = {
         const target = await validateTarget(interaction, user, 'kickable');
 
         if (!target.ok) {
-            return interaction.reply({ content: target.message === language.moderation.cannotModerateUser ? language.moderation.cannotKick : target.message, ephemeral: true });
+            return interaction.reply({ content: target.message === language.moderation.cannotModerateUser ? language.moderation.cannotKick : target.message, flags: 64 });
         }
 
         const dmSent = await sendModerationDm(user, {
@@ -38,7 +38,7 @@ module.exports = {
 
         await interaction.reply({
             content: `User ${user.tag} has been kicked. Reason: ${reason}${dmSent ? '' : `\n${language.moderation.dmFailed}`}`,
-            ephemeral: true,
+            flags: 64,
         });
     },
 };

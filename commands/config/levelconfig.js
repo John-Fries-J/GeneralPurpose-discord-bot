@@ -50,7 +50,7 @@ module.exports = {
                 config.leveling.roleRewards ||= [];
                 return config;
             });
-            return interaction.reply({ content: 'Leveling enabled.', ephemeral: true });
+            return interaction.reply({ content: 'Leveling enabled.', flags: 64 });
         }
 
         if (subcommand === 'disable') {
@@ -59,7 +59,7 @@ module.exports = {
                 config.leveling.enabled = false;
                 return config;
             });
-            return interaction.reply({ content: 'Leveling disabled.', ephemeral: true });
+            return interaction.reply({ content: 'Leveling disabled.', flags: 64 });
         }
 
         if (subcommand === 'add-role') {
@@ -72,7 +72,7 @@ module.exports = {
                 config.leveling.roleRewards.sort((a, b) => a.xp - b.xp);
                 return config;
             });
-            return interaction.reply({ content: `<@&${role.id}> will be awarded at ${xp} total XP.`, ephemeral: true });
+            return interaction.reply({ content: `<@&${role.id}> will be awarded at ${xp} total XP.`, flags: 64 });
         }
 
         if (subcommand === 'remove-role') {
@@ -82,7 +82,7 @@ module.exports = {
                 config.leveling.roleRewards = (config.leveling.roleRewards || []).filter(reward => reward.roleId !== role.id);
                 return config;
             });
-            return interaction.reply({ content: `Removed reward for <@&${role.id}>.`, ephemeral: true });
+            return interaction.reply({ content: `Removed reward for <@&${role.id}>.`, flags: 64 });
         }
 
         const settings = getConfig().leveling || {};
@@ -98,6 +98,6 @@ module.exports = {
                 { name: 'Rewards', value: settings.roleRewards?.length ? settings.roleRewards.map(reward => `${reward.xp} XP -> <@&${reward.roleId}>`).join('\n') : 'None' },
             ],
         });
-        return interaction.reply({ embeds: [embed], ephemeral: true });
+        return interaction.reply({ embeds: [embed], flags: 64 });
     },
 };

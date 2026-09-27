@@ -3,6 +3,7 @@ const path = require('node:path');
 const { getConfig } = require('./config');
 
 let sqlitePromise = null;
+let stateMutationQueue = Promise.resolve();
 
 function resolveDataPath(config = getConfig()) {
     return path.resolve(__dirname, '..', config.database?.jsonPath || 'data/bot-state.json');
@@ -168,10 +169,15 @@ async function writeState(state) {
 
 
 async function updateState(updater) {
-    const state = await readState();
-    const nextState = updater(state) || state;
-    await writeState(nextState);
-    return nextState;
+    const run = stateMutationQueue.then(async () => {
+        const state = await readState();
+        const nextState = updater(state) || state;
+        await writeState(nextState);
+        return nextState;
+    });
+
+    stateMutationQueue = run.catch(() => null);
+    return run;
 }
 
 async function upsertTempBan(record) {
@@ -282,6 +288,18 @@ async function removeTempVoiceChannel(channelId) {
         state.tempVoiceChannels = state.tempVoiceChannels.filter(item => item.channelId !== channelId);
         return state;
     });
+}
+
+async function removeTempVoiceChannelsForGuild(guildId) {
+    let removed = [];
+
+    await updateState(state => {
+        removed = state.tempVoiceChannels.filter(item => item.guildId === guildId);
+        state.tempVoiceChannels = state.tempVoiceChannels.filter(item => item.guildId !== guildId);
+        return state;
+    });
+
+    return removed;
 }
 
 async function getTempVoiceChannel(channelId) {
@@ -407,6 +425,7 @@ module.exports = {
     removeTempBan,
     removeTempMute,
     removeTempVoiceChannel,
+    removeTempVoiceChannelsForGuild,
     updateModerationCaseReason,
     upsertTempBan,
     upsertTempMute,

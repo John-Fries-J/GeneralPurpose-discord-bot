@@ -73,7 +73,25 @@ function userCanManageTicket(interaction, ticketConfig) {
 
 async function createTicketPanel(interaction, ticketChannel, ticketRole, ticketCategory) {
     if (!isGuildTextChannel(ticketChannel)) {
-        return interaction.reply({ content: language.tickets.channelMustBeText, ephemeral: true });
+        return interaction.reply({ content: language.tickets.channelMustBeText, flags: 64 });
+    }
+
+    const botMember = interaction.guild.members.me || await interaction.guild.members.fetchMe().catch(() => null);
+    const panelPermissions = ticketChannel.permissionsFor(botMember);
+    if (!panelPermissions?.has(PermissionsBitField.Flags.ViewChannel) || !panelPermissions?.has(PermissionsBitField.Flags.SendMessages)) {
+        return interaction.reply({ content: 'I need View Channel and Send Messages in the ticket panel channel.', flags: 64 });
+    }
+
+    if (!botMember?.permissions?.has(PermissionsBitField.Flags.ManageChannels)) {
+        return interaction.reply({ content: 'I need Manage Channels to create ticket channels.', flags: 64 });
+    }
+
+    if (!ticketCategory || ticketCategory.type !== ChannelType.GuildCategory) {
+        return interaction.reply({ content: 'Please choose a category for new ticket channels.', flags: 64 });
+    }
+
+    if (!ticketRole || ticketRole.id === interaction.guild.id) {
+        return interaction.reply({ content: 'Please choose a normal support role for tickets.', flags: 64 });
     }
 
     const ticketEmbed = createEmbed({
@@ -116,14 +134,14 @@ async function createTicketPanel(interaction, ticketChannel, ticketRole, ticketC
 
     return interaction.reply({
         content: formatTemplate(language.tickets.setupComplete, { channel: `<#${ticketChannel.id}>` }),
-        ephemeral: true,
+        flags: 64,
     });
 }
 
 async function openTicket(interaction) {
     const ticketConfig = getTicketConfig();
     if (!ticketConfig.categoryId || !ticketConfig.supportRoleId) {
-        return interaction.reply({ content: language.tickets.missingSetup, ephemeral: true });
+        return interaction.reply({ content: language.tickets.missingSetup, flags: 64 });
     }
 
     const existingTicket = interaction.guild.channels.cache.find(channel =>
@@ -134,7 +152,7 @@ async function openTicket(interaction) {
     if (existingTicket) {
         return interaction.reply({
             content: formatTemplate(language.tickets.alreadyOpen, { channel: `<#${existingTicket.id}>` }),
-            ephemeral: true,
+            flags: 64,
         });
     }
 
@@ -185,7 +203,7 @@ async function openTicket(interaction) {
         ],
     }).catch(() => null);
 
-    return interaction.reply({ content: `Ticket created: <#${newChannel.id}>`, ephemeral: true });
+    return interaction.reply({ content: `Ticket created: <#${newChannel.id}>`, flags: 64 });
 }
 
 async function fetchTranscriptMessages(channel) {
@@ -238,19 +256,19 @@ async function sendTicketTranscript(interaction) {
     const channel = interaction.channel;
 
     if (!channel?.name?.startsWith('ticket-') && !channel?.name?.startsWith('closed-')) {
-        return interaction.reply({ content: language.tickets.notTicket, ephemeral: true });
+        return interaction.reply({ content: language.tickets.notTicket, flags: 64 });
     }
 
     if (!userCanManageTicket(interaction, ticketConfig)) {
-        return interaction.reply({ content: language.tickets.noPermission, ephemeral: true });
+        return interaction.reply({ content: language.tickets.noPermission, flags: 64 });
     }
 
     const transcript = await buildTranscript(channel);
     if (!transcript) {
-        return interaction.reply({ content: 'No messages were found to transcript.', ephemeral: true });
+        return interaction.reply({ content: 'No messages were found to transcript.', flags: 64 });
     }
 
-    return interaction.reply({ content: 'Ticket transcript generated.', files: [transcript], ephemeral: true });
+    return interaction.reply({ content: 'Ticket transcript generated.', files: [transcript], flags: 64 });
 }
 
 async function addTicketUser(interaction, user) {
@@ -258,11 +276,11 @@ async function addTicketUser(interaction, user) {
     const channel = interaction.channel;
 
     if (!channel?.name?.startsWith('ticket-') && !channel?.name?.startsWith('closed-')) {
-        return interaction.reply({ content: language.tickets.notTicket, ephemeral: true });
+        return interaction.reply({ content: language.tickets.notTicket, flags: 64 });
     }
 
     if (!userCanManageTicket(interaction, ticketConfig)) {
-        return interaction.reply({ content: language.tickets.noPermission, ephemeral: true });
+        return interaction.reply({ content: language.tickets.noPermission, flags: 64 });
     }
 
     await channel.permissionOverwrites.edit(user.id, {
@@ -282,7 +300,7 @@ async function addTicketUser(interaction, user) {
         ],
     }).catch(() => null);
 
-    return interaction.reply({ content: `<@${user.id}> has been added to this ticket.`, ephemeral: true });
+    return interaction.reply({ content: `<@${user.id}> has been added to this ticket.`, flags: 64 });
 }
 
 async function removeTicketUser(interaction, user) {
@@ -290,11 +308,11 @@ async function removeTicketUser(interaction, user) {
     const channel = interaction.channel;
 
     if (!channel?.name?.startsWith('ticket-') && !channel?.name?.startsWith('closed-')) {
-        return interaction.reply({ content: language.tickets.notTicket, ephemeral: true });
+        return interaction.reply({ content: language.tickets.notTicket, flags: 64 });
     }
 
     if (!userCanManageTicket(interaction, ticketConfig)) {
-        return interaction.reply({ content: language.tickets.noPermission, ephemeral: true });
+        return interaction.reply({ content: language.tickets.noPermission, flags: 64 });
     }
 
     await channel.permissionOverwrites.delete(user.id).catch(async () => {
@@ -312,7 +330,7 @@ async function removeTicketUser(interaction, user) {
         ],
     }).catch(() => null);
 
-    return interaction.reply({ content: `<@${user.id}> has been removed from this ticket.`, ephemeral: true });
+    return interaction.reply({ content: `<@${user.id}> has been removed from this ticket.`, flags: 64 });
 }
 
 async function renameTicket(interaction, name) {
@@ -320,11 +338,11 @@ async function renameTicket(interaction, name) {
     const channel = interaction.channel;
 
     if (!channel?.name?.startsWith('ticket-') && !channel?.name?.startsWith('closed-')) {
-        return interaction.reply({ content: language.tickets.notTicket, ephemeral: true });
+        return interaction.reply({ content: language.tickets.notTicket, flags: 64 });
     }
 
     if (!userCanManageTicket(interaction, ticketConfig)) {
-        return interaction.reply({ content: language.tickets.noPermission, ephemeral: true });
+        return interaction.reply({ content: language.tickets.noPermission, flags: 64 });
     }
 
     const prefix = channel.name.startsWith('closed-') ? 'closed-' : 'ticket-';
@@ -336,7 +354,7 @@ async function renameTicket(interaction, name) {
         .slice(0, 80);
 
     if (!safeName) {
-        return interaction.reply({ content: 'Please provide a valid ticket name.', ephemeral: true });
+        return interaction.reply({ content: 'Please provide a valid ticket name.', flags: 64 });
     }
 
     const oldName = channel.name;
@@ -353,7 +371,7 @@ async function renameTicket(interaction, name) {
         ],
     }).catch(() => null);
 
-    return interaction.reply({ content: `Ticket renamed to ${channel.name}.`, ephemeral: true });
+    return interaction.reply({ content: `Ticket renamed to ${channel.name}.`, flags: 64 });
 }
 
 async function closeTicket(interaction) {
@@ -361,11 +379,11 @@ async function closeTicket(interaction) {
     const channel = interaction.channel;
 
     if (!channel?.name?.startsWith('ticket-')) {
-        return interaction.reply({ content: language.tickets.notTicket, ephemeral: true });
+        return interaction.reply({ content: language.tickets.notTicket, flags: 64 });
     }
 
     if (!userCanManageTicket(interaction, ticketConfig)) {
-        return interaction.reply({ content: language.tickets.noPermission, ephemeral: true });
+        return interaction.reply({ content: language.tickets.noPermission, flags: 64 });
     }
 
     const ticketUserId = channel.topic;
@@ -419,11 +437,11 @@ async function deleteTicket(interaction) {
     const channel = interaction.channel;
 
     if (!channel?.name?.startsWith('closed-')) {
-        return interaction.reply({ content: language.tickets.notClosedTicket, ephemeral: true });
+        return interaction.reply({ content: language.tickets.notClosedTicket, flags: 64 });
     }
 
     if (!userCanManageTicket(interaction, ticketConfig)) {
-        return interaction.reply({ content: language.tickets.noPermission, ephemeral: true });
+        return interaction.reply({ content: language.tickets.noPermission, flags: 64 });
     }
 
     const transcript = await buildTranscript(channel);
@@ -438,7 +456,7 @@ async function deleteTicket(interaction) {
         files: transcript ? [transcript] : [],
     }).catch(() => null);
 
-    await interaction.reply({ content: language.tickets.deleting, ephemeral: true });
+    await interaction.reply({ content: language.tickets.deleting, flags: 64 });
     return channel.delete();
 }
 

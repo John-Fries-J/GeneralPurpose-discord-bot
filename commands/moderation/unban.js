@@ -26,10 +26,10 @@ module.exports = {
                 user,
                 reason,
             });
-            await interaction.reply({ content: `${user.tag} has been unbanned. ${language.moderation.caseLogged}`, ephemeral: true });
+            await interaction.reply({ content: `${user.tag} has been unbanned. ${language.moderation.caseLogged}`, flags: 64 });
         } catch (error) {
             console.error('Unban failed:', error);
-            await interaction.reply({ content: 'I could not unban that user. Make sure the ID is correct and the user is banned.', ephemeral: true });
+            await interaction.reply({ content: 'I could not unban that user. Make sure the ID is correct and the user is banned.', flags: 64 });
         }
     },
 };

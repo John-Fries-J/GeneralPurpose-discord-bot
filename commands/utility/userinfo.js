@@ -28,7 +28,7 @@ module.exports = {
         const user = await interaction.client.users.fetch(id).catch(() => null);
 
         if (!user) {
-            return interaction.reply({ content: 'I could not find a user with that ID.', ephemeral: true });
+            return interaction.reply({ content: 'I could not find a user with that ID.', flags: 64 });
         }
 
         const member = await fetchMember(interaction.guild, user.id);
@@ -45,6 +45,6 @@ module.exports = {
             ],
         });
 
-        return interaction.reply({ embeds: [embed], ephemeral: true });
+        return interaction.reply({ embeds: [embed], flags: 64 });
     },
 };

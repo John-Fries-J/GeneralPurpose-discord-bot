@@ -39,11 +39,11 @@ module.exports = {
         const member = await fetchMember(interaction.guild, user.id);
 
         if (!member) {
-            return interaction.reply({ content: language.moderation.userNotInServer, ephemeral: true });
+            return interaction.reply({ content: language.moderation.userNotInServer, flags: 64 });
         }
 
         if (!canManageRole(interaction, role)) {
-            return interaction.reply({ content: 'I cannot manage that role. Check role positions and permissions.', ephemeral: true });
+            return interaction.reply({ content: 'I cannot manage that role. Check role positions and permissions.', flags: 64 });
         }
 
         if (subcommand === 'add') {
@@ -64,6 +64,6 @@ module.exports = {
             ],
         }).catch(() => null);
 
-        return interaction.reply({ content: `<@&${role.id}> was ${subcommand === 'add' ? 'added to' : 'removed from'} ${user.tag}.`, ephemeral: true });
+        return interaction.reply({ content: `<@&${role.id}> was ${subcommand === 'add' ? 'added to' : 'removed from'} ${user.tag}.`, flags: 64 });
     },
 };

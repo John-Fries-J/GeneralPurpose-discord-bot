@@ -15,7 +15,7 @@ module.exports = {
         const cases = (await listModerationCases(interaction.guild.id, { userId: user.id })).slice(0, 10);
 
         if (!cases.length) {
-            return interaction.reply({ content: `${user.tag} has no moderation cases.`, ephemeral: true });
+            return interaction.reply({ content: `${user.tag} has no moderation cases.`, flags: 64 });
         }
 
         const embed = createEmbed({
@@ -27,6 +27,6 @@ module.exports = {
             }).join('\n'),
         });
 
-        return interaction.reply({ embeds: [embed], ephemeral: true });
+        return interaction.reply({ embeds: [embed], flags: 64 });
     },
 };
