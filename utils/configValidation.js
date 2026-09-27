@@ -88,6 +88,22 @@ function validateConfig(config, options = {}) {
         errors.push('memberCounters must be an array.');
     }
 
+    if (config.youtube !== undefined) {
+        if (!isPlainObject(config.youtube)) {
+            errors.push('youtube must be an object.');
+        } else if (config.youtube.channels !== undefined && !Array.isArray(config.youtube.channels)) {
+            errors.push('youtube.channels must be an array.');
+        }
+    }
+
+    if (config.twitch !== undefined) {
+        if (!isPlainObject(config.twitch)) {
+            errors.push('twitch must be an object.');
+        } else if (config.twitch.channels !== undefined && !Array.isArray(config.twitch.channels)) {
+            errors.push('twitch.channels must be an array.');
+        }
+    }
+
     if (config.database !== undefined) {
         if (!isPlainObject(config.database)) {
             errors.push('database must be an object.');

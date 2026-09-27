@@ -36,6 +36,15 @@
         "alertChannelId": ""
     },
     "memberCounters": [],
+    "youtube": {
+        "apiKey": "",
+        "channels": []
+    },
+    "twitch": {
+        "clientId": "",
+        "accessToken": "",
+        "channels": []
+    },
     "dashboard": {
         "enabled": false,
         "host": "0.0.0.0",

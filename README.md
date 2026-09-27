@@ -202,6 +202,12 @@ Config:
 - `/counter remove channel` removes a counter.
 - `/counter list` lists counters.
 - `/counter refresh` refreshes counters immediately.
+- `/youtube set-api-key api_key` enables YouTube API classification.
+- `/youtube add channel_id text_channel name video_message short_message stream_message community_message` adds YouTube announcements.
+- `/youtube remove channel_id text_channel` removes YouTube announcements.
+- `/twitch set-credentials client_id access_token` saves Twitch API credentials.
+- `/twitch add streamer_id streamer_name text_channel message` adds Twitch announcements.
+- `/twitch remove streamer_id text_channel` removes Twitch announcements.
 
 Honeypot:
 
@@ -213,6 +219,12 @@ Member Counters:
 
 - Counter voice channels can show total members, bots, boosters, or members with a specific role.
 - Use `{count}` in `name_format`, such as `Members: {count}`.
+
+Media Announcements:
+
+- YouTube and Twitch support multiple source channels and different Discord destination channels.
+- YouTube messages can be configured separately for videos, shorts, live streams, and community posts. Without a YouTube API key, the bot falls back to the YouTube RSS feed and uses heuristics for shorts/streams.
+- Twitch live messages support `{streamer}`, `{title}`, `{game}`, and `{url}`.
 
 ## Editing Text
 

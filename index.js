@@ -73,6 +73,9 @@ async function shutdown(signal, exitCode = 0) {
     if (client.memberCounterScheduler) {
         clearInterval(client.memberCounterScheduler);
     }
+    if (client.mediaAnnouncementScheduler) {
+        clearInterval(client.mediaAnnouncementScheduler);
+    }
 
     if (dashboardServer) {
         await new Promise(resolve => dashboardServer.close(resolve));
