@@ -108,6 +108,22 @@ async function handleJoinToCreate(oldState, newState) {
         if (oldChannel && oldChannel.members.size === 0) {
             await removeTempVoiceChannel(oldState.channelId);
             await oldChannel.delete('Deleting empty join-to-create channel').catch(() => null);
+        } else if (oldChannel && record.ownerId === oldState.member?.id) {
+            const nextOwner = oldChannel.members.find(member => !member.user.bot);
+            if (nextOwner) {
+                await upsertTempVoiceChannel({
+                    ...record,
+                    ownerId: nextOwner.id,
+                    transferredAt: Date.now(),
+                });
+                await oldChannel.permissionOverwrites.edit(nextOwner.id, {
+                    Connect: true,
+                    ManageChannels: true,
+                    MoveMembers: true,
+                    ViewChannel: true,
+                }).catch(() => null);
+                await oldChannel.send?.(`<@${nextOwner.id}> is now the temporary voice channel owner.`).catch(() => null);
+            }
         }
     }
 }

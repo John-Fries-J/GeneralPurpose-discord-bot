@@ -5,6 +5,7 @@ const { getConfig, updateConfig } = require('./config');
 const { formatTemplate } = require('./template');
 const { isGuildTextChannel } = require('./discord');
 const { sendLog, formatUser } = require('./logging');
+const { deleteTicketRecord, getTicketRecord, listTicketRecords, upsertTicketRecord } = require('./store');
 
 const customIds = {
     open: 'ticket:open',
@@ -193,6 +194,17 @@ async function openTicket(interaction) {
         components: createTicketControls('open'),
     });
 
+    await upsertTicketRecord({
+        guildId: interaction.guild.id,
+        channelId: newChannel.id,
+        openerId: interaction.user.id,
+        openerTag: interaction.user.tag,
+        status: 'open',
+        priority: 'normal',
+        tags: [],
+        lastActivityAt: Date.now(),
+    });
+
     await sendLog(interaction.guild, {
         type: 'ticket',
         title: 'Ticket opened',
@@ -303,6 +315,157 @@ async function addTicketUser(interaction, user) {
     return interaction.reply({ content: `<@${user.id}> has been added to this ticket.`, flags: 64 });
 }
 
+async function claimTicket(interaction) {
+    const ticketConfig = getTicketConfig();
+    const channel = interaction.channel;
+
+    if (!channel?.name?.startsWith('ticket-') && !channel?.name?.startsWith('closed-')) {
+        return interaction.reply({ content: language.tickets.notTicket, flags: 64 });
+    }
+
+    if (!userCanManageTicket(interaction, ticketConfig)) {
+        return interaction.reply({ content: language.tickets.noPermission, flags: 64 });
+    }
+
+    const record = await upsertTicketRecord({
+        guildId: interaction.guild.id,
+        channelId: channel.id,
+        claimedById: interaction.user.id,
+        claimedByTag: interaction.user.tag,
+        lastActivityAt: Date.now(),
+    });
+
+    await sendLog(interaction.guild, {
+        type: 'ticket',
+        title: 'Ticket claimed',
+        color: 'blue',
+        fields: [
+            { name: 'Ticket', value: `<#${channel.id}>`, inline: true },
+            { name: 'Claimed by', value: formatUser(interaction.user), inline: true },
+        ],
+    }).catch(() => null);
+
+    return interaction.reply({ content: `Ticket claimed by <@${record.claimedById}>.`, flags: 64 });
+}
+
+async function unclaimTicket(interaction) {
+    const ticketConfig = getTicketConfig();
+    const channel = interaction.channel;
+
+    if (!channel?.name?.startsWith('ticket-') && !channel?.name?.startsWith('closed-')) {
+        return interaction.reply({ content: language.tickets.notTicket, flags: 64 });
+    }
+
+    if (!userCanManageTicket(interaction, ticketConfig)) {
+        return interaction.reply({ content: language.tickets.noPermission, flags: 64 });
+    }
+
+    await upsertTicketRecord({
+        guildId: interaction.guild.id,
+        channelId: channel.id,
+        claimedById: null,
+        claimedByTag: null,
+        lastActivityAt: Date.now(),
+    });
+
+    return interaction.reply({ content: 'Ticket claim cleared.', flags: 64 });
+}
+
+async function setTicketPriority(interaction, priority) {
+    const ticketConfig = getTicketConfig();
+    const channel = interaction.channel;
+
+    if (!channel?.name?.startsWith('ticket-') && !channel?.name?.startsWith('closed-')) {
+        return interaction.reply({ content: language.tickets.notTicket, flags: 64 });
+    }
+
+    if (!userCanManageTicket(interaction, ticketConfig)) {
+        return interaction.reply({ content: language.tickets.noPermission, flags: 64 });
+    }
+
+    await upsertTicketRecord({
+        guildId: interaction.guild.id,
+        channelId: channel.id,
+        priority,
+        lastActivityAt: Date.now(),
+    });
+
+    return interaction.reply({ content: `Ticket priority set to ${priority}.`, flags: 64 });
+}
+
+async function setTicketTags(interaction, tags) {
+    const ticketConfig = getTicketConfig();
+    const channel = interaction.channel;
+
+    if (!channel?.name?.startsWith('ticket-') && !channel?.name?.startsWith('closed-')) {
+        return interaction.reply({ content: language.tickets.notTicket, flags: 64 });
+    }
+
+    if (!userCanManageTicket(interaction, ticketConfig)) {
+        return interaction.reply({ content: language.tickets.noPermission, flags: 64 });
+    }
+
+    const parsedTags = tags
+        .split(',')
+        .map(tag => tag.trim().toLowerCase())
+        .filter(Boolean)
+        .slice(0, 8);
+
+    await upsertTicketRecord({
+        guildId: interaction.guild.id,
+        channelId: channel.id,
+        tags: parsedTags,
+        lastActivityAt: Date.now(),
+    });
+
+    return interaction.reply({ content: parsedTags.length ? `Ticket tags set: ${parsedTags.join(', ')}` : 'Ticket tags cleared.', flags: 64 });
+}
+
+async function showTicketStatus(interaction) {
+    const channel = interaction.channel;
+    const record = await getTicketRecord(channel.id);
+
+    if (!record) return interaction.reply({ content: 'No ticket metadata was found for this channel.', flags: 64 });
+
+    return interaction.reply({
+        content: [
+            `Status: ${record.status}`,
+            `Priority: ${record.priority}`,
+            `Claimed by: ${record.claimedById ? `<@${record.claimedById}>` : 'Unclaimed'}`,
+            `Tags: ${record.tags?.length ? record.tags.join(', ') : 'None'}`,
+        ].join('\n'),
+        flags: 64,
+    });
+}
+
+async function listTickets(interaction) {
+    const ticketConfig = getTicketConfig();
+    if (!userCanManageTicket(interaction, ticketConfig)) {
+        return interaction.reply({ content: language.tickets.noPermission, flags: 64 });
+    }
+
+    const records = await listTicketRecords(interaction.guild.id, 20);
+    const lines = records.map(record => [
+        `<#${record.channelId}>`,
+        record.status,
+        record.priority,
+        record.claimedById ? `claimed by <@${record.claimedById}>` : 'unclaimed',
+        record.tags?.length ? `[${record.tags.join(', ')}]` : '',
+    ].filter(Boolean).join(' - '));
+
+    return interaction.reply({ content: lines.length ? lines.join('\n') : 'No ticket metadata was found.', flags: 64 });
+}
+
+async function touchTicketActivity(message) {
+    if (!message.guild || !message.channel?.name?.startsWith('ticket-')) return;
+
+    await upsertTicketRecord({
+        guildId: message.guild.id,
+        channelId: message.channel.id,
+        lastActivityAt: Date.now(),
+    });
+}
+
 async function removeTicketUser(interaction, user) {
     const ticketConfig = getTicketConfig();
     const channel = interaction.channel;
@@ -410,6 +573,12 @@ async function closeTicket(interaction) {
 
     await channel.permissionOverwrites.set(overwrites);
     await channel.setName(channel.name.replace('ticket-', 'closed-'));
+    await upsertTicketRecord({
+        guildId: interaction.guild.id,
+        channelId: channel.id,
+        status: 'closed',
+        lastActivityAt: Date.now(),
+    });
 
     const closedEmbed = createEmbed({
         title: language.tickets.closedTitle,
@@ -457,12 +626,60 @@ async function deleteTicket(interaction) {
     }).catch(() => null);
 
     await interaction.reply({ content: language.tickets.deleting, flags: 64 });
+    await deleteTicketRecord(channel.id);
     return channel.delete();
+}
+
+async function autoCloseInactiveTickets(client) {
+    const config = getConfig();
+    const days = Number(config.tickets?.autoCloseDays || 0);
+    if (!days) return;
+
+    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+    const records = await listTicketRecords(config.guildId, 500);
+    const ticketConfig = getTicketConfig(config);
+
+    for (const record of records.filter(item => item.status === 'open' && Number(item.lastActivityAt || item.createdAt || 0) <= cutoff)) {
+        const guild = client.guilds.cache.get(record.guildId);
+        if (!guild) continue;
+        const channel = await guild.channels.fetch(record.channelId).catch(() => null);
+        if (!channel?.name?.startsWith('ticket-')) continue;
+
+        const overwrites = [
+            {
+                id: guild.roles.everyone,
+                deny: [PermissionsBitField.Flags.ViewChannel],
+            },
+        ];
+
+        if (record.openerId) {
+            overwrites.push({ id: record.openerId, deny: [PermissionsBitField.Flags.ViewChannel] });
+        }
+
+        if (ticketConfig.supportRoleId) {
+            overwrites.push({
+                id: ticketConfig.supportRoleId,
+                allow: [PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.ReadMessageHistory],
+            });
+        }
+
+        await channel.permissionOverwrites.set(overwrites).catch(() => null);
+        await channel.setName(channel.name.replace('ticket-', 'closed-')).catch(() => null);
+        await upsertTicketRecord({ ...record, status: 'closed', lastActivityAt: Date.now() });
+        await channel.send(`Ticket auto-closed after ${days} day(s) of inactivity.`).catch(() => null);
+    }
+}
+
+function startTicketScheduler(client) {
+    const run = () => autoCloseInactiveTickets(client).catch(error => console.error('Ticket scheduler failed:', error));
+    run();
+    return setInterval(run, 60 * 60 * 1000);
 }
 
 module.exports = {
     addTicketUser,
     buildTranscript,
+    claimTicket,
     closeTicket,
     createTicketPanel,
     customIds,
@@ -470,8 +687,15 @@ module.exports = {
     fetchTranscriptMessages,
     formatTranscriptLine,
     getTicketConfig,
+    listTickets,
     openTicket,
     removeTicketUser,
     renameTicket,
     sendTicketTranscript,
+    setTicketPriority,
+    setTicketTags,
+    showTicketStatus,
+    startTicketScheduler,
+    touchTicketActivity,
+    unclaimTicket,
 };

@@ -1,7 +1,9 @@
 const { Events } = require('discord.js');
+const { handleAutoModMessage } = require('../utils/automod');
 const { handleHoneypotMessage } = require('../utils/honeypot');
 const { awardTextXp } = require('../utils/leveling');
 const { addUserHistory } = require('../utils/store');
+const { touchTicketActivity } = require('../utils/tickets');
 
 module.exports = {
     name: Events.MessageCreate,
@@ -11,8 +13,15 @@ module.exports = {
         const handledHoneypot = await handleHoneypotMessage(message);
         if (handledHoneypot) return;
 
+        const handledAutoMod = await handleAutoModMessage(message);
+        if (handledAutoMod) return;
+
         await awardTextXp(message).catch(error => {
             console.error('Failed to award text XP:', error);
+        });
+
+        await touchTicketActivity(message).catch(error => {
+            console.error('Failed to update ticket activity:', error);
         });
 
         await addUserHistory({
