@@ -77,6 +77,9 @@ async function shutdown(signal, exitCode = 0) {
     if (client.mediaAnnouncementScheduler) {
         clearInterval(client.mediaAnnouncementScheduler);
     }
+    if (client.levelingScheduler) {
+        clearInterval(client.levelingScheduler);
+    }
 
     if (dashboardServer) {
         await new Promise(resolve => dashboardServer.close(resolve));

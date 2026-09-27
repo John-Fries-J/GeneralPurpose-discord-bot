@@ -16,6 +16,7 @@ function createEmptyState() {
     return {
         cases: [],
         history: [],
+        levels: [],
         nextCaseId: 1,
         tempBans: [],
         tempMutes: [],
@@ -287,6 +288,57 @@ async function getTempVoiceChannel(channelId) {
     return (await readState()).tempVoiceChannels.find(item => item.channelId === channelId) || null;
 }
 
+async function addUserXp(guildId, userId, userTag, type, amount, cooldownMs = 0) {
+    let updated;
+    const now = Date.now();
+
+    await updateState(state => {
+        let record = state.levels.find(item => item.guildId === guildId && item.userId === userId);
+        if (!record) {
+            record = {
+                guildId,
+                userId,
+                userTag,
+                textXp: 0,
+                voiceXp: 0,
+                lastTextXpAt: 0,
+                updatedAt: now,
+            };
+            state.levels.push(record);
+        }
+
+        if (type === 'text' && cooldownMs && now - Number(record.lastTextXpAt || 0) < cooldownMs) {
+            updated = record;
+            return state;
+        }
+
+        if (type === 'text') {
+            record.textXp += amount;
+            record.lastTextXpAt = now;
+        } else {
+            record.voiceXp += amount;
+        }
+
+        record.userTag = userTag;
+        record.updatedAt = now;
+        updated = record;
+        return state;
+    });
+
+    return updated;
+}
+
+async function getUserLevelRecord(guildId, userId) {
+    return (await readState()).levels.find(item => item.guildId === guildId && item.userId === userId) || null;
+}
+
+async function listLevelLeaderboard(guildId, limit = 10) {
+    return (await readState()).levels
+        .filter(item => item.guildId === guildId)
+        .sort((a, b) => ((b.textXp || 0) + (b.voiceXp || 0)) - ((a.textXp || 0) + (a.voiceXp || 0)))
+        .slice(0, limit);
+}
+
 async function getModerationCase(guildId, caseId) {
     return (await readState()).cases.find(item => item.guildId === guildId && item.id === Number(caseId)) || null;
 }
@@ -340,12 +392,15 @@ async function clearWarningCases(guildId, userId, moderatorId, reason) {
 
 module.exports = {
     addUserHistory,
+    addUserXp,
     clearWarningCases,
     createModerationCase,
     createEmptyState,
     getTempMute,
     getModerationCase,
     getTempVoiceChannel,
+    getUserLevelRecord,
+    listLevelLeaderboard,
     listUserHistory,
     listModerationCases,
     readState,

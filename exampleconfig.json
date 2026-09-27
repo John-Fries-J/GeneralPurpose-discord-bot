@@ -52,6 +52,14 @@
         "nameFormat": "{username}'s Channel",
         "userLimitMax": 25
     },
+    "leveling": {
+        "enabled": false,
+        "mode": "text",
+        "textXpPerMessage": 1,
+        "voiceXpPerMinute": 1,
+        "cooldownSeconds": 60,
+        "roleRewards": []
+    },
     "dashboard": {
         "enabled": false,
         "host": "0.0.0.0",

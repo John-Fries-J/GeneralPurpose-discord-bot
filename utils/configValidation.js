@@ -117,6 +117,22 @@ function validateConfig(config, options = {}) {
         }
     }
 
+    if (config.leveling !== undefined) {
+        if (!isPlainObject(config.leveling)) {
+            errors.push('leveling must be an object.');
+        } else {
+            if (config.leveling.enabled !== undefined && typeof config.leveling.enabled !== 'boolean') {
+                errors.push('leveling.enabled must be a boolean.');
+            }
+            if (config.leveling.mode !== undefined && !['text', 'voice', 'both'].includes(config.leveling.mode)) {
+                errors.push('leveling.mode must be "text", "voice", or "both".');
+            }
+            if (config.leveling.roleRewards !== undefined && !Array.isArray(config.leveling.roleRewards)) {
+                errors.push('leveling.roleRewards must be an array.');
+            }
+        }
+    }
+
     if (config.database !== undefined) {
         if (!isPlainObject(config.database)) {
             errors.push('database must be an object.');

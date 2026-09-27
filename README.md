@@ -211,6 +211,10 @@ Config:
 - `/jointocreate setup trigger_channel category name_format max_limit` enables join-to-create.
 - `/jointocreate disable` disables join-to-create.
 - `/voice limit amount`, `/voice name name`, `/voice lock`, `/voice unlock`, `/voice permit user`, and `/voice reject user` manage owned temporary voice channels.
+- `/levelconfig enable mode text_xp voice_xp cooldown` enables leveling.
+- `/levelconfig add-role xp role` adds an XP role reward.
+- `/levelconfig remove-role role` removes a reward.
+- `/leaderboard` shows text, voice, and total XP leaders.
 
 Honeypot:
 
@@ -234,6 +238,12 @@ Join-to-Create:
 - Users join the configured trigger voice channel and the bot creates a temporary channel for them.
 - Empty temporary channels are deleted automatically.
 - Owners can set a limit within the configured maximum, rename, lock, unlock, permit users, and reject users.
+
+Leveling:
+
+- Text XP is awarded from messages with a configurable cooldown.
+- Voice XP is awarded once per minute to non-bot users in voice channels when voice mode is enabled.
+- Rewards are based on total XP and can grant roles automatically.
 
 ## Editing Text
 
