@@ -1,5 +1,6 @@
 const { Events, REST, Routes } = require('discord.js');
 const { getConfig } = require('../utils/config');
+const { isCommandEnabled } = require('../utils/features');
 
 module.exports = {
     name: Events.ClientReady,
@@ -12,7 +13,9 @@ module.exports = {
             return;
         }
 
-        const commands = [...client.commands.values()].map(command => command.data.toJSON());
+        const commands = [...client.commands.values()]
+            .filter(command => isCommandEnabled(command, getConfig()))
+            .map(command => command.data.toJSON());
         const rest = new REST().setToken(token);
 
         try {

@@ -30,6 +30,38 @@
         "autoRoleId": "",
         "autoRoleIds": []
     },
+    "dashboard": {
+        "enabled": false,
+        "host": "0.0.0.0",
+        "port": 3000,
+        "publicUrl": "http://localhost:3000",
+        "guildId": "",
+        "oauth": {
+            "clientId": "",
+            "clientSecret": "",
+            "redirectUri": "http://localhost:3000/auth/discord/callback"
+        }
+    },
+    "database": {
+        "provider": "json",
+        "jsonPath": "data/bot-state.json",
+        "sqlitePath": "data/bot.sqlite",
+        "mysql": {
+            "url": ""
+        },
+        "mongo": {
+            "url": "",
+            "database": "generalpurpose_bot"
+        }
+    },
+    "commandSettings": {
+        "modules": {},
+        "commands": {}
+    },
+    "moderation": {
+        "muteRoleId": "",
+        "muteRoleName": "Muted"
+    },
     "Twitch": {
         "ClientId": "",
         "AccessToken": "",

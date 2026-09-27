@@ -1,6 +1,7 @@
 const { Events } = require('discord.js');
 const language = require('../utils/language');
 const { safeReply } = require('../utils/discord');
+const { isCommandEnabled } = require('../utils/features');
 const { memberCanUseCommand } = require('../utils/permissions');
 
 module.exports = {
@@ -13,6 +14,10 @@ module.exports = {
         if (!command) {
             console.error(`No command matching ${interaction.commandName} was found.`);
             return;
+        }
+
+        if (!isCommandEnabled(command)) {
+            return interaction.reply({ content: 'That command is currently disabled.', ephemeral: true });
         }
 
         if (!memberCanUseCommand(interaction, command)) {

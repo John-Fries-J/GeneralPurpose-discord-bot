@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const { Client, Collection, GatewayIntentBits, Partials } = require('discord.js');
 const { getConfig } = require('./utils/config');
 const { loadCommands } = require('./utils/commands');
+const { startDashboard } = require('./web/dashboard');
 
 const { token } = getConfig();
 
@@ -24,6 +25,8 @@ for (const { command } of loadCommands()) {
     client.commands.set(command.data.name, command);
     console.log(`[COMMAND] /${command.data.name}`);
 }
+
+startDashboard(client);
 
 const eventsPath = path.join(__dirname, 'events');
 const eventFiles = fs.readdirSync(eventsPath).filter(file => file.endsWith('.js'));

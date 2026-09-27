@@ -1,6 +1,7 @@
 const { createEmbed } = require('./embeds');
 const { findSendableChannel, truncate } = require('./discord');
 const { getConfig } = require('./config');
+const { appendDashboardLog } = require('./dashboardLogs');
 
 const channelKeys = {
     general: 'logChannel',
@@ -23,6 +24,12 @@ function getLogChannel(guild, type = 'general') {
 }
 
 async function sendLog(guild, options = {}) {
+    appendDashboardLog(options.title || 'Log event', {
+        type: options.type || 'general',
+        guildId: guild?.id,
+        description: truncate(options.description, 500),
+    });
+
     const channel = getLogChannel(guild, options.type);
     if (!channel) return false;
 
