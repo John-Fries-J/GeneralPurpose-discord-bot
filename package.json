@@ -6,9 +6,12 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@discordjs/voice": "^0.18.0",
     "axios": "^1.11.0",
     "discord.js": "^14.27.0",
     "express": "^4.19.2",
+    "libsodium-wrappers": "^0.8.4",
+    "play-dl": "^1.9.7",
     "sql.js": "^1.14.2"
   },
   "main": "index.js",
