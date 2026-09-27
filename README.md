@@ -174,7 +174,7 @@ Tickets:
 - `/ticket add user` adds a user to the current ticket.
 - `/ticket remove user` removes a user from the current ticket.
 - `/ticket rename name` renames the current ticket.
-- `/ticket transcript` generates a ticket transcript.
+- `/ticket transcript` generates a paginated ticket transcript with message metadata, attachments, and embed counts.
 - `/close` closes the current ticket channel.
 - `/delete` deletes a closed ticket channel.
 

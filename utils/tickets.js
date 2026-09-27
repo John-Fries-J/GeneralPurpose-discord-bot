@@ -11,6 +11,7 @@ const customIds = {
     close: 'ticket:close',
     delete: 'ticket:delete',
 };
+const transcriptMessageLimit = 5000;
 
 function getTicketConfig(config = getConfig()) {
     return {
@@ -187,17 +188,45 @@ async function openTicket(interaction) {
     return interaction.reply({ content: `Ticket created: <#${newChannel.id}>`, ephemeral: true });
 }
 
-async function buildTranscript(channel) {
-    const messages = await channel.messages.fetch({ limit: 100 }).catch(() => null);
-    if (!messages?.size) return null;
+async function fetchTranscriptMessages(channel) {
+    const collected = [];
+    let before;
 
-    const lines = [...messages.values()]
+    while (collected.length < transcriptMessageLimit) {
+        const remaining = transcriptMessageLimit - collected.length;
+        const batch = await channel.messages.fetch({
+            limit: Math.min(100, remaining),
+            ...(before ? { before } : {}),
+        }).catch(() => null);
+
+        if (!batch?.size) break;
+
+        collected.push(...batch.values());
+        before = batch.last()?.id;
+        if (batch.size < 100) break;
+    }
+
+    return collected;
+}
+
+function formatTranscriptLine(message) {
+    const timestamp = message.createdAt.toISOString();
+    const content = message.content || '[No text content]';
+    const attachments = message.attachments?.size
+        ? ` Attachments: ${[...message.attachments.values()].map(attachment => attachment.url).join(', ')}`
+        : '';
+    const embeds = message.embeds?.length ? ` Embeds: ${message.embeds.length}` : '';
+
+    return `[${timestamp}] ${message.author?.tag || 'Unknown'} (${message.author?.id || 'unknown'}): ${content}${attachments}${embeds}`;
+}
+
+async function buildTranscript(channel) {
+    const messages = await fetchTranscriptMessages(channel);
+    if (!messages.length) return null;
+
+    const lines = messages
         .sort((a, b) => a.createdTimestamp - b.createdTimestamp)
-        .map(message => {
-            const timestamp = message.createdAt.toISOString();
-            const content = message.content || '[Embed/attachment/no text]';
-            return `[${timestamp}] ${message.author?.tag || 'Unknown'}: ${content}`;
-        });
+        .map(formatTranscriptLine);
 
     return new AttachmentBuilder(Buffer.from(lines.join('\n'), 'utf8'), {
         name: `${channel.name}-transcript.txt`,
@@ -415,10 +444,13 @@ async function deleteTicket(interaction) {
 
 module.exports = {
     addTicketUser,
+    buildTranscript,
     closeTicket,
     createTicketPanel,
     customIds,
     deleteTicket,
+    fetchTranscriptMessages,
+    formatTranscriptLine,
     getTicketConfig,
     openTicket,
     removeTicketUser,
