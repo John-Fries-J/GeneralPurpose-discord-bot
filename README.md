@@ -137,6 +137,8 @@ docker compose -f docker-compose.dashboard.yml --env-file .env up -d --build
 
 The dashboard is disabled by default.
 
+![Dashboard preview](https://i.johnfries.net/images/342Wise.png)
+
 1. In the Discord Developer Portal, open your application and go to **OAuth2**.
 2. Add this redirect URL: `http://localhost:3000/auth/discord/callback`.
 3. Put the same URL in `dashboard.oauth.redirectUri`.
