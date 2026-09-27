@@ -3,6 +3,7 @@ const { getConfig } = require('../utils/config');
 const language = require('../utils/language');
 const { createEmbed } = require('../utils/embeds');
 const { findSendableChannel } = require('../utils/discord');
+const { startPunishmentScheduler } = require('../utils/punishments');
 
 module.exports = {
     name: Events.ClientReady,
@@ -10,6 +11,7 @@ module.exports = {
     execute(client) {
         const config = getConfig();
         console.log(`Ready! Logged in as ${client.user.tag}`);
+        startPunishmentScheduler(client);
 
         if (config.statusName) {
             client.user.setPresence({ activities: [{ name: config.statusName }] });

@@ -2,6 +2,8 @@ const language = require('./language');
 const { createEmbed } = require('./embeds');
 const { fetchMember, safeDm } = require('./discord');
 const { sendLog, formatUser } = require('./logging');
+const { getConfig, updateConfig } = require('./config');
+const { PermissionFlagsBits } = require('discord.js');
 
 function isSelfAction(interaction, user) {
     return user.id === interaction.user.id;
@@ -69,8 +71,90 @@ async function logModerationAction(interaction, options) {
     });
 }
 
+async function applyMuteOverwrites(guild, muteRole) {
+    const channels = await guild.channels.fetch();
+    await Promise.allSettled(channels.map(channel => {
+        if (!channel?.permissionOverwrites?.edit) return null;
+        return channel.permissionOverwrites.edit(muteRole, { SendMessages: false, SendMessagesInThreads: false, CreatePublicThreads: false, CreatePrivateThreads: false, AddReactions: false, Speak: false })
+            .catch(error => {
+                console.error(`Failed to update mute overwrites for ${channel.id}:`, error);
+                return null;
+            });
+    }));
+}
+
+async function getOrCreateMuteRole(guild) {
+    const config = getConfig();
+    const configuredRole = config.moderation?.muteRoleId ? guild.roles.cache.get(config.moderation.muteRoleId) : null;
+    if (configuredRole) return configuredRole;
+
+    const roleName = config.moderation?.muteRoleName || 'Muted';
+    const role = await guild.roles.create({
+        name: roleName,
+        color: 0x747f8d,
+        permissions: [],
+        reason: 'Creating role-based mute role',
+    });
+
+    updateConfig(current => {
+        current.moderation = current.moderation || {};
+        current.moderation.muteRoleId = role.id;
+        current.moderation.muteRoleName = roleName;
+        return current;
+    });
+
+    await applyMuteOverwrites(guild, role);
+    return role;
+}
+
+function getRemovableRoles(member, muteRole) {
+    const botMember = member.guild.members.me;
+    return member.roles.cache
+        .filter(role => role.id !== member.guild.id)
+        .filter(role => role.id !== muteRole.id)
+        .filter(role => !role.managed)
+        .filter(role => botMember.roles.highest.comparePositionTo(role) > 0);
+}
+
+async function muteMemberWithRole(member, muteRole) {
+    const removableRoles = [...getRemovableRoles(member, muteRole).values()];
+    const removedRoleIds = removableRoles.map(role => role.id);
+
+    if (!member.roles.cache.has(muteRole.id)) {
+        await member.roles.add(muteRole, 'Applying role-based mute');
+    }
+
+    if (removedRoleIds.length) {
+        await member.roles.remove(removedRoleIds, 'Role-based mute removes normal roles while active');
+    }
+
+    return removedRoleIds;
+}
+
+async function restoreMutedMember(member, muteRole, roleIds, reason = 'Role-based mute expired') {
+    const botMember = member.guild.members.me;
+    const restorableRoleIds = roleIds
+        .map(roleId => member.guild.roles.cache.get(roleId))
+        .filter(role => role && !role.managed && botMember.roles.highest.comparePositionTo(role) > 0)
+        .map(role => role.id);
+
+    if (restorableRoleIds.length) {
+        await member.roles.add(restorableRoleIds, reason);
+    }
+
+    if (member.roles.cache.has(muteRole.id)) {
+        await member.roles.remove(muteRole, reason);
+    }
+
+    return restorableRoleIds;
+}
+
 module.exports = {
+    applyMuteOverwrites,
+    getOrCreateMuteRole,
     logModerationAction,
+    muteMemberWithRole,
+    restoreMutedMember,
     sendModerationDm,
     validateTarget,
 };

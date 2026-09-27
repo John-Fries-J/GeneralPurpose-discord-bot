@@ -1,7 +1,8 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const language = require('../../utils/language');
 const { createEmbed } = require('../../utils/embeds');
-const { logModerationAction, sendModerationDm, validateTarget } = require('../../utils/moderation');
+const { getTempMute, removeTempMute } = require('../../utils/store');
+const { getOrCreateMuteRole, logModerationAction, restoreMutedMember, sendModerationDm, validateTarget } = require('../../utils/moderation');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -21,7 +22,10 @@ module.exports = {
             return interaction.reply({ content: target.message === language.moderation.cannotModerateUser ? language.moderation.cannotUnmute : target.message, ephemeral: true });
         }
 
-        await target.member.timeout(null, reason);
+        const muteRecord = getTempMute(interaction.guild.id, user.id);
+        const muteRole = await getOrCreateMuteRole(interaction.guild);
+        const restoredRoleIds = await restoreMutedMember(target.member, muteRole, muteRecord?.removedRoleIds || [], reason);
+        removeTempMute(interaction.guild.id, user.id);
 
         const embed = createEmbed({
             title: 'User Unmuted',
@@ -40,7 +44,10 @@ module.exports = {
             color: 'green',
             user,
             reason,
-            extraFields: [{ name: 'DM sent', value: dmSent ? 'Yes' : 'No', inline: true }],
+            extraFields: [
+                { name: 'Restored roles', value: `${restoredRoleIds.length}`, inline: true },
+                { name: 'DM sent', value: dmSent ? 'Yes' : 'No', inline: true },
+            ],
         });
 
         await interaction.reply({ embeds: [embed], ephemeral: true });

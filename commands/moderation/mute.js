@@ -2,9 +2,8 @@ const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const language = require('../../utils/language');
 const { parseDuration } = require('../../utils/duration');
 const { createEmbed } = require('../../utils/embeds');
-const { logModerationAction, sendModerationDm, validateTarget } = require('../../utils/moderation');
-
-const maxTimeoutDuration = 28 * 24 * 60 * 60 * 1000;
+const { upsertTempMute } = require('../../utils/store');
+const { getOrCreateMuteRole, logModerationAction, muteMemberWithRole, sendModerationDm, validateTarget } = require('../../utils/moderation');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -31,11 +30,20 @@ module.exports = {
             return interaction.reply({ content: language.moderation.invalidDuration, ephemeral: true });
         }
 
-        if (durationInMs > maxTimeoutDuration) {
-            return interaction.reply({ content: language.moderation.muteMaxDuration, ephemeral: true });
-        }
+        const muteRole = await getOrCreateMuteRole(interaction.guild);
+        const removedRoleIds = await muteMemberWithRole(target.member, muteRole);
+        const expiresAt = Date.now() + durationInMs;
 
-        await target.member.timeout(durationInMs, reason);
+        upsertTempMute({
+            guildId: interaction.guild.id,
+            userId: user.id,
+            reason,
+            moderatorId: interaction.user.id,
+            removedRoleIds,
+            muteRoleId: muteRole.id,
+            expiresAt,
+            createdAt: Date.now(),
+        });
 
         const embed = createEmbed({
             title: 'User Muted',
@@ -56,6 +64,7 @@ module.exports = {
             reason,
             extraFields: [
                 { name: 'Duration', value: duration, inline: true },
+                { name: 'Removed roles', value: `${removedRoleIds.length}`, inline: true },
                 { name: 'DM sent', value: dmSent ? 'Yes' : 'No', inline: true },
             ],
         });

@@ -3,6 +3,7 @@ const language = require('../../utils/language');
 const { parseDuration } = require('../../utils/duration');
 const { fetchMember } = require('../../utils/discord');
 const { logModerationAction, sendModerationDm, validateTarget } = require('../../utils/moderation');
+const { upsertTempBan } = require('../../utils/store');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -62,13 +63,14 @@ module.exports = {
 
         if (duration) {
             const durationInMs = parseDuration(duration);
-            setTimeout(async () => {
-                try {
-                    await interaction.guild.members.unban(user.id, 'Automatic unban after specified duration');
-                } catch (error) {
-                    console.error(`Automatic unban failed for ${user.id}:`, error);
-                }
-            }, durationInMs);
+            upsertTempBan({
+                guildId: interaction.guild.id,
+                userId: user.id,
+                reason,
+                moderatorId: interaction.user.id,
+                expiresAt: Date.now() + durationInMs,
+                createdAt: Date.now(),
+            });
         }
     },
 };

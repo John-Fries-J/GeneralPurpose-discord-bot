@@ -1,6 +1,7 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const language = require('../../utils/language');
 const { logModerationAction } = require('../../utils/moderation');
+const { removeTempBan } = require('../../utils/store');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -17,6 +18,7 @@ module.exports = {
 
         try {
             const user = await interaction.guild.members.unban(userId, reason);
+            removeTempBan(interaction.guild.id, userId);
             await logModerationAction(interaction, {
                 title: 'User unbanned',
                 color: 'green',
