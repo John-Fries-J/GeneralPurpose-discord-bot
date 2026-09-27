@@ -42,8 +42,9 @@ Copy-Item exampleconfig.json config.json
 - `statusName`: bot status text
 - `welcomeID`: channel ID for join welcome messages
 - `suggestionID`: channel ID for suggestions
-- `logChannels`: channel IDs for logs
+- `logChannels`: channel IDs for general, moderation, ticket, suggestion, message, and thread logs
 - `roles.autoRoleId` or `roles.autoRoleIds`: role IDs given to new members
+- `tickets`: saved by `/ticket`; you can leave this blank on first setup
 - `Twitch`: optional Twitch notification settings
 
 4. Edit bot wording in `language.json`.
@@ -85,6 +86,8 @@ Mount `config.json` when you need channel IDs, roles, tickets, Twitch, or loggin
 Moderation:
 
 - `/ban user reason duration` bans a user, with an optional temporary duration.
+- `/kick user reason` kicks a user from the server.
+- `/warn user reason` warns a user and logs it.
 - `/unban user_id` unbans a user by Discord ID.
 - `/mute user duration reason` times out a user.
 - `/unmute user` removes a timeout.

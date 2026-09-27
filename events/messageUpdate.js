@@ -1,7 +1,6 @@
 const { Events } = require('discord.js');
-const { getConfig } = require('../utils/config');
-const { createEmbed } = require('../utils/embeds');
-const { findSendableChannel, truncate } = require('../utils/discord');
+const { truncate } = require('../utils/discord');
+const { sendLog } = require('../utils/logging');
 
 module.exports = {
     name: Events.MessageUpdate,
@@ -15,17 +14,18 @@ module.exports = {
 
         if (!oldMessage.guild || oldMessage.author?.bot || oldMessage.content === newMessage.content) return;
 
-        const config = getConfig();
-        const channel = findSendableChannel(oldMessage.guild, config.logChannels?.editMessage, 'logs');
-        if (!channel) return;
-
-        const logEmbed = createEmbed({
+        await sendLog(oldMessage.guild, {
+            type: 'messageUpdate',
             title: `Message edited in #${oldMessage.channel?.name || 'unknown'}`,
-            description: `**Author:** ${oldMessage.author?.tag || 'Unknown'}\n**Old:** ${truncate(oldMessage.content, 500)}\n**New:** ${truncate(newMessage.content, 500)}\n[Jump to message](${newMessage.url})`,
-            color: 'blue',
-        });
-
-        await channel.send({ embeds: [logEmbed] }).catch(error => {
+            color: 'orange',
+            fields: [
+                { name: 'Author', value: oldMessage.author ? `${oldMessage.author.tag} (${oldMessage.author.id})` : 'Unknown', inline: true },
+                { name: 'Channel', value: oldMessage.channel ? `<#${oldMessage.channel.id}>` : 'Unknown', inline: true },
+                { name: 'Old message', value: truncate(oldMessage.content, 1024) },
+                { name: 'New message', value: truncate(newMessage.content, 1024) },
+                { name: 'Jump', value: `[Go to message](${newMessage.url})` },
+            ],
+        }).catch(error => {
             console.error('Error sending edit log:', error);
         });
     },

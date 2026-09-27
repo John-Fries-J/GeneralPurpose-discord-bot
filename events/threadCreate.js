@@ -1,24 +1,21 @@
 const { Events } = require('discord.js');
-const { getConfig } = require('../utils/config');
-const { createEmbed } = require('../utils/embeds');
-const { findSendableChannel } = require('../utils/discord');
+const { sendLog } = require('../utils/logging');
 
 module.exports = {
     name: Events.ThreadCreate,
     async execute(thread) {
         if (!thread.guild) return;
 
-        const config = getConfig();
-        const channel = findSendableChannel(thread.guild, config.logChannels?.threadCreate, 'logs');
-        if (!channel) return;
-
-        const logEmbed = createEmbed({
+        await sendLog(thread.guild, {
+            type: 'threadCreate',
             title: 'Thread created',
-            description: `Thread **${thread.name}** was created in ${thread.parent || 'unknown channel'} by ${thread.ownerId ? `<@${thread.ownerId}>` : 'unknown user'}.`,
             color: 'blue',
-        });
-
-        await channel.send({ embeds: [logEmbed] }).catch(error => {
+            fields: [
+                { name: 'Thread', value: thread.name, inline: true },
+                { name: 'Parent', value: thread.parent ? `<#${thread.parent.id}>` : 'Unknown', inline: true },
+                { name: 'Owner', value: thread.ownerId ? `<@${thread.ownerId}> (${thread.ownerId})` : 'Unknown' },
+            ],
+        }).catch(error => {
             console.error('Error sending thread create log:', error);
         });
     },

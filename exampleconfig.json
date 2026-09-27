@@ -10,11 +10,20 @@
     "suggestionID": "",
     "logChannels": {
         "logChannel": "",
+        "moderation": "",
+        "ticket": "",
+        "suggestion": "",
         "messageDelete": "",
         "editMessage": "",
         "threadCreate": "",
         "threadDelete": "",
         "threadUpdate": ""
+    },
+    "tickets": {
+        "channelId": "",
+        "messageId": "",
+        "categoryId": "",
+        "supportRoleId": ""
     },
     "roles": {
         "autoRoleId": "",

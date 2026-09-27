@@ -1,0 +1,48 @@
+const { createEmbed } = require('./embeds');
+const { findSendableChannel, truncate } = require('./discord');
+const { getConfig } = require('./config');
+
+const channelKeys = {
+    general: 'logChannel',
+    moderation: 'moderation',
+    ticket: 'ticket',
+    suggestion: 'suggestion',
+    messageDelete: 'messageDelete',
+    messageUpdate: 'editMessage',
+    threadCreate: 'threadCreate',
+    threadDelete: 'threadDelete',
+    threadUpdate: 'threadUpdate',
+};
+
+function getLogChannel(guild, type = 'general') {
+    const config = getConfig();
+    const channelKey = channelKeys[type] || channelKeys.general;
+    const channelId = config.logChannels?.[channelKey] || config.logChannels?.logChannel;
+    return findSendableChannel(guild, channelId, 'logs');
+}
+
+async function sendLog(guild, options = {}) {
+    const channel = getLogChannel(guild, options.type);
+    if (!channel) return false;
+
+    const embed = createEmbed({
+        title: options.title,
+        description: truncate(options.description, 4096),
+        color: options.color || 'blue',
+        fields: options.fields,
+    });
+
+    await channel.send(options.files?.length ? { embeds: [embed], files: options.files } : { embeds: [embed] });
+    return true;
+}
+
+function formatUser(user) {
+    if (!user) return 'Unknown';
+    return `${user.tag || user.username} (${user.id})`;
+}
+
+module.exports = {
+    formatUser,
+    getLogChannel,
+    sendLog,
+};

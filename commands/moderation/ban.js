@@ -1,8 +1,8 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const language = require('../../utils/language');
 const { parseDuration } = require('../../utils/duration');
-const { createEmbed } = require('../../utils/embeds');
-const { fetchMember, safeDm } = require('../../utils/discord');
+const { fetchMember } = require('../../utils/discord');
+const { logModerationAction, sendModerationDm, validateTarget } = require('../../utils/moderation');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -12,37 +12,53 @@ module.exports = {
         .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers)
         .addUserOption(option => option.setName('user').setDescription('The user to ban.').setRequired(true))
         .addStringOption(option => option.setName('reason').setDescription('The reason for the ban.'))
-        .addStringOption(option => option.setName('duration').setDescription('Optional duration, such as 1d or 2h.')),
+        .addStringOption(option => option.setName('duration').setDescription('Optional duration, such as 1d or 2h.'))
+        .addIntegerOption(option => option.setName('delete_days').setDescription('Delete message history from the past 0-7 days.').setMinValue(0).setMaxValue(7)),
 
     async execute(interaction) {
         const user = interaction.options.getUser('user', true);
         const reason = interaction.options.getString('reason') || language.general.noReason;
         const duration = interaction.options.getString('duration');
+        const deleteDays = interaction.options.getInteger('delete_days') ?? 0;
         const member = await fetchMember(interaction.guild, user.id);
-
-        if (user.id === interaction.user.id) {
-            return interaction.reply({ content: language.moderation.cannotModerateSelf, ephemeral: true });
-        }
-
-        if (!member?.bannable) {
-            return interaction.reply({ content: language.moderation.cannotBan, ephemeral: true });
-        }
 
         if (duration && !parseDuration(duration)) {
             return interaction.reply({ content: language.moderation.invalidDuration, ephemeral: true });
         }
 
-        const dmEmbed = createEmbed({
+        if (member) {
+            const target = await validateTarget(interaction, user, 'bannable');
+            if (!target.ok) {
+                return interaction.reply({ content: target.message === language.moderation.cannotModerateUser ? language.moderation.cannotBan : target.message, ephemeral: true });
+            }
+        }
+
+        const dmSent = await sendModerationDm(user, {
             title: 'User Banned',
             description: `You have been banned from **${interaction.guild.name}**.\n**Reason:** ${reason}`,
             color: 'red',
         });
-        const dmSent = await safeDm(user, { embeds: [dmEmbed] });
 
-        await member.ban({ reason });
+        await interaction.guild.bans.create(user.id, {
+            reason,
+            deleteMessageSeconds: deleteDays * 24 * 60 * 60,
+        });
 
-        const reply = `User ${user.tag} has been banned. Reason: ${reason}${dmSent ? '' : `\n${language.moderation.dmFailed}`}`;
-        await interaction.reply({ content: reply, ephemeral: true });
+        await logModerationAction(interaction, {
+            title: 'User banned',
+            color: 'red',
+            user,
+            reason,
+            extraFields: [
+                { name: 'Duration', value: duration || 'Permanent', inline: true },
+                { name: 'DM sent', value: dmSent ? 'Yes' : 'No', inline: true },
+            ],
+        });
+
+        await interaction.reply({
+            content: `User ${user.tag} has been banned. Reason: ${reason}${dmSent ? '' : `\n${language.moderation.dmFailed}`}`,
+            ephemeral: true,
+        });
 
         if (duration) {
             const durationInMs = parseDuration(duration);

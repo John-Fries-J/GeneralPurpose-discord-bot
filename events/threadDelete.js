@@ -1,24 +1,20 @@
 const { Events } = require('discord.js');
-const { getConfig } = require('../utils/config');
-const { createEmbed } = require('../utils/embeds');
-const { findSendableChannel } = require('../utils/discord');
+const { sendLog } = require('../utils/logging');
 
 module.exports = {
     name: Events.ThreadDelete,
     async execute(thread) {
         if (!thread.guild) return;
 
-        const config = getConfig();
-        const channel = findSendableChannel(thread.guild, config.logChannels?.threadDelete, 'logs');
-        if (!channel) return;
-
-        const logEmbed = createEmbed({
+        await sendLog(thread.guild, {
+            type: 'threadDelete',
             title: 'Thread deleted',
-            description: `Thread **${thread.name}** was deleted from ${thread.parent || 'unknown channel'}.`,
-            color: 'blue',
-        });
-
-        await channel.send({ embeds: [logEmbed] }).catch(error => {
+            color: 'red',
+            fields: [
+                { name: 'Thread', value: thread.name, inline: true },
+                { name: 'Parent', value: thread.parent ? `<#${thread.parent.id}>` : 'Unknown', inline: true },
+            ],
+        }).catch(error => {
             console.error('Error sending thread delete log:', error);
         });
     },

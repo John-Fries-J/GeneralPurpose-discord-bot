@@ -1,7 +1,6 @@
 const { Events } = require('discord.js');
-const { getConfig } = require('../utils/config');
-const { createEmbed } = require('../utils/embeds');
-const { findSendableChannel, truncate } = require('../utils/discord');
+const { truncate } = require('../utils/discord');
+const { sendLog } = require('../utils/logging');
 
 module.exports = {
     name: Events.MessageDelete,
@@ -12,18 +11,21 @@ module.exports = {
 
         if (!message.guild || message.author?.bot) return;
 
-        const config = getConfig();
-        const channelId = config.logChannels?.messageDelete;
-        const channel = findSendableChannel(message.guild, channelId, 'logs');
-        if (!channel) return;
+        const attachmentList = message.attachments?.size
+            ? message.attachments.map(attachment => attachment.url).join('\n')
+            : 'None';
 
-        const logEmbed = createEmbed({
+        await sendLog(message.guild, {
+            type: 'messageDelete',
             title: `Message deleted in #${message.channel?.name || 'unknown'}`,
-            description: `**Author:** ${message.author?.tag || 'Unknown'}\n**Message:** ${truncate(message.content)}\n**Channel:** ${message.channel}`,
-            color: 'blue',
-        });
-
-        await channel.send({ embeds: [logEmbed] }).catch(error => {
+            color: 'red',
+            fields: [
+                { name: 'Author', value: message.author ? `${message.author.tag} (${message.author.id})` : 'Unknown', inline: true },
+                { name: 'Channel', value: message.channel ? `<#${message.channel.id}>` : 'Unknown', inline: true },
+                { name: 'Message', value: truncate(message.content, 1024) },
+                { name: 'Attachments', value: truncate(attachmentList, 1024) },
+            ],
+        }).catch(error => {
             console.error('Error sending delete log:', error);
         });
     },

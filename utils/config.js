@@ -25,7 +25,7 @@ function saveConfig(config) {
 }
 
 function updateConfig(updater) {
-    const config = getConfig();
+    const config = readJson(configPath, readJson(exampleConfigPath));
     const nextConfig = updater(config) || config;
     saveConfig(nextConfig);
     return nextConfig;

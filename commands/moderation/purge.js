@@ -1,6 +1,7 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const language = require('../../utils/language');
 const { formatTemplate } = require('../../utils/template');
+const { sendLog, formatUser } = require('../../utils/logging');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -19,6 +20,17 @@ module.exports = {
 
         try {
             const deleted = await interaction.channel.bulkDelete(amount, true);
+            await sendLog(interaction.guild, {
+                type: 'moderation',
+                title: 'Messages purged',
+                color: 'orange',
+                fields: [
+                    { name: 'Moderator', value: formatUser(interaction.user), inline: true },
+                    { name: 'Channel', value: `<#${interaction.channel.id}>`, inline: true },
+                    { name: 'Deleted', value: `${deleted.size}`, inline: true },
+                ],
+            }).catch(() => null);
+
             await interaction.reply({
                 content: formatTemplate(language.moderation.purgeSuccess, { amount: deleted.size }),
                 ephemeral: true,

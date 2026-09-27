@@ -2,7 +2,7 @@ const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const language = require('../../utils/language');
 const { parseDuration } = require('../../utils/duration');
 const { createEmbed } = require('../../utils/embeds');
-const { fetchMember, safeDm } = require('../../utils/discord');
+const { logModerationAction, sendModerationDm, validateTarget } = require('../../utils/moderation');
 
 const maxTimeoutDuration = 28 * 24 * 60 * 60 * 1000;
 
@@ -21,10 +21,10 @@ module.exports = {
         const duration = interaction.options.getString('duration', true);
         const reason = interaction.options.getString('reason') || language.general.noReason;
         const durationInMs = parseDuration(duration);
-        const member = await fetchMember(interaction.guild, user.id);
+        const target = await validateTarget(interaction, user, 'moderatable');
 
-        if (user.id === interaction.user.id) {
-            return interaction.reply({ content: language.moderation.cannotModerateSelf, ephemeral: true });
+        if (!target.ok) {
+            return interaction.reply({ content: target.message === language.moderation.cannotModerateUser ? language.moderation.cannotMute : target.message, ephemeral: true });
         }
 
         if (!durationInMs) {
@@ -35,24 +35,31 @@ module.exports = {
             return interaction.reply({ content: language.moderation.muteMaxDuration, ephemeral: true });
         }
 
-        if (!member?.moderatable) {
-            return interaction.reply({ content: 'I cannot mute this user.', ephemeral: true });
-        }
-
-        await member.timeout(durationInMs, reason);
+        await target.member.timeout(durationInMs, reason);
 
         const embed = createEmbed({
             title: 'User Muted',
-            description: `**${member.user.tag}** has been muted for ${duration}.\n**Reason:** ${reason}`,
+            description: `**${target.member.user.tag}** has been muted for ${duration}.\n**Reason:** ${reason}`,
             color: 'orange',
         });
-        await interaction.reply({ embeds: [embed] });
 
-        const dmEmbed = createEmbed({
+        const dmSent = await sendModerationDm(user, {
             title: 'User Muted',
             description: `You have been muted in **${interaction.guild.name}** for ${duration}.\n**Reason:** ${reason}`,
             color: 'orange',
         });
-        await safeDm(user, { embeds: [dmEmbed] });
+
+        await logModerationAction(interaction, {
+            title: 'User muted',
+            color: 'orange',
+            user,
+            reason,
+            extraFields: [
+                { name: 'Duration', value: duration, inline: true },
+                { name: 'DM sent', value: dmSent ? 'Yes' : 'No', inline: true },
+            ],
+        });
+
+        await interaction.reply({ embeds: [embed], ephemeral: true });
     },
 };

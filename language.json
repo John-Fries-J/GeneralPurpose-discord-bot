@@ -15,12 +15,20 @@
     },
     "moderation": {
         "cannotBan": "I cannot ban this user.",
+        "cannotKick": "I cannot kick this user.",
+        "cannotMute": "I cannot mute this user.",
+        "cannotUnmute": "I cannot unmute this user.",
         "cannotModerateSelf": "You cannot use this command on yourself.",
+        "cannotModerateOwner": "You cannot moderate the server owner.",
+        "cannotModerateHigherRole": "You cannot moderate someone with a role equal to or higher than yours.",
+        "cannotModerateUser": "I cannot moderate this user. Check my role position and permissions.",
+        "userNotInServer": "That user is not in this server.",
         "invalidDuration": "Invalid duration. Use a value like 10m, 2h, 3d, or 1w.",
         "muteMaxDuration": "Discord timeouts cannot be longer than 28 days.",
         "purgeRange": "You need to input a number between 1 and 100.",
         "purgeSuccess": "Successfully deleted ${amount} messages.",
-        "dmFailed": "I could not DM the user, but the moderation action still completed."
+        "dmFailed": "I could not DM the user, but the moderation action still completed.",
+        "caseLogged": "The action has been logged."
     },
     "tickets": {
         "panelTitle": "Ticket",
@@ -32,17 +40,22 @@
         "deleteButton": "Delete Ticket",
         "closedTitle": "Ticket Closed",
         "closedDescription": "This ticket has been closed.",
+        "channelMustBeText": "Please choose a normal text channel for the ticket panel.",
+        "deleting": "Deleting ticket...",
         "notTicket": "You can only use this command in a ticket channel.",
         "notClosedTicket": "You can only use this command in a closed ticket channel.",
+        "noPermission": "You do not have permission to manage this ticket.",
         "setupComplete": "Ticket embed sent to ${channel}.",
         "alreadyOpen": "You already have an open ticket: ${channel}.",
         "missingSetup": "Tickets are not set up yet. Run /ticket first."
     },
     "suggestions": {
         "title": "Suggestion",
+        "threadName": "Suggestion by ${user}",
         "submitted": "Your suggestion has been submitted.",
         "failed": "Failed to submit suggestion. Please try again later.",
-        "missingChannel": "Suggestion channel is not set up. Check config.json."
+        "missingChannel": "Suggestion channel is not set up. Check config.json.",
+        "tooLong": "Suggestions must be 1900 characters or fewer."
     },
     "welcome": {
         "title": "Welcome to the server!",
