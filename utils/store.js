@@ -14,6 +14,8 @@ function resolveSqlitePath(config = getConfig()) {
 
 function createEmptyState() {
     return {
+        cases: [],
+        nextCaseId: 1,
         tempBans: [],
         tempMutes: [],
     };
@@ -203,12 +205,97 @@ async function getTempMute(guildId, userId) {
     return (await readState()).tempMutes.find(item => item.guildId === guildId && item.userId === userId) || null;
 }
 
+async function createModerationCase(record) {
+    let createdCase;
+
+    await updateState(state => {
+        const id = Number(state.nextCaseId || 1);
+        const timestamp = Date.now();
+        createdCase = {
+            id,
+            guildId: record.guildId,
+            type: record.type,
+            userId: record.userId,
+            userTag: record.userTag,
+            moderatorId: record.moderatorId,
+            moderatorTag: record.moderatorTag,
+            reason: record.reason,
+            duration: record.duration || null,
+            active: record.active !== false,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+        };
+
+        state.nextCaseId = id + 1;
+        state.cases.push(createdCase);
+        return state;
+    });
+
+    return createdCase;
+}
+
+async function getModerationCase(guildId, caseId) {
+    return (await readState()).cases.find(item => item.guildId === guildId && item.id === Number(caseId)) || null;
+}
+
+async function listModerationCases(guildId, filters = {}) {
+    const state = await readState();
+    return state.cases
+        .filter(item => item.guildId === guildId)
+        .filter(item => !filters.userId || item.userId === filters.userId)
+        .filter(item => !filters.type || item.type === filters.type)
+        .sort((a, b) => b.id - a.id);
+}
+
+async function updateModerationCaseReason(guildId, caseId, reason) {
+    let updatedCase = null;
+
+    await updateState(state => {
+        const record = state.cases.find(item => item.guildId === guildId && item.id === Number(caseId));
+        if (!record) return state;
+
+        record.reason = reason;
+        record.updatedAt = Date.now();
+        updatedCase = record;
+        return state;
+    });
+
+    return updatedCase;
+}
+
+async function clearWarningCases(guildId, userId, moderatorId, reason) {
+    const clearedAt = Date.now();
+    let cleared = 0;
+
+    await updateState(state => {
+        for (const record of state.cases) {
+            if (record.guildId === guildId && record.userId === userId && record.type === 'warn' && record.active !== false) {
+                record.active = false;
+                record.clearedAt = clearedAt;
+                record.clearedBy = moderatorId;
+                record.clearReason = reason;
+                record.updatedAt = clearedAt;
+                cleared += 1;
+            }
+        }
+
+        return state;
+    });
+
+    return cleared;
+}
+
 module.exports = {
+    clearWarningCases,
+    createModerationCase,
     createEmptyState,
     getTempMute,
+    getModerationCase,
+    listModerationCases,
     readState,
     removeTempBan,
     removeTempMute,
+    updateModerationCaseReason,
     upsertTempBan,
     upsertTempMute,
 };

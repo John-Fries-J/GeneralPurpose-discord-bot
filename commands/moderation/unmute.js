@@ -40,6 +40,7 @@ module.exports = {
         });
 
         await logModerationAction(interaction, {
+            caseType: 'unmute',
             title: 'User unmuted',
             color: 'green',
             user,

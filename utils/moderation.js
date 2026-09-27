@@ -4,6 +4,7 @@ const { fetchMember, safeDm } = require('./discord');
 const { sendLog, formatUser } = require('./logging');
 const { getConfig, updateConfig } = require('./config');
 const { PermissionFlagsBits } = require('discord.js');
+const { createModerationCase } = require('./store');
 
 function isSelfAction(interaction, user) {
     return user.id === interaction.user.id;
@@ -55,11 +56,25 @@ async function sendModerationDm(user, options) {
 }
 
 async function logModerationAction(interaction, options) {
+    const caseRecord = options.caseType && options.user
+        ? await createModerationCase({
+            guildId: interaction.guild.id,
+            type: options.caseType,
+            userId: options.user.id,
+            userTag: options.user.tag,
+            moderatorId: interaction.user.id,
+            moderatorTag: interaction.user.tag,
+            reason: options.reason || language.general.noReason,
+            duration: options.duration,
+        })
+        : null;
+
     return sendLog(interaction.guild, {
         type: 'moderation',
         title: options.title,
         color: options.color,
         fields: [
+            ...(caseRecord ? [{ name: 'Case', value: `#${caseRecord.id}`, inline: true }] : []),
             { name: 'User', value: options.user ? formatUser(options.user) : 'Unknown', inline: true },
             { name: 'Moderator', value: formatUser(interaction.user), inline: true },
             { name: 'Reason', value: options.reason || language.general.noReason },

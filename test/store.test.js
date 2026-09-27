@@ -77,3 +77,38 @@ test('JSON storage remains available when configured', async () => {
         fs.rmSync(directory, { recursive: true, force: true });
     }
 });
+
+test('moderation case helpers create, edit, list, and clear warnings', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'bot-store-'));
+    const sqlitePath = path.join(directory, 'cases.sqlite');
+    const { store, restore } = loadStoreWithEnvironment({
+        DATABASE_PROVIDER: 'sqlite',
+        DATABASE_SQLITE_PATH: sqlitePath,
+    });
+
+    try {
+        const warning = await store.createModerationCase({
+            guildId: 'guild',
+            type: 'warn',
+            userId: 'user',
+            userTag: 'User#0001',
+            moderatorId: 'mod',
+            moderatorTag: 'Mod#0001',
+            reason: 'Initial reason',
+        });
+
+        assert.equal(warning.id, 1);
+        assert.equal((await store.getModerationCase('guild', 1)).reason, 'Initial reason');
+
+        const updated = await store.updateModerationCaseReason('guild', 1, 'Updated reason');
+        assert.equal(updated.reason, 'Updated reason');
+        assert.equal((await store.listModerationCases('guild', { userId: 'user' })).length, 1);
+
+        const cleared = await store.clearWarningCases('guild', 'user', 'mod', 'Resolved');
+        assert.equal(cleared, 1);
+        assert.equal((await store.getModerationCase('guild', 1)).active, false);
+    } finally {
+        restore();
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});

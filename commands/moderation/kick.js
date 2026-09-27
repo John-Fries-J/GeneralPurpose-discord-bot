@@ -28,6 +28,7 @@ module.exports = {
 
         await target.member.kick(reason);
         await logModerationAction(interaction, {
+            caseType: 'kick',
             title: 'User kicked',
             color: 'red',
             user,

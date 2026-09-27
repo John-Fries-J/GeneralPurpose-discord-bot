@@ -64,6 +64,7 @@ module.exports = {
         await interaction.guild.members.unban(user.id, 'Softban complete');
 
         await logModerationAction(interaction, {
+            caseType: 'softban',
             title: 'User softbanned',
             color: 'orange',
             user,

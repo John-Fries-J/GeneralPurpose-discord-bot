@@ -58,10 +58,12 @@ module.exports = {
         });
 
         await logModerationAction(interaction, {
+            caseType: 'mute',
             title: 'User muted',
             color: 'orange',
             user,
             reason,
+            duration,
             extraFields: [
                 { name: 'Duration', value: duration, inline: true },
                 { name: 'Removed roles', value: `${removedRoleIds.length}`, inline: true },

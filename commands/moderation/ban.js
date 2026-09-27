@@ -46,10 +46,12 @@ module.exports = {
         });
 
         await logModerationAction(interaction, {
+            caseType: duration ? 'tempban' : 'ban',
             title: 'User banned',
             color: 'red',
             user,
             reason,
+            duration,
             extraFields: [
                 { name: 'Duration', value: duration || 'Permanent', inline: true },
                 { name: 'DM sent', value: dmSent ? 'Yes' : 'No', inline: true },

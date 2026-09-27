@@ -28,6 +28,7 @@ module.exports = {
         });
 
         await logModerationAction(interaction, {
+            caseType: 'warn',
             title: 'User warned',
             color: 'orange',
             user,

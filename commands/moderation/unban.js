@@ -20,6 +20,7 @@ module.exports = {
             const user = await interaction.guild.members.unban(userId, reason);
             await removeTempBan(interaction.guild.id, userId);
             await logModerationAction(interaction, {
+                caseType: 'unban',
                 title: 'User unbanned',
                 color: 'green',
                 user,
