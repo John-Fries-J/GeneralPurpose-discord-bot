@@ -24,7 +24,9 @@
         "channelId": "",
         "messageId": "",
         "categoryId": "",
-        "supportRoleId": ""
+        "supportRoleId": "",
+        "autoCloseDays": 0,
+        "saveHtmlTranscripts": false
     },
     "roles": {
         "autoRoleId": "",
@@ -54,7 +56,8 @@
         "triggerChannelId": "",
         "categoryId": "",
         "nameFormat": "{username}'s Channel",
-        "userLimitMax": 25
+        "userLimitMax": 25,
+        "presets": []
     },
     "leveling": {
         "enabled": false,
@@ -62,7 +65,12 @@
         "textXpPerMessage": 1,
         "voiceXpPerMinute": 1,
         "cooldownSeconds": 60,
-        "roleRewards": []
+        "roleRewards": [],
+        "ignoredChannelIds": [],
+        "ignoredRoleIds": [],
+        "roleMultipliers": [],
+        "channelMultipliers": [],
+        "resetPolicy": "never"
     },
     "dashboard": {
         "enabled": false,
@@ -95,7 +103,63 @@
     },
     "moderation": {
         "muteRoleId": "",
-        "muteRoleName": "Muted"
+        "muteRoleName": "Muted",
+        "appealUrl": ""
+    },
+    "autoMod": {
+        "enabled": false,
+        "deleteMatches": true,
+        "rules": {
+            "inviteLinks": true,
+            "massMentions": true,
+            "caps": true,
+            "spam": true,
+            "suspiciousDomains": true
+        },
+        "massMentionLimit": 6,
+        "capsMinLength": 18,
+        "capsPercent": 0.75,
+        "repeatCharacterLimit": 8,
+        "suspiciousDomains": [],
+        "exemptRoleIds": [],
+        "escalation": [
+            {
+                "after": 3,
+                "action": "mute",
+                "durationMs": 600000
+            }
+        ]
+    },
+    "reactionRoles": {
+        "enabled": false,
+        "panels": []
+    },
+    "rulesAgreement": {
+        "enabled": false,
+        "channelId": "",
+        "roleId": ""
+    },
+    "birthdays": {
+        "enabled": false,
+        "channelId": "",
+        "timezone": "Europe/London"
+    },
+    "starboard": {
+        "enabled": false,
+        "channelId": "",
+        "emoji": "⭐",
+        "threshold": 3
+    },
+    "pollTemplates": [],
+    "socialAnnouncements": {
+        "tiktok": [],
+        "instagram": [],
+        "bluesky": []
+    },
+    "music": {
+        "enabled": true,
+        "maxQueueLength": 50,
+        "allowFileUploads": true
     },
     "Twitch": {
         "ClientId": "",
