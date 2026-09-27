@@ -9,6 +9,10 @@ function getLevelingConfig(config = getConfig()) {
         voiceXpPerMinute: Number(config.leveling?.voiceXpPerMinute || 1),
         cooldownSeconds: Number(config.leveling?.cooldownSeconds || 60),
         roleRewards: Array.isArray(config.leveling?.roleRewards) ? config.leveling.roleRewards : [],
+        ignoredChannelIds: Array.isArray(config.leveling?.ignoredChannelIds) ? config.leveling.ignoredChannelIds : [],
+        ignoredRoleIds: Array.isArray(config.leveling?.ignoredRoleIds) ? config.leveling.ignoredRoleIds : [],
+        roleMultipliers: Array.isArray(config.leveling?.roleMultipliers) ? config.leveling.roleMultipliers : [],
+        channelMultipliers: Array.isArray(config.leveling?.channelMultipliers) ? config.leveling.channelMultipliers : [],
     };
 }
 
@@ -22,6 +26,22 @@ function allowsVoiceXp(settings) {
 
 function getTotalXp(record) {
     return Number(record?.textXp || 0) + Number(record?.voiceXp || 0);
+}
+
+function getMultiplier(member, channelId, settings) {
+    const roleMultiplier = settings.roleMultipliers
+        .filter(item => item.roleId && member?.roles?.cache?.has(item.roleId))
+        .reduce((highest, item) => Math.max(highest, Number(item.multiplier || 1)), 1);
+    const channelMultiplier = settings.channelMultipliers
+        .filter(item => item.channelId === channelId)
+        .reduce((highest, item) => Math.max(highest, Number(item.multiplier || 1)), 1);
+
+    return Math.max(0, roleMultiplier * channelMultiplier);
+}
+
+function isIgnoredForXp(member, channelId, settings) {
+    return settings.ignoredChannelIds.includes(channelId)
+        || settings.ignoredRoleIds.some(roleId => member?.roles?.cache?.has(roleId));
 }
 
 async function applyLevelRoles(member, record, settings = getLevelingConfig()) {
@@ -44,13 +64,17 @@ async function applyLevelRoles(member, record, settings = getLevelingConfig()) {
 async function awardTextXp(message) {
     const settings = getLevelingConfig();
     if (!allowsTextXp(settings) || !message.guild || message.author?.bot) return null;
+    if (isIgnoredForXp(message.member, message.channelId, settings)) return null;
+
+    const amount = Math.round(settings.textXpPerMessage * getMultiplier(message.member, message.channelId, settings));
+    if (amount <= 0) return null;
 
     const record = await addUserXp(
         message.guild.id,
         message.author.id,
         message.author.tag,
         'text',
-        settings.textXpPerMessage,
+        amount,
         settings.cooldownSeconds * 1000,
     );
 
@@ -68,7 +92,10 @@ async function awardVoiceXp(client) {
 
             for (const member of channel.members.values()) {
                 if (member.user.bot) continue;
-                const record = await addUserXp(guild.id, member.id, member.user.tag, 'voice', settings.voiceXpPerMinute);
+                if (isIgnoredForXp(member, channel.id, settings)) continue;
+                const amount = Math.round(settings.voiceXpPerMinute * getMultiplier(member, channel.id, settings));
+                if (amount <= 0) continue;
+                const record = await addUserXp(guild.id, member.id, member.user.tag, 'voice', amount);
                 await applyLevelRoles(member, record, settings);
             }
         }
@@ -87,8 +114,10 @@ module.exports = {
     awardTextXp,
     awardVoiceXp,
     getLevelingConfig,
+    getMultiplier,
     getTotalXp,
     getUserLevelRecord,
+    isIgnoredForXp,
     listLevelLeaderboard,
     startLevelingScheduler,
 };
