@@ -23,13 +23,14 @@ const client = new Client({
     partials: [Partials.Channel, Partials.Message, Partials.Reaction],
 });
 client.commands = new Collection();
+let dashboardServer = null;
 
 for (const { command } of loadCommands()) {
     client.commands.set(command.data.name, command);
     console.log(`[COMMAND] /${command.data.name}`);
 }
 
-startDashboard(client);
+dashboardServer = startDashboard(client);
 
 const eventsPath = path.join(__dirname, 'events');
 const eventFiles = fs.readdirSync(eventsPath).filter(file => file.endsWith('.js'));
@@ -58,3 +59,45 @@ if (!token) {
 }
 
 client.login(token);
+
+let shuttingDown = false;
+
+async function shutdown(signal, exitCode = 0) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[SHUTDOWN] Received ${signal}. Closing Discord client and dashboard.`);
+
+    if (client.punishmentScheduler) {
+        clearInterval(client.punishmentScheduler);
+    }
+
+    if (dashboardServer) {
+        await new Promise(resolve => dashboardServer.close(resolve));
+    }
+
+    client.destroy();
+    process.exit(exitCode);
+}
+
+process.on('SIGINT', () => {
+    shutdown('SIGINT').catch(error => {
+        console.error('[SHUTDOWN] Failed during SIGINT shutdown:', error);
+        process.exit(1);
+    });
+});
+
+process.on('SIGTERM', () => {
+    shutdown('SIGTERM').catch(error => {
+        console.error('[SHUTDOWN] Failed during SIGTERM shutdown:', error);
+        process.exit(1);
+    });
+});
+
+process.on('unhandledRejection', error => {
+    console.error('[PROCESS] Unhandled promise rejection:', error);
+});
+
+process.on('uncaughtException', error => {
+    console.error('[PROCESS] Uncaught exception:', error);
+    shutdown('uncaughtException', 1).catch(() => process.exit(1));
+});

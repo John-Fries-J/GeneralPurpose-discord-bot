@@ -11,7 +11,7 @@ module.exports = {
     execute(client) {
         const config = getConfig();
         console.log(`Ready! Logged in as ${client.user.tag}`);
-        startPunishmentScheduler(client);
+        client.punishmentScheduler = startPunishmentScheduler(client);
 
         if (config.statusName) {
             client.user.setPresence({ activities: [{ name: config.statusName }] });

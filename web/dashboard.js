@@ -305,7 +305,12 @@ function startDashboard(client) {
         next();
     });
 
-    app.get('/health', (req, res) => res.json({ ok: true }));
+    app.get('/health', (req, res) => res.json({
+        ok: true,
+        discordReady: client.isReady?.() === true,
+        guilds: client.guilds?.cache?.size || 0,
+        uptimeSeconds: Math.floor(process.uptime()),
+    }));
 
     app.get('/login', (req, res) => {
         const currentSettings = getDashboardConfig();

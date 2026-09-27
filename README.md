@@ -116,6 +116,8 @@ The dashboard is intentionally simple and disabled by default.
 
 Dashboard access requires Discord OAuth. Users can manage it if they are listed in `devs` or have `Manage Server` in the configured `guildId`. The panel can edit `config.json`, toggle modules, toggle individual commands, and view recent bot/dashboard logs. Disabled commands are blocked immediately; restart the bot to refresh Discord's visible slash command list.
 
+The dashboard exposes `GET /health` for deployment checks. It returns process uptime, Discord readiness, and the number of cached guilds.
+
 Useful dashboard environment variables:
 
 - `DASHBOARD_ENABLED=true`
@@ -220,6 +222,7 @@ npm test
 
 - `config.json` is ignored by git so tokens and server IDs stay local.
 - Slash commands refresh automatically when the bot becomes ready.
+- The bot handles `SIGINT` and `SIGTERM` by stopping the punishment scheduler, closing the dashboard server, and destroying the Discord client.
 - No external database is required; setup commands save the IDs they need into `config.json`, and temporary punishments use `data/bot-state.json`.
 - Privileged slash commands use Discord default member permissions, so Discord hides them from users without the required server permission. Discord applies this at the command level, not per subcommand.
 
