@@ -84,6 +84,10 @@ function validateConfig(config, options = {}) {
         }
     }
 
+    if (config.memberCounters !== undefined && !Array.isArray(config.memberCounters)) {
+        errors.push('memberCounters must be an array.');
+    }
+
     if (config.database !== undefined) {
         if (!isPlainObject(config.database)) {
             errors.push('database must be an object.');

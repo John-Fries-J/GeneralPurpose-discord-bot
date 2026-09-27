@@ -198,12 +198,21 @@ Config:
 - `/honeypot configure channel alert_channel` enables the scam honeypot.
 - `/honeypot disable` disables the honeypot.
 - `/honeypot view` shows honeypot settings.
+- `/counter add type channel role name_format` adds or replaces a member counter voice channel.
+- `/counter remove channel` removes a counter.
+- `/counter list` lists counters.
+- `/counter refresh` refreshes counters immediately.
 
 Honeypot:
 
 - Messages in the configured honeypot channel are deleted with up to 10 recent messages from the same user in that channel.
 - A scam alert embed is sent to the alert channel with Softban, Ban, and Ignore buttons.
 - Softban and Ban use the reason `Scam` and update the alert embed after action.
+
+Member Counters:
+
+- Counter voice channels can show total members, bots, boosters, or members with a specific role.
+- Use `{count}` in `name_format`, such as `Members: {count}`.
 
 ## Editing Text
 

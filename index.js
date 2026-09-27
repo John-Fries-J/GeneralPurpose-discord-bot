@@ -70,6 +70,9 @@ async function shutdown(signal, exitCode = 0) {
     if (client.punishmentScheduler) {
         clearInterval(client.punishmentScheduler);
     }
+    if (client.memberCounterScheduler) {
+        clearInterval(client.memberCounterScheduler);
+    }
 
     if (dashboardServer) {
         await new Promise(resolve => dashboardServer.close(resolve));

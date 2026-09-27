@@ -1,6 +1,7 @@
 const { Events } = require('discord.js');
 const { getConfig } = require('../utils/config');
 const { findSendableChannel } = require('../utils/discord');
+const { refreshMemberCounters } = require('../utils/memberCounters');
 const { buildWelcomeEmbed } = require('../commands/utility/welcome');
 
 module.exports = {
@@ -34,5 +35,9 @@ module.exports = {
                 console.error(`Failed to add role ${roleId} to ${member.user.tag}:`, error);
             }
         }
+
+        await refreshMemberCounters(member.guild).catch(error => {
+            console.error('Failed to refresh counters after member join:', error);
+        });
     },
 };
