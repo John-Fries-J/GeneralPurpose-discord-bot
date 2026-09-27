@@ -13,7 +13,7 @@
   "main": "index.js",
   "scripts": {
     "check": "node scripts/check.js",
-    "test": "npm run check",
+    "test": "npm run check && node --test",
     "run": "node index.js"
   },
   "repository": {
