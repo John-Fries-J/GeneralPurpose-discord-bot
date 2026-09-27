@@ -1,4 +1,4 @@
-const { readState, removeTempBan, removeTempMute } = require('./store');
+const { listExpiredTempRoles, readState, removeTempBan, removeTempMute, removeTempRole } = require('./store');
 const { appendDashboardLog } = require('./dashboardLogs');
 const { getOrCreateMuteRole, restoreMutedMember } = require('./moderation');
 
@@ -42,10 +42,31 @@ async function expireTempMutes(client) {
     }
 }
 
+async function expireTempRoles(client) {
+    const expired = await listExpiredTempRoles();
+
+    for (const record of expired) {
+        const guild = client.guilds.cache.get(record.guildId);
+        if (!guild) continue;
+
+        try {
+            const member = await guild.members.fetch(record.userId).catch(() => null);
+            if (member?.roles.cache.has(record.roleId)) {
+                await member.roles.remove(record.roleId, 'Temporary role expired');
+            }
+            await removeTempRole(record.guildId, record.userId, record.roleId);
+            appendDashboardLog('Temporary role expired', { guildId: record.guildId, userId: record.userId, roleId: record.roleId });
+        } catch (error) {
+            console.error(`Temporary role expiry failed for ${record.userId}/${record.roleId}:`, error);
+        }
+    }
+}
+
 function startPunishmentScheduler(client) {
     const run = () => {
         expireTempBans(client).catch(error => console.error('Temp ban scheduler failed:', error));
         expireTempMutes(client).catch(error => console.error('Temp mute scheduler failed:', error));
+        expireTempRoles(client).catch(error => console.error('Temp role scheduler failed:', error));
     };
 
     run();
@@ -53,5 +74,6 @@ function startPunishmentScheduler(client) {
 }
 
 module.exports = {
+    expireTempRoles,
     startPunishmentScheduler,
 };

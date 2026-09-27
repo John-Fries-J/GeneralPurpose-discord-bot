@@ -46,9 +46,13 @@ async function validateTarget(interaction, user, capability) {
 }
 
 async function sendModerationDm(user, options) {
+    const appealUrl = getConfig().moderation?.appealUrl;
+    const description = appealUrl
+        ? `${options.description}\n\nAppeal: ${appealUrl}`
+        : options.description;
     const embed = createEmbed({
         title: options.title,
-        description: options.description,
+        description,
         color: options.color,
     });
 
