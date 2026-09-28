@@ -5,6 +5,7 @@ const { createEmbed } = require('../utils/embeds');
 const { findSendableChannel } = require('../utils/discord');
 const { startLevelingScheduler } = require('../utils/leveling');
 const { startMemberCounterScheduler } = require('../utils/memberCounters');
+const { bootstrapNameless } = require('../utils/namelessmc');
 const { startPunishmentScheduler } = require('../utils/punishments');
 const { startScheduledMessageScheduler } = require('../utils/scheduledMessages');
 const { startTicketScheduler } = require('../utils/tickets');
@@ -20,6 +21,11 @@ module.exports = {
         client.levelingScheduler = startLevelingScheduler(client);
         client.scheduledMessageScheduler = startScheduledMessageScheduler(client);
         client.ticketScheduler = startTicketScheduler(client);
+        bootstrapNameless(client).then(scheduler => {
+            client.namelessMcScheduler = scheduler;
+        }).catch(error => {
+            console.error('NamelessMC bootstrap failed:', error);
+        });
 
         if (config.statusName) {
             client.user.setPresence({ activities: [{ name: config.statusName }] });

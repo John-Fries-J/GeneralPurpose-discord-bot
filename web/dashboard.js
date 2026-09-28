@@ -27,7 +27,7 @@ const {
 const states = new Map();
 const sessionMaxAgeMs = 30 * 24 * 60 * 60 * 1000;
 const redactedSecret = '[redacted]';
-const sensitiveKeys = new Set(['token', 'clientSecret', 'client_secret', 'password', 'secret']);
+const sensitiveKeys = new Set(['token', 'apiKey', 'clientSecret', 'client_secret', 'password', 'secret']);
 
 function escapeHtml(value) {
     return String(value ?? '')

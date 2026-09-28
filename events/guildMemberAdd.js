@@ -2,6 +2,7 @@ const { Events } = require('discord.js');
 const { getConfig } = require('../utils/config');
 const { findSendableChannel } = require('../utils/discord');
 const { refreshMemberCounters } = require('../utils/memberCounters');
+const { syncMember } = require('../utils/namelessmc');
 const { buildWelcomeEmbed } = require('../commands/utility/welcome');
 
 module.exports = {
@@ -38,6 +39,10 @@ module.exports = {
 
         await refreshMemberCounters(member.guild).catch(error => {
             console.error('Failed to refresh counters after member join:', error);
+        });
+
+        await syncMember(member).catch(error => {
+            console.error('Failed to sync NamelessMC member after join:', error);
         });
     },
 };

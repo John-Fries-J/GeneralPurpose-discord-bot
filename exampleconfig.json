@@ -161,6 +161,23 @@
         "maxQueueLength": 50,
         "allowFileUploads": true
     },
+    "namelessmc": {
+        "enabled": false,
+        "apiUrl": "",
+        "apiKey": "",
+        "syncOnReady": false,
+        "syncIntervalMinutes": 0,
+        "link": {
+            "enabled": true,
+            "integrationName": "Discord"
+        },
+        "roleSync": {
+            "enabled": false,
+            "direction": "nameless-to-discord",
+            "removeUnmappedRoles": false,
+            "groupRoleMap": []
+        }
+    },
     "Twitch": {
         "ClientId": "",
         "AccessToken": "",

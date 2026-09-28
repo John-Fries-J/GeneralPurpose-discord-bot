@@ -86,6 +86,9 @@ async function shutdown(signal, exitCode = 0) {
     if (client.ticketScheduler) {
         clearInterval(client.ticketScheduler);
     }
+    if (client.namelessMcScheduler) {
+        clearInterval(client.namelessMcScheduler);
+    }
 
     if (dashboardServer) {
         await new Promise(resolve => dashboardServer.close(resolve));

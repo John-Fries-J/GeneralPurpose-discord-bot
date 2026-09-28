@@ -198,6 +198,39 @@ function validateConfig(config, options = {}) {
         }
     }
 
+    if (config.namelessmc !== undefined) {
+        if (!isPlainObject(config.namelessmc)) {
+            errors.push('namelessmc must be an object.');
+        } else {
+            if (config.namelessmc.enabled !== undefined && typeof config.namelessmc.enabled !== 'boolean') {
+                errors.push('namelessmc.enabled must be a boolean.');
+            }
+            validateString(errors, config, 'namelessmc.apiUrl');
+            validateString(errors, config, 'namelessmc.apiKey');
+            if (config.namelessmc.syncOnReady !== undefined && typeof config.namelessmc.syncOnReady !== 'boolean') {
+                errors.push('namelessmc.syncOnReady must be a boolean.');
+            }
+            if (config.namelessmc.syncIntervalMinutes !== undefined && (!Number.isInteger(config.namelessmc.syncIntervalMinutes) || config.namelessmc.syncIntervalMinutes < 0)) {
+                errors.push('namelessmc.syncIntervalMinutes must be a non-negative integer.');
+            }
+            if (config.namelessmc.roleSync !== undefined) {
+                if (!isPlainObject(config.namelessmc.roleSync)) {
+                    errors.push('namelessmc.roleSync must be an object.');
+                } else {
+                    if (config.namelessmc.roleSync.enabled !== undefined && typeof config.namelessmc.roleSync.enabled !== 'boolean') {
+                        errors.push('namelessmc.roleSync.enabled must be a boolean.');
+                    }
+                    if (config.namelessmc.roleSync.direction !== undefined && !['nameless-to-discord', 'discord-to-nameless', 'both'].includes(config.namelessmc.roleSync.direction)) {
+                        errors.push('namelessmc.roleSync.direction must be "nameless-to-discord", "discord-to-nameless", or "both".');
+                    }
+                    if (config.namelessmc.roleSync.groupRoleMap !== undefined && !Array.isArray(config.namelessmc.roleSync.groupRoleMap)) {
+                        errors.push('namelessmc.roleSync.groupRoleMap must be an array.');
+                    }
+                }
+            }
+        }
+    }
+
     return errors;
 }
 
