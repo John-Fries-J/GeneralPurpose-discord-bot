@@ -1,7 +1,30 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { MessageFlags } = require('discord.js');
+const { closeDatabase } = require('../database');
 const { routeInteraction } = require('../interactions/router');
+
+function withEnvironment(environment) {
+    const previous = {};
+    for (const [key, value] of Object.entries(environment)) {
+        previous[key] = process.env[key];
+        process.env[key] = value;
+    }
+
+    return () => {
+        closeDatabase();
+        for (const [key, value] of Object.entries(previous)) {
+            if (value === undefined) {
+                delete process.env[key];
+            } else {
+                process.env[key] = value;
+            }
+        }
+    };
+}
 
 test('routeInteraction replies gracefully to unknown buttons', async () => {
     const replies = [];
@@ -33,4 +56,45 @@ test('routeInteraction returns empty autocomplete choices for commands without h
     });
 
     assert.deepEqual(responses, [[]]);
+});
+
+test('routeInteraction executes user context commands through command routing', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'bot-router-'));
+    const restore = withEnvironment({
+        DATABASE_PROVIDER: 'sqlite',
+        DATABASE_SQLITE_PATH: path.join(directory, 'state.sqlite'),
+        DATABASE_JSON_PATH: path.join(directory, 'missing.json'),
+    });
+    const replies = [];
+    let executed = false;
+
+    try {
+        await routeInteraction({
+            commandName: 'User Information',
+            guildId: 'guild',
+            channelId: 'channel',
+            targetUser: { id: 'target', tag: 'Target#0001' },
+            user: { id: 'user', tag: 'User#0001' },
+            client: {
+                commands: new Map([['User Information', {
+                    data: { name: 'User Information', toJSON: () => ({ name: 'User Information' }) },
+                    execute: async interaction => {
+                        executed = true;
+                        await interaction.reply({ content: interaction.targetUser.id, flags: MessageFlags.Ephemeral });
+                    },
+                }]]),
+            },
+            isChatInputCommand: () => false,
+            isUserContextMenuCommand: () => true,
+            isMessageContextMenuCommand: () => false,
+            inGuild: () => true,
+            reply: async payload => replies.push(payload),
+        });
+
+        assert.equal(executed, true);
+        assert.equal(replies[0].content, 'target');
+    } finally {
+        restore();
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
 });

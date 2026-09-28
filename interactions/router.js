@@ -20,7 +20,14 @@ async function replyUnknownComponent(interaction) {
     }).catch(() => null);
 }
 
-async function runChatInputCommand(interaction) {
+function formatCommandHistorySummary(interaction) {
+    if (interaction.isChatInputCommand?.()) return formatInteractionCommand(interaction);
+    if (interaction.isUserContextMenuCommand?.()) return `${interaction.commandName} user:${interaction.targetUser?.tag || interaction.targetId}`;
+    if (interaction.isMessageContextMenuCommand?.()) return `${interaction.commandName} message:${interaction.targetMessage?.id || interaction.targetId}`;
+    return interaction.commandName;
+}
+
+async function runApplicationCommand(interaction) {
     const command = interaction.client.commands.get(interaction.commandName);
 
     if (!command) {
@@ -51,7 +58,7 @@ async function runChatInputCommand(interaction) {
             userId: interaction.user.id,
             userTag: interaction.user.tag,
             type: 'command',
-            summary: formatInteractionCommand(interaction),
+            summary: formatCommandHistorySummary(interaction),
             channelId: interaction.channelId,
             metadata: {
                 command: interaction.commandName,
@@ -76,7 +83,7 @@ async function runChatInputCommand(interaction) {
             userId: interaction.user.id,
             userTag: interaction.user.tag,
             type: 'command:error',
-            summary: `${formatInteractionCommand(interaction)} failed: ${error.message}`,
+            summary: `${formatCommandHistorySummary(interaction)} failed: ${error.message}`,
             channelId: interaction.channelId,
             metadata: {
                 command: interaction.commandName,
@@ -86,6 +93,10 @@ async function runChatInputCommand(interaction) {
         }).catch(() => null);
         await safeReply(interaction, { content: language.general.commandError, flags: MessageFlags.Ephemeral });
     }
+}
+
+async function runChatInputCommand(interaction) {
+    return runApplicationCommand(interaction);
 }
 
 async function runAutocomplete(interaction) {
@@ -118,6 +129,7 @@ async function runButton(interaction) {
 
 async function routeInteraction(interaction) {
     if (interaction.isChatInputCommand?.()) return runChatInputCommand(interaction);
+    if (interaction.isUserContextMenuCommand?.() || interaction.isMessageContextMenuCommand?.()) return runApplicationCommand(interaction);
     if (interaction.isAutocomplete?.()) return runAutocomplete(interaction);
 
     if (interaction.isButton?.()) {
@@ -133,8 +145,6 @@ async function routeInteraction(interaction) {
         || interaction.isRoleSelectMenu?.()
         || interaction.isChannelSelectMenu?.()
         || interaction.isMentionableSelectMenu?.()
-        || interaction.isUserContextMenuCommand?.()
-        || interaction.isMessageContextMenuCommand?.()
     ) {
         await replyUnknownComponent(interaction);
         return false;
@@ -146,6 +156,7 @@ async function routeInteraction(interaction) {
 module.exports = {
     routeInteraction,
     runAutocomplete,
+    runApplicationCommand,
     runButton,
     runChatInputCommand,
 };
