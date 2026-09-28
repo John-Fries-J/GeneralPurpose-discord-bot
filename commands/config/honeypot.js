@@ -1,6 +1,7 @@
 const { ChannelType, PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
 const { getConfig, updateConfig } = require('../../utils/config');
 const { createEmbed } = require('../../utils/embeds');
+const { sendHoneypotNotice } = require('../../utils/honeypot');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -56,6 +57,10 @@ module.exports = {
                     mentionType: pingType,
                 };
                 return config;
+            });
+
+            await sendHoneypotNotice(channel).catch(error => {
+                console.error('Failed to send honeypot notice:', error);
             });
 
             return interaction.reply({
