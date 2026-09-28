@@ -36,6 +36,7 @@ module.exports = {
             type: 'moderation',
             title: 'Slowmode updated',
             color: 'blue',
+            user: interaction.user,
             fields: [
                 { name: 'Channel', value: `<#${channel.id}>`, inline: true },
                 { name: 'Seconds', value: `${seconds}`, inline: true },

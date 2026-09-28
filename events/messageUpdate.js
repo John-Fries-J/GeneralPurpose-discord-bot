@@ -18,6 +18,7 @@ module.exports = {
             type: 'messageUpdate',
             title: `Message edited in #${oldMessage.channel?.name || 'unknown'}`,
             color: 'orange',
+            user: oldMessage.author,
             fields: [
                 { name: 'Author', value: oldMessage.author ? `${oldMessage.author.tag} (${oldMessage.author.id})` : 'Unknown', inline: true },
                 { name: 'Channel', value: oldMessage.channel ? `<#${oldMessage.channel.id}>` : 'Unknown', inline: true },

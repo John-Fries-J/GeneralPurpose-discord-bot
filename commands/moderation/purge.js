@@ -24,6 +24,7 @@ module.exports = {
                 type: 'moderation',
                 title: 'Messages purged',
                 color: 'orange',
+                user: interaction.user,
                 fields: [
                     { name: 'Moderator', value: formatUser(interaction.user), inline: true },
                     { name: 'Channel', value: `<#${interaction.channel.id}>`, inline: true },

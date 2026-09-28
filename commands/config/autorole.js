@@ -38,6 +38,7 @@ module.exports = {
                 type: 'moderation',
                 title: 'Autorole set',
                 color: 'green',
+                user: interaction.user,
                 fields: [
                     { name: 'Role', value: `<@&${role.id}>`, inline: true },
                     { name: 'Updated by', value: formatUser(interaction.user), inline: true },
@@ -58,6 +59,7 @@ module.exports = {
             type: 'moderation',
             title: 'Autorole cleared',
             color: 'orange',
+            user: interaction.user,
             fields: [{ name: 'Updated by', value: formatUser(interaction.user), inline: true }],
         }).catch(() => null);
 

@@ -50,6 +50,7 @@ module.exports = {
             type: 'general',
             title: 'Poll created',
             color: 'blue',
+            user: interaction.user,
             fields: [
                 { name: 'Creator', value: formatUser(interaction.user), inline: true },
                 { name: 'Duration', value: `${duration} hours`, inline: true },

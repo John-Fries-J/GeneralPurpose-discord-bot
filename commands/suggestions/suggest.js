@@ -61,6 +61,7 @@ module.exports = {
                 type: 'suggestion',
                 title: 'Suggestion submitted',
                 color: 'blue',
+                user,
                 fields: [
                     { name: 'User', value: formatUser(user), inline: true },
                     { name: 'Channel', value: `<#${suggestionChannel.id}>`, inline: true },

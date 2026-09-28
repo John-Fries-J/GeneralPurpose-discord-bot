@@ -19,6 +19,7 @@ module.exports = {
             type: 'messageDelete',
             title: `Message deleted in #${message.channel?.name || 'unknown'}`,
             color: 'red',
+            user: message.author,
             fields: [
                 { name: 'Author', value: message.author ? `${message.author.tag} (${message.author.id})` : 'Unknown', inline: true },
                 { name: 'Channel', value: message.channel ? `<#${message.channel.id}>` : 'Unknown', inline: true },

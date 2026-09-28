@@ -39,6 +39,7 @@ module.exports = {
         const embed = createEmbed({
             title: `History for ${user.tag}`,
             color: 'blue',
+            thumbnail: user.displayAvatarURL({ extension: 'png', size: 128 }),
             description: entries.map(item => {
                 const timestamp = `<t:${Math.floor(item.createdAt / 1000)}:R>`;
                 const channel = item.channelId ? `<#${item.channelId}>` : 'No channel';

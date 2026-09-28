@@ -34,6 +34,7 @@ module.exports = {
             type: 'moderation',
             title: 'Nickname updated',
             color: 'blue',
+            user,
             fields: [
                 { name: 'User', value: formatUser(user), inline: true },
                 { name: 'Moderator', value: formatUser(interaction.user), inline: true },

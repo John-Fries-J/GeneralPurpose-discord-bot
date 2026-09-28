@@ -38,6 +38,7 @@ module.exports = {
             type: 'general',
             title: 'Announcement sent',
             color: 'blue',
+            user: interaction.user,
             fields: [
                 { name: 'Channel', value: `<#${channel.id}>`, inline: true },
                 { name: 'Moderator', value: formatUser(interaction.user), inline: true },

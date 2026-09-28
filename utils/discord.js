@@ -60,6 +60,30 @@ function truncate(value, maxLength = 1000) {
     return `${text.slice(0, maxLength - 3)}...`;
 }
 
+function formatOptionValue(option) {
+    if (option.user) return `@${option.user.tag || option.user.username}`;
+    if (option.member?.user) return `@${option.member.user.tag || option.member.user.username}`;
+    if (option.channel) return `#${option.channel.name || option.channel.id}`;
+    if (option.role) return `@${option.role.name || option.role.id}`;
+    if (option.attachment) return option.attachment.name || option.attachment.url || option.attachment.id;
+    if (option.value !== undefined) return String(option.value);
+    return '';
+}
+
+function formatInteractionOption(option) {
+    if (option.options?.length) {
+        return [option.name, ...option.options.map(formatInteractionOption)].filter(Boolean).join(' ');
+    }
+
+    const value = formatOptionValue(option);
+    return value ? `${option.name}:${value}` : option.name;
+}
+
+function formatInteractionCommand(interaction) {
+    const options = interaction.options?.data?.map(formatInteractionOption).filter(Boolean) || [];
+    return [`/${interaction.commandName}`, ...options].join(' ');
+}
+
 function isGuildTextChannel(channel) {
     return channel?.type === ChannelType.GuildText && isSendable(channel);
 }
@@ -67,6 +91,7 @@ function isGuildTextChannel(channel) {
 module.exports = {
     fetchMember,
     findSendableChannel,
+    formatInteractionCommand,
     isGuildTextChannel,
     safeDm,
     safeReply,

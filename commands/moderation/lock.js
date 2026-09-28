@@ -29,6 +29,7 @@ module.exports = {
             type: 'moderation',
             title: 'Channel locked',
             color: 'red',
+            user: interaction.user,
             fields: [
                 { name: 'Channel', value: `<#${channel.id}>`, inline: true },
                 { name: 'Moderator', value: formatUser(interaction.user), inline: true },

@@ -44,6 +44,7 @@ async function updateSuggestion(interaction, status) {
         type: 'suggestion',
         title: `Suggestion ${status.toLowerCase()}`,
         color: status === 'Approved' ? 'green' : 'red',
+        user: interaction.user,
         fields: [
             { name: 'Message ID', value: messageId, inline: true },
             { name: 'Reviewer', value: formatUser(interaction.user), inline: true },

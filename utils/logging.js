@@ -23,11 +23,32 @@ function getLogChannel(guild, type = 'general') {
     return findSendableChannel(guild, channelId, 'logs');
 }
 
+function getLoggingSettings(config = getConfig()) {
+    return {
+        showUserAvatars: config.logging?.showUserAvatars !== false,
+    };
+}
+
+function getUserAvatar(user) {
+    return user?.displayAvatarURL?.({ extension: 'png', size: 64 }) || null;
+}
+
+function getLogAuthor(user) {
+    if (!user) return null;
+
+    const author = { name: formatUser(user) };
+    const iconURL = getUserAvatar(user);
+    if (iconURL) author.iconURL = iconURL;
+    return author;
+}
+
 async function sendLog(guild, options = {}) {
+    const settings = getLoggingSettings();
+
     appendDashboardLog(options.title || 'Log event', {
         type: options.type || 'general',
         guildId: guild?.id,
-        description: truncate(options.description, 500),
+        description: options.description ? truncate(options.description, 500) : '',
     });
 
     const channel = getLogChannel(guild, options.type);
@@ -35,7 +56,8 @@ async function sendLog(guild, options = {}) {
 
     const embed = createEmbed({
         title: options.title,
-        description: truncate(options.description, 4096),
+        description: options.description ? truncate(options.description, 4096) : null,
+        author: settings.showUserAvatars ? getLogAuthor(options.user) : null,
         color: options.color || 'blue',
         fields: options.fields,
     });

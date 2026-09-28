@@ -53,6 +53,7 @@ module.exports = {
             type: 'moderation',
             title: 'Temporary role added',
             color: 'blue',
+            user,
             fields: [
                 { name: 'User', value: formatUser(user), inline: true },
                 { name: 'Role', value: `<@&${role.id}>`, inline: true },

@@ -56,6 +56,7 @@ module.exports = {
             type: 'moderation',
             title: `Role ${subcommand === 'add' ? 'added' : 'removed'}`,
             color: subcommand === 'add' ? 'green' : 'orange',
+            user,
             fields: [
                 { name: 'User', value: formatUser(user), inline: true },
                 { name: 'Role', value: `<@&${role.id}>`, inline: true },

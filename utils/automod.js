@@ -154,6 +154,7 @@ async function handleAutoModMessage(message) {
         type: 'moderation',
         title: 'Auto-mod action',
         color: 'orange',
+        user: message.author,
         fields: [
             { name: 'Case', value: `#${caseRecord.id}`, inline: true },
             { name: 'Rule', value: violation.rule, inline: true },

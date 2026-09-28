@@ -93,6 +93,7 @@ async function logModerationAction(interaction, options) {
         type: 'moderation',
         title: options.title,
         color: options.color,
+        user: options.user || interaction.user,
         fields: [
             ...(caseRecord ? [{ name: 'Case', value: `#${caseRecord.id}`, inline: true }] : []),
             { name: 'User', value: options.user ? formatUser(options.user) : 'Unknown', inline: true },

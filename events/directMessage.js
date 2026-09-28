@@ -28,8 +28,13 @@ module.exports = {
             ? message.attachments.map(attachment => attachment.url).join('\n')
             : 'None';
 
+        const author = { name: `${message.author.tag} (${message.author.id})` };
+        const iconURL = message.author.displayAvatarURL?.({ extension: 'png', size: 64 });
+        if (iconURL) author.iconURL = iconURL;
+
         const embed = createEmbed({
             title: 'Direct Message Received',
+            author,
             color: 'blue',
             fields: [
                 { name: 'From', value: `${message.author.tag} (${message.author.id})`, inline: true },

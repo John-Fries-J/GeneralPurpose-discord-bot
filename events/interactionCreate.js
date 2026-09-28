@@ -1,9 +1,9 @@
 const { Events } = require('discord.js');
 const language = require('../utils/language');
-const { safeReply } = require('../utils/discord');
+const { formatInteractionCommand, safeReply } = require('../utils/discord');
 const { isCommandEnabled } = require('../utils/features');
 const { memberCanUseCommand } = require('../utils/permissions');
-const { recordCommandUsage } = require('../utils/store');
+const { addUserHistory, recordCommandUsage } = require('../utils/store');
 
 module.exports = {
     name: Events.InteractionCreate,
@@ -35,6 +35,20 @@ module.exports = {
                 userTag: interaction.user.tag,
                 ok: true,
             });
+            await addUserHistory({
+                guildId: interaction.guildId,
+                userId: interaction.user.id,
+                userTag: interaction.user.tag,
+                type: 'command',
+                summary: formatInteractionCommand(interaction),
+                channelId: interaction.channelId,
+                metadata: {
+                    command: interaction.commandName,
+                    ok: true,
+                },
+            }).catch(error => {
+                console.error('Failed to record command history:', error);
+            });
         } catch (error) {
             console.error(`Error executing /${interaction.commandName}:`, error);
             await recordCommandUsage({
@@ -45,6 +59,19 @@ module.exports = {
                 userTag: interaction.user.tag,
                 ok: false,
                 error: error.message,
+            }).catch(() => null);
+            await addUserHistory({
+                guildId: interaction.guildId,
+                userId: interaction.user.id,
+                userTag: interaction.user.tag,
+                type: 'command:error',
+                summary: `${formatInteractionCommand(interaction)} failed: ${error.message}`,
+                channelId: interaction.channelId,
+                metadata: {
+                    command: interaction.commandName,
+                    ok: false,
+                    error: error.message,
+                },
             }).catch(() => null);
             await safeReply(interaction, { content: language.general.commandError, flags: 64 });
         }

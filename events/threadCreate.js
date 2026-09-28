@@ -5,11 +5,13 @@ module.exports = {
     name: Events.ThreadCreate,
     async execute(thread) {
         if (!thread.guild) return;
+        const owner = thread.ownerId ? await thread.client.users.fetch(thread.ownerId).catch(() => null) : null;
 
         await sendLog(thread.guild, {
             type: 'threadCreate',
             title: 'Thread created',
             color: 'blue',
+            user: owner,
             fields: [
                 { name: 'Thread', value: thread.name, inline: true },
                 { name: 'Parent', value: thread.parent ? `<#${thread.parent.id}>` : 'Unknown', inline: true },

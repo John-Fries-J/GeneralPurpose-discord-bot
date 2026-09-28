@@ -22,6 +22,7 @@ function createEmbed(options = {}) {
 
     if (options.title) embed.setTitle(options.title);
     if (options.description) embed.setDescription(options.description);
+    if (options.author) embed.setAuthor(options.author);
     if (options.url) embed.setURL(options.url);
     if (options.thumbnail) embed.setThumbnail(options.thumbnail);
     if (options.image) embed.setImage(options.image);

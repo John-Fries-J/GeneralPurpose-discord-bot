@@ -86,6 +86,7 @@ module.exports = {
                 type: 'general',
                 title: 'Log channel updated',
                 color: 'green',
+                user: interaction.user,
                 fields: [
                     { name: 'Type', value: type, inline: true },
                     { name: 'Channel', value: `<#${channel.id}>`, inline: true },
