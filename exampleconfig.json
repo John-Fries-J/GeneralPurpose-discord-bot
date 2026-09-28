@@ -172,7 +172,8 @@
         "allowFileUploads": true,
         "voiceReadyTimeoutMs": 60000,
         "voiceJoinRetries": 0,
-        "voiceRetryDelayMs": 1000
+        "voiceRetryDelayMs": 1000,
+        "ytDlpCookiesPath": "data/youtube-cookies.txt"
     },
     "namelessmc": {
         "enabled": false,

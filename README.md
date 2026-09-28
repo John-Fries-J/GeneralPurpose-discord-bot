@@ -253,6 +253,11 @@ Config:
 - `/levelconfig remove-role role` removes a reward.
 - `/leaderboard type` shows total, text, or voice XP leaders.
 
+Music:
+
+- `/music play query` accepts a direct URL or search text. Spotify track links are converted to a searchable track name; full Spotify audio is not streamed directly.
+- YouTube may require browser cookies on hosted servers. Export YouTube cookies in Netscape format to `data/youtube-cookies.txt`, or set `music.ytDlpCookiesPath` / `YTDLP_COOKIES_PATH` to another mounted path. Rebuild the Docker image after music dependency changes.
+
 Honeypot:
 
 - Messages in the configured honeypot channel are deleted with up to 10 recent messages from the same user across accessible server text channels.

@@ -275,6 +275,7 @@ function validateConfig(config, options = {}) {
             validateInteger(errors, config, 'music.voiceReadyTimeoutMs', { min: 5000, max: 300000 });
             validateInteger(errors, config, 'music.voiceJoinRetries', { min: 0, max: 10 });
             validateInteger(errors, config, 'music.voiceRetryDelayMs', { min: 0, max: 60000 });
+            validateString(errors, config, 'music.ytDlpCookiesPath');
         }
     }
 

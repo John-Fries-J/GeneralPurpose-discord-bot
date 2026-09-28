@@ -1,5 +1,7 @@
 const { Readable } = require('node:stream');
 const { spawn } = require('node:child_process');
+const fs = require('node:fs');
+const path = require('node:path');
 const { PermissionFlagsBits } = require('discord.js');
 const { getConfig } = require('./config');
 const {
@@ -28,6 +30,7 @@ function getMusicSettings(config = getConfig()) {
     const maxJoinRetries = Number(config.music?.voiceJoinRetries || 0);
     const retryDelayMs = Number(config.music?.voiceRetryDelayMs || 1_000);
     const maxQueueLength = Number(config.music?.maxQueueLength || 50);
+    const ytDlpCookiesPath = process.env.YTDLP_COOKIES_PATH || config.music?.ytDlpCookiesPath || 'data/youtube-cookies.txt';
 
     return {
         enabled: config.music?.enabled !== false,
@@ -36,6 +39,7 @@ function getMusicSettings(config = getConfig()) {
         readyTimeoutMs: Number.isInteger(readyTimeoutMs) && readyTimeoutMs >= 5_000 ? readyTimeoutMs : 60_000,
         maxJoinRetries: Number.isInteger(maxJoinRetries) && maxJoinRetries >= 0 ? maxJoinRetries : 0,
         retryDelayMs: Number.isInteger(retryDelayMs) && retryDelayMs >= 0 ? retryDelayMs : 1_000,
+        ytDlpCookiesPath,
     };
 }
 
@@ -85,6 +89,16 @@ function isSpotifyUrl(value) {
 function formatYtDlpError(error, stderr = '') {
     const detail = stderr.trim().split(/\r?\n/).slice(-2).join(' ').trim();
     return detail || error?.message || 'yt-dlp failed.';
+}
+
+function getYtDlpCookiesArgs(settings = getMusicSettings()) {
+    const configuredPath = String(settings.ytDlpCookiesPath || '').trim();
+    if (!configuredPath) return [];
+
+    const cookiesPath = path.resolve(__dirname, '..', configuredPath);
+    if (!fs.existsSync(cookiesPath)) return [];
+
+    return ['--cookies', cookiesPath];
 }
 
 function runYtDlp(args, { collectStdout = true } = {}) {
@@ -139,8 +153,10 @@ async function getYtDlpInfo(input) {
     if (!await hasYtDlp()) return null;
 
     const target = isUrl(input) ? input : `ytsearch1:${input}`;
+    const cookiesArgs = getYtDlpCookiesArgs();
     try {
         const { stdout } = await runYtDlp([
+            ...cookiesArgs,
             '--dump-single-json',
             '--no-playlist',
             '--no-warnings',
@@ -162,7 +178,9 @@ async function getYtDlpInfo(input) {
 }
 
 function createYtDlpStream(url) {
+    const cookiesArgs = getYtDlpCookiesArgs();
     const child = spawn('yt-dlp', [
+        ...cookiesArgs,
         '--no-playlist',
         '--no-warnings',
         '-f',
@@ -597,6 +615,7 @@ module.exports = {
     enqueue,
     getMusicErrorMessage,
     getQueueSummary,
+    getYtDlpCookiesArgs,
     describeConnectionState,
     generateDependencyReport,
     resolvePlayableTrack,
