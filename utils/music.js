@@ -13,7 +13,9 @@ const {
 const play = require('play-dl');
 
 const queues = new Map();
+const voiceConnectionAttempts = new Map();
 const voiceReadyTimeoutMs = 45_000;
+const voiceJoinMaxAttempts = 2;
 
 class MusicUserError extends Error {}
 
@@ -140,6 +142,20 @@ function logVoiceJoinFailure(interaction, voiceChannel, error, attempt) {
     });
 }
 
+function destroyVoiceConnection(connection) {
+    if (!connection || connection.state.status === VoiceConnectionStatus.Destroyed) return;
+
+    try {
+        connection.destroy();
+    } catch (error) {
+        console.warn('Music voice connection cleanup failed:', {
+            error: error?.message || String(error),
+            code: error?.code,
+            name: error?.name,
+        });
+    }
+}
+
 async function joinReadyVoiceChannel(interaction, voiceChannel, attempt = 1) {
     const connection = joinVoiceChannel({
         channelId: voiceChannel.id,
@@ -152,9 +168,9 @@ async function joinReadyVoiceChannel(interaction, voiceChannel, attempt = 1) {
         return await entersState(connection, VoiceConnectionStatus.Ready, voiceReadyTimeoutMs);
     } catch (error) {
         logVoiceJoinFailure(interaction, voiceChannel, error, attempt);
-        connection.destroy();
+        destroyVoiceConnection(connection);
 
-        if (attempt < 2 && isAbortError(error)) {
+        if (attempt < voiceJoinMaxAttempts && isAbortError(error)) {
             await wait(1_000);
             return joinReadyVoiceChannel(interaction, voiceChannel, attempt + 1);
         }
@@ -165,6 +181,39 @@ async function joinReadyVoiceChannel(interaction, voiceChannel, attempt = 1) {
 
         throw error;
     }
+}
+
+async function connectVoiceChannel(interaction, voiceChannel) {
+    const guildId = interaction.guild.id;
+    const existing = getVoiceConnection(guildId);
+
+    if (existing) {
+        if (existing.joinConfig?.channelId && existing.joinConfig.channelId !== voiceChannel.id) {
+            destroyVoiceConnection(existing);
+        } else {
+            if (existing.state.status === VoiceConnectionStatus.Ready) return existing;
+
+            try {
+                return await entersState(existing, VoiceConnectionStatus.Ready, voiceReadyTimeoutMs);
+            } catch (error) {
+                logVoiceJoinFailure(interaction, voiceChannel, error, 'existing');
+                destroyVoiceConnection(existing);
+            }
+        }
+    }
+
+    return joinReadyVoiceChannel(interaction, voiceChannel);
+}
+
+function getPendingVoiceConnection(guildId, voiceChannel) {
+    const pending = voiceConnectionAttempts.get(guildId);
+    if (!pending) return null;
+
+    if (pending.channelId !== voiceChannel.id) {
+        throw new MusicUserError('I am already joining another voice channel. Try again once that join finishes, or use `/music stop` first.');
+    }
+
+    return pending.promise;
 }
 
 async function ensureConnection(interaction) {
@@ -179,23 +228,20 @@ async function ensureConnection(interaction) {
         throw new MusicUserError('I need permission to speak in your voice channel.');
     }
 
-    const existing = getVoiceConnection(interaction.guild.id);
-    if (existing) {
-        if (existing.joinConfig?.channelId && existing.joinConfig.channelId !== voiceChannel.id) {
-            existing.destroy();
-        } else {
-            if (existing.state.status === VoiceConnectionStatus.Ready) return existing;
+    const guildId = interaction.guild.id;
+    const pending = getPendingVoiceConnection(guildId, voiceChannel);
+    if (pending) return pending;
 
-            try {
-                return await entersState(existing, VoiceConnectionStatus.Ready, 10_000);
-            } catch (error) {
-                logVoiceJoinFailure(interaction, voiceChannel, error, 0);
-                existing.destroy();
-            }
+    const promise = connectVoiceChannel(interaction, voiceChannel);
+    voiceConnectionAttempts.set(guildId, { channelId: voiceChannel.id, promise });
+
+    try {
+        return await promise;
+    } finally {
+        if (voiceConnectionAttempts.get(guildId)?.promise === promise) {
+            voiceConnectionAttempts.delete(guildId);
         }
     }
-
-    return joinReadyVoiceChannel(interaction, voiceChannel);
 }
 
 async function playNext(queue) {
