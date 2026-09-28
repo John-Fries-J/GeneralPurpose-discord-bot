@@ -6,6 +6,7 @@ const {
     getMusicErrorMessage,
     getMusicSettings,
     getQueueSummary,
+    getYtDlpCookieStatus,
     resolvePlayableTrack,
     skip,
     stop,
@@ -105,6 +106,7 @@ module.exports = {
 
         if (subcommand === 'debug') {
             const queue = getQueueSummary(interaction.guild.id);
+            const cookies = getYtDlpCookieStatus();
             const report = generateDependencyReport()
                 .split('\n')
                 .filter(line => /@discordjs\/voice|discord\.js|libsodium|ffmpeg|node/i.test(line))
@@ -115,6 +117,8 @@ module.exports = {
                     `Voice: ${queue.connectionState || 'not connected'}`,
                     `Current: ${queue.current?.title || 'none'}`,
                     `Queued: ${queue.tracks.length}`,
+                    `YouTube cookies: ${cookies.exists ? `found (${cookies.size} bytes)` : 'not found'}`,
+                    `Cookie path: ${cookies.resolvedPath || cookies.configuredPath || 'not configured'}`,
                     '```',
                     report,
                     '```',

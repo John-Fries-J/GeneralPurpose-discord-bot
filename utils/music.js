@@ -91,14 +91,46 @@ function formatYtDlpError(error, stderr = '') {
     return detail || error?.message || 'yt-dlp failed.';
 }
 
-function getYtDlpCookiesArgs(settings = getMusicSettings()) {
+function getYtDlpCookieStatus(settings = getMusicSettings()) {
     const configuredPath = String(settings.ytDlpCookiesPath || '').trim();
-    if (!configuredPath) return [];
+    if (!configuredPath) {
+        return {
+            configuredPath,
+            resolvedPath: '',
+            exists: false,
+            size: 0,
+        };
+    }
 
     const cookiesPath = path.resolve(__dirname, '..', configuredPath);
-    if (!fs.existsSync(cookiesPath)) return [];
+    const stat = fs.existsSync(cookiesPath) ? fs.statSync(cookiesPath) : null;
 
-    return ['--cookies', cookiesPath];
+    return {
+        configuredPath,
+        resolvedPath: cookiesPath,
+        exists: Boolean(stat?.isFile()),
+        size: stat?.isFile() ? stat.size : 0,
+    };
+}
+
+function getYtDlpCookiesArgs(settings = getMusicSettings()) {
+    const status = getYtDlpCookieStatus(settings);
+    if (!status.exists) return [];
+
+    return ['--cookies', status.resolvedPath];
+}
+
+function isYoutubeBotCheck(error) {
+    return /sign in to confirm you.?re not a bot/i.test(error?.message || '');
+}
+
+function getYoutubeBotCheckMessage() {
+    const status = getYtDlpCookieStatus();
+    if (!status.exists) {
+        return `YouTube is blocking this server as a bot, and I cannot see a cookie file at ${status.resolvedPath || status.configuredPath || 'the configured cookie path'}. Export YouTube cookies in Netscape format to data/youtube-cookies.txt and rebuild/restart the bot.`;
+    }
+
+    return `YouTube is blocking this server as a bot even though I found the cookie file (${status.size} bytes) at ${status.resolvedPath}. Re-export fresh YouTube cookies in Netscape format from a signed-in browser session, then restart the bot.`;
 }
 
 function runYtDlp(args, { collectStdout = true } = {}) {
@@ -169,10 +201,17 @@ async function getYtDlpInfo(input) {
         if (!entry?.webpage_url && !entry?.url) return null;
         return entry;
     } catch (error) {
+        const cookieStatus = getYtDlpCookieStatus();
         console.warn('[MUSIC] yt-dlp metadata lookup failed:', {
             input,
             error: error.message,
+            cookiesPath: cookieStatus.resolvedPath || cookieStatus.configuredPath,
+            cookiesFound: cookieStatus.exists,
+            cookiesSize: cookieStatus.size,
         });
+        if (isYoutubeBotCheck(error)) {
+            throw new MusicUserError(getYoutubeBotCheckMessage());
+        }
         return null;
     }
 }
@@ -205,7 +244,12 @@ function createYtDlpStream(url) {
 
     child.on('close', code => {
         if (code !== 0) {
-            child.stdout.destroy(new Error(formatYtDlpError(new Error(`yt-dlp exited with ${code}`), stderr)));
+            const error = new Error(formatYtDlpError(new Error(`yt-dlp exited with ${code}`), stderr));
+            if (isYoutubeBotCheck(error)) {
+                child.stdout.destroy(new MusicUserError(getYoutubeBotCheckMessage()));
+            } else {
+                child.stdout.destroy(error);
+            }
         }
     });
 
@@ -616,6 +660,7 @@ module.exports = {
     getMusicErrorMessage,
     getQueueSummary,
     getYtDlpCookiesArgs,
+    getYtDlpCookieStatus,
     describeConnectionState,
     generateDependencyReport,
     resolvePlayableTrack,
