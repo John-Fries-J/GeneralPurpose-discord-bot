@@ -11,15 +11,16 @@ const { awardVoiceXp } = require('../utils/leveling');
 const { expireTempBans, expireTempMutes, expireTempRoles } = require('../utils/punishments');
 const { refreshMemberCounters } = require('../utils/memberCounters');
 const { runScheduledMessages } = require('../utils/scheduledMessages');
+const { logger } = require('../utils/logger');
 
 const defaultReminderIntervalMs = 30 * 1000;
 
 class Scheduler {
-    constructor({ logger = console } = {}) {
+    constructor({ logger: schedulerLogger = logger.child({ component: 'scheduler' }) } = {}) {
         this.jobs = new Map();
         this.running = new Set();
         this.timers = new Map();
-        this.logger = logger;
+        this.logger = schedulerLogger;
         this.stopped = false;
     }
 
@@ -43,14 +44,14 @@ class Scheduler {
         for (const job of this.jobs.values()) {
             if (job.runOnStart) {
                 this.runJob(job.name).catch(error => {
-                    this.logger.error?.(`[SCHEDULER] ${job.name} startup run failed:`, error);
+                    this.logger.error?.('Scheduler startup run failed', { job: job.name, error });
                 });
             }
 
             if (job.intervalMs > 0) {
                 const timer = setInterval(() => {
                     this.runJob(job.name).catch(error => {
-                        this.logger.error?.(`[SCHEDULER] ${job.name} interval run failed:`, error);
+                        this.logger.error?.('Scheduler interval run failed', { job: job.name, error });
                     });
                 }, job.intervalMs);
                 this.timers.set(job.name, timer);
@@ -74,7 +75,7 @@ class Scheduler {
             return { ok: true, result };
         } catch (error) {
             await markScheduledJobFinish(name, Date.now() - started, error.message).catch(() => null);
-            this.logger.error?.(`[SCHEDULER] ${name} failed:`, error);
+            this.logger.error?.('Scheduler job failed', { job: name, error });
             return { ok: false, error };
         } finally {
             this.running.delete(name);
@@ -146,7 +147,7 @@ async function runReminderJob(client, { limit = 25 } = {}) {
 }
 
 function createScheduler(client, options = {}) {
-    const scheduler = new Scheduler({ logger: options.logger || console });
+    const scheduler = new Scheduler({ logger: options.logger?.child?.({ component: 'scheduler' }) || options.logger });
     scheduler.register({
         name: 'punishments',
         intervalMs: options.punishmentIntervalMs ?? 60 * 1000,

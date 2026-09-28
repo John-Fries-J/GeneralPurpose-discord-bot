@@ -6,6 +6,7 @@ const { assertValidConfig } = require('./utils/configValidation');
 const { loadCommands } = require('./utils/commands');
 const { destroyAllMusicVoiceConnections } = require('./services/musicLifecycle');
 const { startDashboard } = require('./web/dashboard');
+const { logger } = require('./utils/logger');
 
 const config = getConfig();
 assertValidConfig(config, { requireToken: true });
@@ -29,7 +30,7 @@ let dashboardServer = null;
 
 for (const { command } of loadCommands()) {
     client.commands.set(command.data.name, command);
-    console.log(`[COMMAND] /${command.data.name}`);
+    logger.info('Command loaded', { component: 'commands', command: command.data.name });
 }
 
 dashboardServer = startDashboard(client);
@@ -42,21 +43,21 @@ for (const file of eventFiles) {
     const event = require(filePath);
 
     if (!event?.name || typeof event.execute !== 'function') {
-        console.warn(`[WARNING] The event at ${filePath} is missing a required "name" or "execute" property.`);
+        logger.warn('Event module missing required exports', { component: 'events', filePath });
         continue;
     }
 
     if (event.once) {
         client.once(event.name, (...args) => event.execute(...args));
-        console.log(`[EVENT] ${event.name} (once)`);
+        logger.info('Event loaded', { component: 'events', event: event.name, once: true });
     } else {
         client.on(event.name, (...args) => event.execute(...args));
-        console.log(`[EVENT] ${event.name}`);
+        logger.info('Event loaded', { component: 'events', event: event.name, once: false });
     }
 }
 
 if (!token) {
-    console.error('[ERROR] No token provided in config.json');
+    logger.error('No Discord token configured', { component: 'startup' });
     process.exit(1);
 }
 
@@ -67,7 +68,7 @@ let shuttingDown = false;
 async function shutdown(signal, exitCode = 0) {
     if (shuttingDown) return;
     shuttingDown = true;
-    console.log(`[SHUTDOWN] Received ${signal}. Closing Discord client and dashboard.`);
+    logger.info('Shutdown requested', { component: 'shutdown', signal });
 
     if (client.punishmentScheduler) {
         clearInterval(client.punishmentScheduler);
@@ -105,23 +106,23 @@ async function shutdown(signal, exitCode = 0) {
 
 process.on('SIGINT', () => {
     shutdown('SIGINT').catch(error => {
-        console.error('[SHUTDOWN] Failed during SIGINT shutdown:', error);
+        logger.error('Shutdown failed', { component: 'shutdown', signal: 'SIGINT', error });
         process.exit(1);
     });
 });
 
 process.on('SIGTERM', () => {
     shutdown('SIGTERM').catch(error => {
-        console.error('[SHUTDOWN] Failed during SIGTERM shutdown:', error);
+        logger.error('Shutdown failed', { component: 'shutdown', signal: 'SIGTERM', error });
         process.exit(1);
     });
 });
 
 process.on('unhandledRejection', error => {
-    console.error('[PROCESS] Unhandled promise rejection:', error);
+    logger.error('Unhandled promise rejection', { component: 'process', error });
 });
 
 process.on('uncaughtException', error => {
-    console.error('[PROCESS] Uncaught exception:', error);
+    logger.error('Uncaught exception', { component: 'process', error });
     shutdown('uncaughtException', 1).catch(() => process.exit(1));
 });

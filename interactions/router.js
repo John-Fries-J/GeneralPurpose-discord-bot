@@ -13,6 +13,9 @@ const {
     handleVoicePanelModal,
     handleVoicePanelUserSelect,
 } = require('../utils/voicePanel');
+const { logger } = require('../utils/logger');
+
+const interactionLogger = logger.child({ component: 'interactions' });
 
 function isEphemeralCapable(interaction) {
     return interaction.isRepliable?.() && !interaction.replied && !interaction.deferred;
@@ -37,7 +40,11 @@ async function runApplicationCommand(interaction) {
     const command = interaction.client.commands.get(interaction.commandName);
 
     if (!command) {
-        console.error(`No command matching ${interaction.commandName} was found.`);
+        interactionLogger.warn('No command registered for interaction', {
+            command: interaction.commandName,
+            guildId: interaction.guildId,
+            userId: interaction.user?.id,
+        });
         return;
     }
 
@@ -71,10 +78,21 @@ async function runApplicationCommand(interaction) {
                 ok: true,
             },
         }).catch(error => {
-            console.error('Failed to record command history:', error);
+            interactionLogger.error('Failed to record command history', {
+                command: interaction.commandName,
+                guildId: interaction.guildId,
+                userId: interaction.user?.id,
+                error,
+            });
         });
     } catch (error) {
-        console.error(`Error executing /${interaction.commandName}:`, error);
+        interactionLogger.error('Command execution failed', {
+            command: interaction.commandName,
+            guildId: interaction.guildId,
+            channelId: interaction.channelId,
+            userId: interaction.user?.id,
+            error,
+        });
         await recordCommandUsage({
             guildId: interaction.guildId,
             channelId: interaction.channelId,

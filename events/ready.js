@@ -7,28 +7,31 @@ const { bootstrapNameless } = require('../utils/namelessmc');
 const { initializeStorage } = require('../utils/store');
 const { createScheduler } = require('../services/scheduler');
 const { reconcileJoinToCreate } = require('../utils/joinToCreate');
+const { logger } = require('../utils/logger');
+
+const readyLogger = logger.child({ component: 'ready' });
 
 module.exports = {
     name: Events.ClientReady,
     once: true,
     async execute(client) {
         const config = getConfig();
-        console.log(`Ready! Logged in as ${client.user.tag}`);
+        readyLogger.info('Discord client ready', { userTag: client.user.tag, guildCount: client.guilds.cache.size });
         await initializeStorage().catch(error => {
-            console.error(`[DATABASE] Startup initialization failed: ${error.message}`);
+            readyLogger.error('Database startup initialization failed', { error });
         });
-        client.scheduler = createScheduler(client);
+        client.scheduler = createScheduler(client, { logger });
         client.scheduler.start();
         reconcileJoinToCreate(client).then(results => {
             const changed = results.filter(result => result.records > 0);
-            if (changed.length) console.log(`[VOICE] Reconciled join-to-create state: ${JSON.stringify(changed)}`);
+            if (changed.length) readyLogger.info('Reconciled join-to-create state', { results: changed });
         }).catch(error => {
-            console.error('[VOICE] Join-to-create startup reconciliation failed:', error);
+            readyLogger.error('Join-to-create startup reconciliation failed', { error });
         });
         bootstrapNameless(client).then(scheduler => {
             client.namelessMcScheduler = scheduler;
         }).catch(error => {
-            console.error('NamelessMC bootstrap failed:', error);
+            readyLogger.error('NamelessMC bootstrap failed', { error });
         });
 
         if (config.statusName) {
@@ -47,7 +50,7 @@ module.exports = {
         });
 
         channel.send({ embeds: [logEmbed] }).catch(error => {
-            console.error('Failed to send ready log:', error);
+            readyLogger.error('Failed to send ready log', { error });
         });
     },
 };
