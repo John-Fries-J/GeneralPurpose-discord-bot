@@ -25,20 +25,29 @@ let ytDlpAvailable = null;
 
 class MusicUserError extends Error {}
 
+const DEFAULT_VOICE_READY_TIMEOUT_MS = 60_000;
+const DEFAULT_VOICE_JOIN_RETRIES = 1;
+const DEFAULT_VOICE_RETRY_DELAY_MS = 1_000;
+
+function getIntegerSetting(value, fallback, min) {
+    const number = Number(value ?? fallback);
+    return Number.isInteger(number) && number >= min ? number : fallback;
+}
+
 function getMusicSettings(config = getConfig()) {
-    const readyTimeoutMs = Number(config.music?.voiceReadyTimeoutMs || 60_000);
-    const maxJoinRetries = Number(config.music?.voiceJoinRetries || 0);
-    const retryDelayMs = Number(config.music?.voiceRetryDelayMs || 1_000);
-    const maxQueueLength = Number(config.music?.maxQueueLength || 50);
+    const readyTimeoutMs = getIntegerSetting(config.music?.voiceReadyTimeoutMs, DEFAULT_VOICE_READY_TIMEOUT_MS, 5_000);
+    const maxJoinRetries = getIntegerSetting(config.music?.voiceJoinRetries, DEFAULT_VOICE_JOIN_RETRIES, 0);
+    const retryDelayMs = getIntegerSetting(config.music?.voiceRetryDelayMs, DEFAULT_VOICE_RETRY_DELAY_MS, 0);
+    const maxQueueLength = getIntegerSetting(config.music?.maxQueueLength, 50, 1);
     const ytDlpCookiesPath = process.env.YTDLP_COOKIES_PATH || config.music?.ytDlpCookiesPath || 'data/youtube-cookies.txt';
 
     return {
         enabled: config.music?.enabled !== false,
         allowFileUploads: config.music?.allowFileUploads !== false,
-        maxQueueLength: Number.isInteger(maxQueueLength) && maxQueueLength > 0 ? maxQueueLength : 50,
-        readyTimeoutMs: Number.isInteger(readyTimeoutMs) && readyTimeoutMs >= 5_000 ? readyTimeoutMs : 60_000,
-        maxJoinRetries: Number.isInteger(maxJoinRetries) && maxJoinRetries >= 0 ? maxJoinRetries : 0,
-        retryDelayMs: Number.isInteger(retryDelayMs) && retryDelayMs >= 0 ? retryDelayMs : 1_000,
+        maxQueueLength,
+        readyTimeoutMs,
+        maxJoinRetries,
+        retryDelayMs,
         ytDlpCookiesPath,
     };
 }
@@ -435,13 +444,14 @@ async function joinReadyVoiceChannel(interaction, voiceChannel, attempt = 1, set
         }
 
         if (isAbortError(error)) {
-            console.warn('[MUSIC] Voice connection did not become ready before timeout; keeping it alive for Discord voice to finish connecting.', {
+            console.warn('[MUSIC] Voice connection did not become ready before timeout; destroying timed-out connection.', {
                 guildId: interaction.guild.id,
                 channelId: voiceChannel.id,
                 state: describeConnectionState(connection),
                 timeoutMs: settings.readyTimeoutMs,
             });
-            return connection;
+            destroyVoiceConnection(connection);
+            throw new MusicUserError('Discord voice did not become ready before the join timeout. I reset the connection; try `/music play` again. If this keeps happening, check that the bot container can make outbound UDP/WebSocket connections to Discord voice.');
         }
 
         destroyVoiceConnection(connection);
@@ -470,13 +480,14 @@ async function connectVoiceChannel(interaction, voiceChannel) {
             } catch (error) {
                 logVoiceJoinFailure(interaction, voiceChannel, error, 'existing');
                 if (isAbortError(error)) {
-                    console.warn('[MUSIC] Existing voice connection is still not ready; reusing it instead of forcing a leave/rejoin.', {
+                    console.warn('[MUSIC] Existing voice connection is still not ready; destroying timed-out connection.', {
                         guildId,
                         channelId: voiceChannel.id,
                         state: describeConnectionState(existing),
                         timeoutMs: settings.readyTimeoutMs,
                     });
-                    return existing;
+                    destroyVoiceConnection(existing);
+                    throw new MusicUserError('Discord voice did not become ready before the join timeout. I reset the connection; try `/music play` again. If this keeps happening, check that the bot container can make outbound UDP/WebSocket connections to Discord voice.');
                 }
 
                 destroyVoiceConnection(existing);

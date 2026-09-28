@@ -171,7 +171,7 @@
         "maxQueueLength": 50,
         "allowFileUploads": true,
         "voiceReadyTimeoutMs": 60000,
-        "voiceJoinRetries": 0,
+        "voiceJoinRetries": 1,
         "voiceRetryDelayMs": 1000,
         "ytDlpCookiesPath": "data/youtube-cookies.txt"
     },

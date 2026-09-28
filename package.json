@@ -12,6 +12,7 @@
     "express": "^4.19.2",
     "libsodium-wrappers": "^0.8.4",
     "mysql2": "^3.24.4",
+    "opusscript": "^0.0.8",
     "play-dl": "^1.9.7",
     "sql.js": "^1.14.2"
   },
