@@ -3,6 +3,7 @@ const {
     createAttachmentTrack,
     enqueue,
     getMusicErrorMessage,
+    getMusicSettings,
     getQueueSummary,
     resolvePlayableTrack,
     skip,
@@ -55,6 +56,10 @@ module.exports = {
         if (subcommand === 'file') {
             await interaction.deferReply({ flags: 64 });
             try {
+                if (!getMusicSettings().allowFileUploads) {
+                    return interaction.editReply('Music file uploads are disabled in config.');
+                }
+
                 const attachment = interaction.options.getAttachment('audio', true);
                 if (!attachment.contentType?.startsWith('audio/') && !/\.(mp3|wav|ogg|flac|m4a|aac)$/i.test(attachment.name || '')) {
                     return interaction.editReply('Upload a recognizable audio file.');

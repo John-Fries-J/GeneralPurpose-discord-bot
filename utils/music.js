@@ -1,5 +1,6 @@
 const { Readable } = require('node:stream');
 const { PermissionFlagsBits } = require('discord.js');
+const { getConfig } = require('./config');
 const {
     AudioPlayerStatus,
     createAudioPlayer,
@@ -14,10 +15,24 @@ const play = require('play-dl');
 
 const queues = new Map();
 const voiceConnectionAttempts = new Map();
-const voiceReadyTimeoutMs = 45_000;
-const voiceJoinMaxAttempts = 2;
 
 class MusicUserError extends Error {}
+
+function getMusicSettings(config = getConfig()) {
+    const readyTimeoutMs = Number(config.music?.voiceReadyTimeoutMs || 60_000);
+    const maxJoinRetries = Number(config.music?.voiceJoinRetries || 0);
+    const retryDelayMs = Number(config.music?.voiceRetryDelayMs || 1_000);
+    const maxQueueLength = Number(config.music?.maxQueueLength || 50);
+
+    return {
+        enabled: config.music?.enabled !== false,
+        allowFileUploads: config.music?.allowFileUploads !== false,
+        maxQueueLength: Number.isInteger(maxQueueLength) && maxQueueLength > 0 ? maxQueueLength : 50,
+        readyTimeoutMs: Number.isInteger(readyTimeoutMs) && readyTimeoutMs >= 5_000 ? readyTimeoutMs : 60_000,
+        maxJoinRetries: Number.isInteger(maxJoinRetries) && maxJoinRetries >= 0 ? maxJoinRetries : 0,
+        retryDelayMs: Number.isInteger(retryDelayMs) && retryDelayMs >= 0 ? retryDelayMs : 1_000,
+    };
+}
 
 function getQueue(guildId) {
     if (!queues.has(guildId)) {
@@ -156,7 +171,7 @@ function destroyVoiceConnection(connection) {
     }
 }
 
-async function joinReadyVoiceChannel(interaction, voiceChannel, attempt = 1) {
+async function joinReadyVoiceChannel(interaction, voiceChannel, attempt = 1, settings = getMusicSettings()) {
     const connection = joinVoiceChannel({
         channelId: voiceChannel.id,
         guildId: interaction.guild.id,
@@ -165,18 +180,21 @@ async function joinReadyVoiceChannel(interaction, voiceChannel, attempt = 1) {
     });
 
     try {
-        return await entersState(connection, VoiceConnectionStatus.Ready, voiceReadyTimeoutMs);
+        return await entersState(connection, VoiceConnectionStatus.Ready, settings.readyTimeoutMs);
     } catch (error) {
         logVoiceJoinFailure(interaction, voiceChannel, error, attempt);
         destroyVoiceConnection(connection);
 
-        if (attempt < voiceJoinMaxAttempts && isAbortError(error)) {
-            await wait(1_000);
-            return joinReadyVoiceChannel(interaction, voiceChannel, attempt + 1);
+        if (attempt <= settings.maxJoinRetries && isAbortError(error)) {
+            await wait(settings.retryDelayMs);
+            return joinReadyVoiceChannel(interaction, voiceChannel, attempt + 1, settings);
         }
 
         if (isAbortError(error)) {
-            throw new MusicUserError('Discord voice timed out while I was joining. I reset the voice connection and retried once; try `/music play` again. If it keeps happening, restart the bot container and check outbound UDP/networking.');
+            const retryText = settings.maxJoinRetries
+                ? `I retried ${settings.maxJoinRetries} time(s) and reset the voice connection.`
+                : 'I reset the voice connection and did not retry automatically.';
+            throw new MusicUserError(`Discord voice timed out while I was joining. ${retryText} Try \`/music play\` again. If it keeps happening, restart the bot container and check outbound UDP/networking.`);
         }
 
         throw error;
@@ -184,17 +202,22 @@ async function joinReadyVoiceChannel(interaction, voiceChannel, attempt = 1) {
 }
 
 async function connectVoiceChannel(interaction, voiceChannel) {
+    const settings = getMusicSettings();
     const guildId = interaction.guild.id;
     const existing = getVoiceConnection(guildId);
+    const queue = queues.get(guildId);
 
     if (existing) {
         if (existing.joinConfig?.channelId && existing.joinConfig.channelId !== voiceChannel.id) {
+            if (queue?.current || queue?.tracks?.length) {
+                throw new MusicUserError(`I am already playing in <#${existing.joinConfig.channelId}>. Use \`/music stop\` there before moving me.`);
+            }
             destroyVoiceConnection(existing);
         } else {
             if (existing.state.status === VoiceConnectionStatus.Ready) return existing;
 
             try {
-                return await entersState(existing, VoiceConnectionStatus.Ready, voiceReadyTimeoutMs);
+                return await entersState(existing, VoiceConnectionStatus.Ready, settings.readyTimeoutMs);
             } catch (error) {
                 logVoiceJoinFailure(interaction, voiceChannel, error, 'existing');
                 destroyVoiceConnection(existing);
@@ -202,7 +225,7 @@ async function connectVoiceChannel(interaction, voiceChannel) {
         }
     }
 
-    return joinReadyVoiceChannel(interaction, voiceChannel);
+    return joinReadyVoiceChannel(interaction, voiceChannel, 1, settings);
 }
 
 function getPendingVoiceConnection(guildId, voiceChannel) {
@@ -266,10 +289,19 @@ async function playNext(queue) {
 }
 
 async function enqueue(interaction, track) {
+    const settings = getMusicSettings();
+    if (!settings.enabled) throw new MusicUserError('Music is currently disabled in config.');
+
     const queue = getQueue(interaction.guild.id);
+    const queuedCount = queue.tracks.length + (queue.current ? 1 : 0);
+    if (queuedCount >= settings.maxQueueLength) {
+        throw new MusicUserError(`The music queue is full (${settings.maxQueueLength} tracks).`);
+    }
+
     queue.connection = await ensureConnection(interaction);
     queue.textChannel = interaction.channel;
-    queue.connection.subscribe(queue.player);
+    const subscription = queue.connection.subscribe(queue.player);
+    if (!subscription) throw new Error('Could not subscribe the audio player to the voice connection.');
     queue.tracks.push(track);
     await playNext(queue);
     return queue;
@@ -284,11 +316,17 @@ function skip(guildId) {
 
 function stop(guildId) {
     const queue = queues.get(guildId);
-    if (!queue) return false;
-    queue.tracks = [];
-    queue.current = null;
-    queue.player.stop(true);
-    queue.connection?.destroy();
+    const connection = getVoiceConnection(guildId);
+    voiceConnectionAttempts.delete(guildId);
+
+    if (!queue && !connection) return false;
+    if (queue) {
+        queue.tracks = [];
+        queue.current = null;
+        queue.player.stop(true);
+        destroyVoiceConnection(queue.connection);
+    }
+    destroyVoiceConnection(connection);
     queues.delete(guildId);
     return true;
 }
@@ -321,4 +359,5 @@ module.exports = {
     resolvePlayableTrack,
     skip,
     stop,
+    getMusicSettings,
 };
