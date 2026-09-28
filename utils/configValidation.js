@@ -14,6 +14,20 @@ function validateString(errors, config, path, { required = false } = {}) {
     }
 }
 
+function validateBoolean(errors, config, path) {
+    const value = path.split('.').reduce((current, part) => current?.[part], config);
+    if (value !== undefined && typeof value !== 'boolean') {
+        errors.push(`${path} must be a boolean.`);
+    }
+}
+
+function validateInteger(errors, config, path, { min = Number.MIN_SAFE_INTEGER, max = Number.MAX_SAFE_INTEGER } = {}) {
+    const value = path.split('.').reduce((current, part) => current?.[part], config);
+    if (value !== undefined && (!Number.isInteger(value) || value < min || value > max)) {
+        errors.push(`${path} must be an integer from ${min} to ${max}.`);
+    }
+}
+
 function validateConfig(config, options = {}) {
     const errors = [];
 
@@ -39,6 +53,25 @@ function validateConfig(config, options = {}) {
             for (const [key, value] of Object.entries(config.logChannels)) {
                 if (typeof value !== 'string') errors.push(`logChannels.${key} must be a string.`);
             }
+        }
+    }
+
+    if (config.logging !== undefined) {
+        if (!isPlainObject(config.logging)) {
+            errors.push('logging must be an object.');
+        } else {
+            validateBoolean(errors, config, 'logging.showUserAvatars');
+        }
+    }
+
+    if (config.history !== undefined) {
+        if (!isPlainObject(config.history)) {
+            errors.push('history must be an object.');
+        } else {
+            validateBoolean(errors, config, 'history.enabled');
+            validateBoolean(errors, config, 'history.recordMessages');
+            validateBoolean(errors, config, 'history.recordCommands');
+            validateInteger(errors, config, 'history.maxEntries', { min: 1, max: 1000000 });
         }
     }
 
@@ -150,11 +183,12 @@ function validateConfig(config, options = {}) {
         if (!isPlainObject(config.database)) {
             errors.push('database must be an object.');
         } else {
-            if (config.database.provider !== undefined && !['sqlite', 'json'].includes(config.database.provider)) {
-                errors.push('database.provider must be either "sqlite" or "json".');
+            if (config.database.provider !== undefined && !['sqlite', 'json', 'mysql'].includes(config.database.provider)) {
+                errors.push('database.provider must be "sqlite", "json", or "mysql".');
             }
             validateString(errors, config, 'database.jsonPath');
             validateString(errors, config, 'database.sqlitePath');
+            validateString(errors, config, 'database.mysql.url', { required: config.database.provider === 'mysql' });
         }
     }
 
@@ -228,6 +262,19 @@ function validateConfig(config, options = {}) {
                     }
                 }
             }
+        }
+    }
+
+    if (config.music !== undefined) {
+        if (!isPlainObject(config.music)) {
+            errors.push('music must be an object.');
+        } else {
+            validateBoolean(errors, config, 'music.enabled');
+            validateBoolean(errors, config, 'music.allowFileUploads');
+            validateInteger(errors, config, 'music.maxQueueLength', { min: 1, max: 1000 });
+            validateInteger(errors, config, 'music.voiceReadyTimeoutMs', { min: 5000, max: 300000 });
+            validateInteger(errors, config, 'music.voiceJoinRetries', { min: 0, max: 10 });
+            validateInteger(errors, config, 'music.voiceRetryDelayMs', { min: 0, max: 60000 });
         }
     }
 

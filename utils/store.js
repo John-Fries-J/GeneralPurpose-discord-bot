@@ -29,6 +29,7 @@ function createEmptyState() {
         tempMutes: [],
         tempRoles: [],
         tempVoiceChannels: [],
+        ticketTranscripts: [],
         ticketRecords: [],
         voiceActivity: [],
     };
@@ -126,21 +127,135 @@ async function writeSqliteState(filePath, state) {
     }
 }
 
+function redactConnectionString(value = '') {
+    if (!value) return '[not configured]';
+
+    try {
+        const url = new URL(value);
+        if (url.username) url.username = '[user]';
+        if (url.password) url.password = '[password]';
+        return url.toString();
+    } catch {
+        return '[configured]';
+    }
+}
+
 function getStorageSettings() {
     const config = getConfig();
     const provider = config.database?.provider || 'sqlite';
 
-    if (provider !== 'json') {
-        if (provider !== 'sqlite') {
-            console.warn(`[DATABASE] Provider "${provider}" is configured but this build only includes JSON and SQLite adapters. Falling back to SQLite storage.`);
-        }
+    if (!['json', 'sqlite', 'mysql'].includes(provider)) {
+        console.warn(`[DATABASE] Provider "${provider}" is configured but this build only includes JSON, SQLite, and MySQL adapters. Falling back to SQLite storage.`);
     }
 
     return {
-        provider: provider === 'json' ? 'json' : 'sqlite',
+        provider: ['json', 'sqlite', 'mysql'].includes(provider) ? provider : 'sqlite',
         jsonPath: resolveDataPath(config),
         sqlitePath: resolveSqlitePath(config),
+        mysqlUrl: config.database?.mysql?.url || '',
     };
+}
+
+async function openMysqlConnection(settings) {
+    if (!settings.mysqlUrl) {
+        throw new Error('MySQL storage is selected, but database.mysql.url is not configured.');
+    }
+
+    const mysql = require('mysql2/promise');
+
+    try {
+        const connection = await mysql.createConnection(settings.mysqlUrl);
+        await connection.execute(`
+            CREATE TABLE IF NOT EXISTS bot_state (
+                \`key\` VARCHAR(128) PRIMARY KEY,
+                \`value\` LONGTEXT NOT NULL,
+                updated_at BIGINT NOT NULL
+            )
+        `);
+        return connection;
+    } catch (error) {
+        throw new Error(`MySQL storage connection failed (${redactConnectionString(settings.mysqlUrl)}): ${error.message}`);
+    }
+}
+
+async function readMysqlState(settings) {
+    const connection = await openMysqlConnection(settings);
+    try {
+        const [rows] = await connection.execute('SELECT `key`, `value` FROM bot_state');
+        const state = createEmptyState();
+
+        for (const row of rows) {
+            if (row.key in state) {
+                state[row.key] = JSON.parse(row.value);
+            }
+        }
+
+        return state;
+    } finally {
+        await connection.end();
+    }
+}
+
+async function writeMysqlState(settings, state) {
+    const connection = await openMysqlConnection(settings);
+    try {
+        const preparedState = { ...createEmptyState(), ...state };
+        await connection.beginTransaction();
+        for (const [key, value] of Object.entries(preparedState)) {
+            await connection.execute(`
+                INSERT INTO bot_state (\`key\`, \`value\`, updated_at)
+                VALUES (?, ?, ?)
+                ON DUPLICATE KEY UPDATE
+                    \`value\` = VALUES(\`value\`),
+                    updated_at = VALUES(updated_at)
+            `, [key, JSON.stringify(value), Date.now()]);
+        }
+        await connection.commit();
+    } catch (error) {
+        await connection.rollback().catch(() => null);
+        throw error;
+    } finally {
+        await connection.end();
+    }
+}
+
+async function initializeStorage() {
+    const settings = getStorageSettings();
+
+    if (settings.provider === 'json') {
+        console.log(`[DATABASE] Active provider: json (${settings.jsonPath})`);
+        return;
+    }
+
+    if (settings.provider === 'mysql') {
+        const connection = await openMysqlConnection(settings);
+        await connection.end();
+        console.log(`[DATABASE] Active provider: mysql (${redactConnectionString(settings.mysqlUrl)})`);
+        return;
+    }
+
+    await migrateJsonStateIfNeeded(settings);
+    const database = await openSqliteDatabase(settings.sqlitePath);
+    database.close();
+    console.log(`[DATABASE] Active provider: sqlite (${settings.sqlitePath})`);
+}
+
+function getHistorySettings(config = getConfig()) {
+    const maxEntries = Number(config.history?.maxEntries || 50_000);
+
+    return {
+        enabled: config.history?.enabled !== false,
+        recordMessages: config.history?.recordMessages !== false,
+        recordCommands: config.history?.recordCommands !== false,
+        maxEntries: Number.isInteger(maxEntries) && maxEntries > 0 ? maxEntries : 50_000,
+    };
+}
+
+function shouldRecordHistoryEntry(entry, settings = getHistorySettings()) {
+    if (!settings.enabled) return false;
+    if (entry.type === 'message' && !settings.recordMessages) return false;
+    if ((entry.type === 'command' || entry.type === 'command:error') && !settings.recordCommands) return false;
+    return true;
 }
 
 async function migrateJsonStateIfNeeded(settings) {
@@ -162,6 +277,10 @@ async function readState() {
     }
 
     await migrateJsonStateIfNeeded(settings);
+    if (settings.provider === 'mysql') {
+        return readMysqlState(settings);
+    }
+
     return readSqliteState(settings.sqlitePath);
 }
 
@@ -170,6 +289,11 @@ async function writeState(state) {
 
     if (settings.provider === 'json') {
         writeJsonState(settings.jsonPath, state);
+        return;
+    }
+
+    if (settings.provider === 'mysql') {
+        await writeMysqlState(settings, state);
         return;
     }
 
@@ -260,6 +384,7 @@ async function countActiveModerationCases(guildId, userId, type) {
 
 async function addUserHistory(record) {
     const createdAt = record.createdAt || Date.now();
+    const settings = getHistorySettings();
     const entry = {
         guildId: record.guildId,
         userId: record.userId,
@@ -272,11 +397,13 @@ async function addUserHistory(record) {
         createdAt,
     };
 
+    if (!shouldRecordHistoryEntry(entry, settings)) return null;
+
     await updateState(state => {
         state.history.push(entry);
         state.history = state.history
             .sort((a, b) => b.createdAt - a.createdAt)
-            .slice(0, 5000);
+            .slice(0, settings.maxEntries);
         return state;
     });
 
@@ -493,10 +620,17 @@ async function getUserLevelRecord(guildId, userId) {
     return (await readState()).levels.find(item => item.guildId === guildId && item.userId === userId) || null;
 }
 
-async function listLevelLeaderboard(guildId, limit = 10) {
+async function listLevelLeaderboard(guildId, limit = 10, mode = 'total') {
+    const score = record => {
+        if (mode === 'text') return Number(record.textXp || 0);
+        if (mode === 'voice') return Number(record.voiceXp || 0);
+        return Number(record.textXp || 0) + Number(record.voiceXp || 0);
+    };
+
     return (await readState()).levels
         .filter(item => item.guildId === guildId)
-        .sort((a, b) => ((b.textXp || 0) + (b.voiceXp || 0)) - ((a.textXp || 0) + (a.voiceXp || 0)))
+        .filter(item => score(item) > 0)
+        .sort((a, b) => score(b) - score(a))
         .slice(0, limit);
 }
 
@@ -646,6 +780,45 @@ async function deleteTicketRecord(channelId) {
     });
 }
 
+async function createTicketTranscript(record) {
+    const now = Date.now();
+    const transcript = {
+        id: record.id || `${now}-${Math.random().toString(36).slice(2, 10)}`,
+        guildId: record.guildId,
+        channelId: record.channelId,
+        channelName: record.channelName || record.channelId,
+        ticketName: record.ticketName || record.channelName || record.channelId,
+        openerId: record.openerId || null,
+        createdBy: record.createdBy || null,
+        createdAt: now,
+        messageCount: Number(record.messageCount || 0),
+        allowedUserIds: [...new Set((record.allowedUserIds || []).filter(Boolean))],
+        html: record.html || '',
+        text: record.text || '',
+    };
+
+    await updateState(state => {
+        state.ticketTranscripts.push(transcript);
+        state.ticketTranscripts = state.ticketTranscripts
+            .sort((a, b) => b.createdAt - a.createdAt)
+            .slice(0, 1000);
+        return state;
+    });
+
+    return transcript;
+}
+
+async function getTicketTranscript(id) {
+    return (await readState()).ticketTranscripts.find(item => item.id === id) || null;
+}
+
+async function listTicketTranscripts(guildId, limit = 50) {
+    return (await readState()).ticketTranscripts
+        .filter(item => !guildId || item.guildId === guildId)
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .slice(0, limit);
+}
+
 async function deleteScheduledMessage(id) {
     let deleted = null;
 
@@ -719,6 +892,7 @@ module.exports = {
     createModerationCase,
     createEmptyState,
     createScheduledMessage,
+    createTicketTranscript,
     deleteScheduledMessage,
     deleteEmbedTemplate,
     deleteModNote,
@@ -727,8 +901,10 @@ module.exports = {
     getModerationCase,
     getTempVoiceChannel,
     getTicketRecord,
+    getTicketTranscript,
     getStarboardMessage,
     getUserLevelRecord,
+    initializeStorage,
     listCommandStats,
     listEmbedTemplates,
     listExpiredTempRoles,
@@ -737,6 +913,7 @@ module.exports = {
     listModNotes,
     listScheduledMessages,
     listTicketRecords,
+    listTicketTranscripts,
     listTempVoiceChannelsForGuild,
     listUserHistory,
     listModerationCases,

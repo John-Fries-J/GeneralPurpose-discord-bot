@@ -8,14 +8,18 @@ const { startMemberCounterScheduler } = require('../utils/memberCounters');
 const { bootstrapNameless } = require('../utils/namelessmc');
 const { startPunishmentScheduler } = require('../utils/punishments');
 const { startScheduledMessageScheduler } = require('../utils/scheduledMessages');
+const { initializeStorage } = require('../utils/store');
 const { startTicketScheduler } = require('../utils/tickets');
 
 module.exports = {
     name: Events.ClientReady,
     once: true,
-    execute(client) {
+    async execute(client) {
         const config = getConfig();
         console.log(`Ready! Logged in as ${client.user.tag}`);
+        await initializeStorage().catch(error => {
+            console.error(`[DATABASE] Startup initialization failed: ${error.message}`);
+        });
         client.punishmentScheduler = startPunishmentScheduler(client);
         client.memberCounterScheduler = startMemberCounterScheduler(client);
         client.levelingScheduler = startLevelingScheduler(client);

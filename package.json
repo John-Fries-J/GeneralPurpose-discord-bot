@@ -11,6 +11,7 @@
     "discord.js": "^14.27.0",
     "express": "^4.19.2",
     "libsodium-wrappers": "^0.8.4",
+    "mysql2": "^3.24.4",
     "play-dl": "^1.9.7",
     "sql.js": "^1.14.2"
   },
