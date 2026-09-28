@@ -1,4 +1,5 @@
 const { Readable } = require('node:stream');
+const { spawn } = require('node:child_process');
 const { PermissionFlagsBits } = require('discord.js');
 const { getConfig } = require('./config');
 const {
@@ -18,6 +19,7 @@ const queues = new Map();
 const voiceConnectionAttempts = new Map();
 const observedConnections = new WeakSet();
 let dependencyReportLogged = false;
+let ytDlpAvailable = null;
 
 class MusicUserError extends Error {}
 
@@ -47,6 +49,7 @@ function getQueue(guildId) {
             tracks: [],
             current: null,
             textChannel: null,
+            waitingForReadyPlayback: false,
         };
 
         player.on(AudioPlayerStatus.Idle, () => {
@@ -69,6 +72,126 @@ function getQueue(guildId) {
 
 function isUrl(value) {
     return /^https?:\/\//i.test(value);
+}
+
+function isYoutubeUrl(value) {
+    return /(?:youtube\.com|youtu\.be)/i.test(value);
+}
+
+function isSpotifyUrl(value) {
+    return /spotify\.com/i.test(value);
+}
+
+function formatYtDlpError(error, stderr = '') {
+    const detail = stderr.trim().split(/\r?\n/).slice(-2).join(' ').trim();
+    return detail || error?.message || 'yt-dlp failed.';
+}
+
+function runYtDlp(args, { collectStdout = true } = {}) {
+    return new Promise((resolve, reject) => {
+        const child = spawn('yt-dlp', args, {
+            windowsHide: true,
+            stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        let stdout = '';
+        let stderr = '';
+
+        child.on('error', error => {
+            reject(error);
+        });
+
+        if (collectStdout) {
+            child.stdout.setEncoding('utf8');
+            child.stdout.on('data', chunk => {
+                stdout += chunk;
+            });
+        }
+
+        child.stderr.setEncoding('utf8');
+        child.stderr.on('data', chunk => {
+            stderr += chunk;
+        });
+
+        child.on('close', code => {
+            if (code === 0) {
+                resolve({ stdout, stderr });
+            } else {
+                reject(new Error(formatYtDlpError(new Error(`yt-dlp exited with ${code}`), stderr)));
+            }
+        });
+    });
+}
+
+async function hasYtDlp() {
+    if (ytDlpAvailable !== null) return ytDlpAvailable;
+
+    try {
+        await runYtDlp(['--version']);
+        ytDlpAvailable = true;
+    } catch {
+        ytDlpAvailable = false;
+    }
+
+    return ytDlpAvailable;
+}
+
+async function getYtDlpInfo(input) {
+    if (!await hasYtDlp()) return null;
+
+    const target = isUrl(input) ? input : `ytsearch1:${input}`;
+    try {
+        const { stdout } = await runYtDlp([
+            '--dump-single-json',
+            '--no-playlist',
+            '--no-warnings',
+            '--default-search',
+            'ytsearch',
+            target,
+        ]);
+        const info = JSON.parse(stdout);
+        const entry = Array.isArray(info.entries) ? info.entries[0] : info;
+        if (!entry?.webpage_url && !entry?.url) return null;
+        return entry;
+    } catch (error) {
+        console.warn('[MUSIC] yt-dlp metadata lookup failed:', {
+            input,
+            error: error.message,
+        });
+        return null;
+    }
+}
+
+function createYtDlpStream(url) {
+    const child = spawn('yt-dlp', [
+        '--no-playlist',
+        '--no-warnings',
+        '-f',
+        'bestaudio/best',
+        '-o',
+        '-',
+        url,
+    ], {
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stderr = '';
+
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', chunk => {
+        stderr += chunk;
+    });
+
+    child.on('error', error => {
+        child.stdout.destroy(error);
+    });
+
+    child.on('close', code => {
+        if (code !== 0) {
+            child.stdout.destroy(new Error(formatYtDlpError(new Error(`yt-dlp exited with ${code}`), stderr)));
+        }
+    });
+
+    return child.stdout;
 }
 
 function createAttachmentTrack(attachment, requestedBy) {
@@ -101,18 +224,38 @@ async function resolvePlayableTrack(query, requestedBy) {
 
     let url = value;
     let source = 'url';
+    let title = value;
 
-    if (isUrl(value) && value.includes('spotify.com')) {
+    if (isUrl(value) && isSpotifyUrl(value)) {
         const searchQuery = await spotifyToSearch(value);
-        const results = await play.search(searchQuery, { limit: 1, source: { youtube: 'video' } });
-        if (!results.length) throw new Error('No streamable result was found for that Spotify track.');
-        url = results[0].url;
+        const info = await getYtDlpInfo(searchQuery);
+        if (info) {
+            url = info.webpage_url || info.original_url || info.url;
+            title = info.title || searchQuery;
+        } else {
+            const results = await play.search(searchQuery, { limit: 1, source: { youtube: 'video' } });
+            if (!results.length) throw new Error('No streamable result was found for that Spotify track.');
+            url = results[0].url;
+            title = results[0].title || searchQuery;
+        }
         source = 'spotify';
     } else if (!isUrl(value)) {
-        const results = await play.search(value, { limit: 1, source: { youtube: 'video' } });
-        if (!results.length) throw new Error('No playable result was found.');
-        url = results[0].url;
+        const info = await getYtDlpInfo(value);
+        if (info) {
+            url = info.webpage_url || info.original_url || info.url;
+            title = info.title || value;
+        } else {
+            const results = await play.search(value, { limit: 1, source: { youtube: 'video' } });
+            if (!results.length) throw new Error('No playable result was found.');
+            url = results[0].url;
+            title = results[0].title || value;
+        }
         source = 'search';
+    } else if (isYoutubeUrl(value) && await hasYtDlp()) {
+        const info = await getYtDlpInfo(value);
+        if (!info) throw new Error('No playable result was found for that URL.');
+        url = info.webpage_url || info.original_url || value;
+        title = info.title || value;
     } else {
         const validated = await play.validate(value);
         if (!validated || validated.includes('playlist') || validated.includes('album')) {
@@ -120,13 +263,17 @@ async function resolvePlayableTrack(query, requestedBy) {
         }
     }
 
-    const info = await play.video_basic_info(url).catch(() => null);
+    const info = title === value ? await play.video_basic_info(url).catch(() => null) : null;
     return {
-        title: info?.video_details?.title || value,
+        title: title || info?.video_details?.title || value,
         url,
         source,
         requestedBy,
         streamFactory: async () => {
+            if (await hasYtDlp()) {
+                return { stream: createYtDlpStream(url), inputType: undefined };
+            }
+
             const stream = await play.stream(url);
             return { stream: stream.stream, inputType: stream.type };
         },
@@ -344,6 +491,38 @@ async function playNext(queue) {
     }
 }
 
+function schedulePlaybackWhenReady(queue) {
+    if (!queue.connection || queue.waitingForReadyPlayback) return;
+    if (queue.connection.state.status === VoiceConnectionStatus.Ready) {
+        playNext(queue).catch(error => {
+            console.error('Music playback failed:', error);
+            queue.textChannel?.send(`Music playback failed: ${error.message}`).catch(() => null);
+        });
+        return;
+    }
+
+    queue.waitingForReadyPlayback = true;
+    const connection = queue.connection;
+    const startWhenReady = (oldState, newState) => {
+        if (newState.status === VoiceConnectionStatus.Destroyed) {
+            queue.waitingForReadyPlayback = false;
+            connection.off('stateChange', startWhenReady);
+            return;
+        }
+
+        if (newState.status !== VoiceConnectionStatus.Ready) return;
+
+        queue.waitingForReadyPlayback = false;
+        connection.off('stateChange', startWhenReady);
+        playNext(queue).catch(error => {
+            console.error('Music playback failed:', error);
+            queue.textChannel?.send(`Music playback failed: ${error.message}`).catch(() => null);
+        });
+    };
+
+    connection.on('stateChange', startWhenReady);
+}
+
 async function enqueue(interaction, track) {
     const settings = getMusicSettings();
     if (!settings.enabled) throw new MusicUserError('Music is currently disabled in config.');
@@ -359,7 +538,11 @@ async function enqueue(interaction, track) {
     const subscription = queue.connection.subscribe(queue.player);
     if (!subscription) throw new Error('Could not subscribe the audio player to the voice connection.');
     queue.tracks.push(track);
-    await playNext(queue);
+    if (queue.connection.state.status === VoiceConnectionStatus.Ready) {
+        await playNext(queue);
+    } else {
+        schedulePlaybackWhenReady(queue);
+    }
     return queue;
 }
 
