@@ -5,7 +5,7 @@ const { getConfig, updateConfig } = require('./config');
 const { formatTemplate } = require('./template');
 const { isGuildTextChannel } = require('./discord');
 const { sendLog, formatUser } = require('./logging');
-const { deleteTicketRecord, getTicketRecord, listTicketRecords, upsertTicketRecord } = require('./store');
+const { createTicketTranscript, deleteTicketRecord, getTicketRecord, listTicketRecords, upsertTicketRecord } = require('./store');
 
 const customIds = {
     open: 'ticket:open',
@@ -13,6 +13,19 @@ const customIds = {
     delete: 'ticket:delete',
 };
 const transcriptMessageLimit = 5000;
+
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+}
+
+function getDashboardPublicUrl(config = getConfig()) {
+    return (process.env.DASHBOARD_PUBLIC_URL || config.dashboard?.publicUrl || '').replace(/\/$/, '');
+}
 
 function getTicketConfig(config = getConfig()) {
     return {
@@ -125,6 +138,7 @@ async function createTicketPanel(interaction, ticketChannel, ticketRole, ticketC
         type: 'ticket',
         title: 'Ticket panel configured',
         color: 'green',
+        user: interaction.user,
         fields: [
             { name: 'Channel', value: `<#${ticketChannel.id}>`, inline: true },
             { name: 'Category', value: ticketCategory.name, inline: true },
@@ -209,6 +223,7 @@ async function openTicket(interaction) {
         type: 'ticket',
         title: 'Ticket opened',
         color: 'green',
+        user: interaction.user,
         fields: [
             { name: 'Ticket', value: `<#${newChannel.id}>`, inline: true },
             { name: 'Opened by', value: formatUser(interaction.user), inline: true },
@@ -250,17 +265,97 @@ function formatTranscriptLine(message) {
     return `[${timestamp}] ${message.author?.tag || 'Unknown'} (${message.author?.id || 'unknown'}): ${content}${attachments}${embeds}`;
 }
 
+function renderTranscriptMessage(message) {
+    const authorName = message.author?.tag || message.author?.username || 'Unknown';
+    const avatar = message.author?.displayAvatarURL?.({ extension: 'png', size: 64 }) || '';
+    const content = message.content ? escapeHtml(message.content).replace(/\n/g, '<br>') : '<span class="muted">No text content</span>';
+    const attachments = message.attachments?.size
+        ? `<div class="attachments">${[...message.attachments.values()].map(attachment => `<a href="${escapeHtml(attachment.url)}" target="_blank" rel="noopener">${escapeHtml(attachment.name || attachment.url)}</a>`).join('')}</div>`
+        : '';
+    const embeds = message.embeds?.length
+        ? `<div class="embed-note">${message.embeds.length} embed${message.embeds.length === 1 ? '' : 's'}</div>`
+        : '';
+
+    return `
+<article class="message">
+    <img class="avatar" src="${escapeHtml(avatar)}" alt="">
+    <div class="message-body">
+        <div class="message-meta"><strong>${escapeHtml(authorName)}</strong><span>${escapeHtml(message.createdAt.toLocaleString())}</span></div>
+        <div class="message-content">${content}</div>
+        ${attachments}
+        ${embeds}
+    </div>
+</article>`;
+}
+
+function renderTranscriptHtml(channel, messages) {
+    const renderedMessages = messages.map(renderTranscriptMessage).join('\n');
+    return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${escapeHtml(channel.name)} transcript</title>
+<style>
+body{margin:0;background:#313338;color:#dbdee1;font-family:Inter,Arial,sans-serif}
+.wrap{max-width:980px;margin:0 auto;padding:24px}
+.header{position:sticky;top:0;background:#2b2d31;border-bottom:1px solid #1f2023;padding:16px 24px;z-index:2}
+.header h1{font-size:20px;margin:0}.header p{margin:6px 0 0;color:#b5bac1}
+.message{display:grid;grid-template-columns:42px 1fr;gap:12px;padding:10px 0}
+.avatar{width:42px;height:42px;border-radius:50%;background:#1e1f22}
+.message-meta{display:flex;gap:8px;align-items:baseline}.message-meta span{color:#949ba4;font-size:12px}
+.message-content{margin-top:3px;line-height:1.45;white-space:normal;overflow-wrap:anywhere}
+.attachments{display:grid;gap:4px;margin-top:8px}.attachments a{color:#00a8fc}
+.embed-note{margin-top:8px;border-left:4px solid #5865f2;background:#2b2d31;padding:8px;border-radius:4px;color:#b5bac1}
+.muted{color:#949ba4}
+</style>
+</head>
+<body>
+<div class="header"><h1>#${escapeHtml(channel.name)}</h1><p>${messages.length} message${messages.length === 1 ? '' : 's'} exported</p></div>
+<main class="wrap">${renderedMessages || '<p class="muted">No messages found.</p>'}</main>
+</body>
+</html>`;
+}
+
 async function buildTranscript(channel) {
     const messages = await fetchTranscriptMessages(channel);
     if (!messages.length) return null;
 
-    const lines = messages
-        .sort((a, b) => a.createdTimestamp - b.createdTimestamp)
-        .map(formatTranscriptLine);
+    const sortedMessages = messages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+    const lines = sortedMessages.map(formatTranscriptLine);
 
     return new AttachmentBuilder(Buffer.from(lines.join('\n'), 'utf8'), {
         name: `${channel.name}-transcript.txt`,
     });
+}
+
+async function createDashboardTranscript(channel, createdBy) {
+    const messages = await fetchTranscriptMessages(channel);
+    if (!messages.length) return null;
+
+    const sortedMessages = messages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+    const text = sortedMessages.map(formatTranscriptLine).join('\n');
+    const html = renderTranscriptHtml(channel, sortedMessages);
+    const authorIds = sortedMessages.map(message => message.author?.id).filter(Boolean);
+    const openerId = channel.topic || null;
+
+    return createTicketTranscript({
+        guildId: channel.guild.id,
+        channelId: channel.id,
+        channelName: channel.name,
+        ticketName: channel.name,
+        openerId,
+        createdBy: createdBy?.id || null,
+        messageCount: sortedMessages.length,
+        allowedUserIds: [openerId, createdBy?.id, ...authorIds],
+        html,
+        text,
+    });
+}
+
+function getTranscriptUrl(transcript) {
+    const publicUrl = getDashboardPublicUrl();
+    return publicUrl ? `${publicUrl}/transcripts/${encodeURIComponent(transcript.id)}` : `/transcripts/${encodeURIComponent(transcript.id)}`;
 }
 
 async function sendTicketTranscript(interaction) {
@@ -275,12 +370,12 @@ async function sendTicketTranscript(interaction) {
         return interaction.reply({ content: language.tickets.noPermission, flags: 64 });
     }
 
-    const transcript = await buildTranscript(channel);
+    const transcript = await createDashboardTranscript(channel, interaction.user);
     if (!transcript) {
         return interaction.reply({ content: 'No messages were found to transcript.', flags: 64 });
     }
 
-    return interaction.reply({ content: 'Ticket transcript generated.', files: [transcript], flags: 64 });
+    return interaction.reply({ content: `Ticket transcript generated: ${getTranscriptUrl(transcript)}`, flags: 64 });
 }
 
 async function addTicketUser(interaction, user) {
@@ -305,6 +400,7 @@ async function addTicketUser(interaction, user) {
         type: 'ticket',
         title: 'User added to ticket',
         color: 'green',
+        user,
         fields: [
             { name: 'Ticket', value: `<#${channel.id}>`, inline: true },
             { name: 'User', value: formatUser(user), inline: true },
@@ -339,6 +435,7 @@ async function claimTicket(interaction) {
         type: 'ticket',
         title: 'Ticket claimed',
         color: 'blue',
+        user: interaction.user,
         fields: [
             { name: 'Ticket', value: `<#${channel.id}>`, inline: true },
             { name: 'Claimed by', value: formatUser(interaction.user), inline: true },
@@ -486,6 +583,7 @@ async function removeTicketUser(interaction, user) {
         type: 'ticket',
         title: 'User removed from ticket',
         color: 'orange',
+        user,
         fields: [
             { name: 'Ticket', value: `<#${channel.id}>`, inline: true },
             { name: 'User', value: formatUser(user), inline: true },
@@ -527,6 +625,7 @@ async function renameTicket(interaction, name) {
         type: 'ticket',
         title: 'Ticket renamed',
         color: 'blue',
+        user: interaction.user,
         fields: [
             { name: 'Old name', value: oldName, inline: true },
             { name: 'New name', value: channel.name, inline: true },
@@ -591,6 +690,7 @@ async function closeTicket(interaction) {
         type: 'ticket',
         title: 'Ticket closed',
         color: 'orange',
+        user: interaction.user,
         fields: [
             { name: 'Ticket', value: `<#${channel.id}>`, inline: true },
             { name: 'Closed by', value: formatUser(interaction.user), inline: true },
@@ -613,16 +713,18 @@ async function deleteTicket(interaction) {
         return interaction.reply({ content: language.tickets.noPermission, flags: 64 });
     }
 
-    const transcript = await buildTranscript(channel);
+    const transcript = await createDashboardTranscript(channel, interaction.user);
+    const transcriptUrl = transcript ? getTranscriptUrl(transcript) : null;
     await sendLog(interaction.guild, {
         type: 'ticket',
         title: 'Ticket deleted',
         color: 'red',
+        user: interaction.user,
         fields: [
             { name: 'Ticket', value: channel.name, inline: true },
             { name: 'Deleted by', value: formatUser(interaction.user), inline: true },
+            ...(transcriptUrl ? [{ name: 'Transcript', value: transcriptUrl }] : []),
         ],
-        files: transcript ? [transcript] : [],
     }).catch(() => null);
 
     await interaction.reply({ content: language.tickets.deleting, flags: 64 });
@@ -679,6 +781,7 @@ function startTicketScheduler(client) {
 module.exports = {
     addTicketUser,
     buildTranscript,
+    createDashboardTranscript,
     claimTicket,
     closeTicket,
     createTicketPanel,

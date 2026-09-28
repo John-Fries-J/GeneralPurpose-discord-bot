@@ -19,7 +19,9 @@ const {
     listScheduledMessages,
     listTempVoiceChannelsForGuild,
     listTicketRecords,
+    listTicketTranscripts,
     listVoiceActivity,
+    getTicketTranscript,
     readState,
     upsertEmbedTemplate,
 } = require('../utils/store');
@@ -239,6 +241,24 @@ function canManageDashboard(discordUser, guilds, settings) {
 
     const permissions = BigInt(guild.permissions || 0);
     return (permissions & PermissionFlagsBits.ManageGuild) === PermissionFlagsBits.ManageGuild;
+}
+
+async function canViewTranscript(client, session, transcript) {
+    const config = getConfig();
+    if (!session?.user || !transcript) return false;
+    if (config.devs?.includes(session.user.id)) return true;
+    if (transcript.allowedUserIds?.includes(session.user.id)) return true;
+
+    const guild = client.guilds.cache.get(transcript.guildId) || getDashboardGuild(client);
+    const member = await guild?.members?.fetch(session.user.id).catch(() => null);
+    if (!member) return false;
+
+    if (member.permissions?.has(PermissionFlagsBits.ManageGuild) || member.permissions?.has(PermissionFlagsBits.ManageMessages)) {
+        return true;
+    }
+
+    const supportRoleId = config.tickets?.supportRoleId || config.ticketRole;
+    return Boolean(supportRoleId && member.roles?.cache?.has(supportRoleId));
 }
 
 function groupCommands(client) {
@@ -694,6 +714,7 @@ async function renderDashboard(client, session, notice = '', page = 'overview') 
         ? await Promise.all([...new Set(moderationCases.slice(0, 20).map(item => item.userId))].map(userId => listModNotes(activeGuildId, userId, 5))).then(results => results.flat())
         : [];
     const ticketRecords = await listTicketRecords(activeGuildId, 100);
+    const ticketTranscripts = await listTicketTranscripts(activeGuildId, 50);
     const tempVoiceChannels = await listTempVoiceChannelsForGuild(activeGuildId);
     const voiceActivity = await listVoiceActivity(activeGuildId, 80);
     const configBackups = listConfigBackups();
@@ -904,7 +925,8 @@ ${renderConfigSectionEditor('moderation', 'Moderation Settings', 'Configure mute
 <section class="grid"><div class="panel wide"><h2>Recent Cases</h2>${moderationCases.slice(0, 20).map(item => `<div class="row"><span>#${escapeHtml(item.id)} ${escapeHtml(item.type)} ${escapeHtml(item.userTag || item.userId)}<br><span class="muted">${escapeHtml(item.reason)}</span></span><span>${escapeHtml(new Date(item.createdAt).toLocaleString())}</span></div>`).join('') || '<p class="muted">No cases yet.</p>'}</div><div class="panel side"><h2>Recent Notes</h2>${modNotes.slice(0, 10).map(item => `<div class="row"><span>${escapeHtml(item.userTag || item.userId)}<br><span class="muted">${escapeHtml(item.note)}</span></span></div>`).join('') || '<p class="muted">No notes yet.</p>'}</div></section>`;
     const ticketsSection = `
 ${renderConfigSectionEditor('tickets', 'Ticket Settings', 'Configure ticket panel channel, category, support role, auto-close days, and transcript behavior.', session, config.tickets || {})}
-<section class="panel"><h2>Tickets</h2>${ticketRecords.length ? ticketRecords.map(item => `<div class="row"><span><strong><#${escapeHtml(item.channelId)}></strong><br><span class="muted">${escapeHtml(item.status)} - ${escapeHtml(item.priority)} - ${escapeHtml(item.tags?.join(', ') || 'no tags')}</span></span><span>${item.claimedById ? `Claimed by ${escapeHtml(item.claimedByTag || item.claimedById)}` : 'Unclaimed'}</span></div>`).join('') : '<p class="muted">No ticket records yet.</p>'}</section>`;
+<section class="panel"><h2>Tickets</h2>${ticketRecords.length ? ticketRecords.map(item => `<div class="row"><span><strong><#${escapeHtml(item.channelId)}></strong><br><span class="muted">${escapeHtml(item.status)} - ${escapeHtml(item.priority)} - ${escapeHtml(item.tags?.join(', ') || 'no tags')}</span></span><span>${item.claimedById ? `Claimed by ${escapeHtml(item.claimedByTag || item.claimedById)}` : 'Unclaimed'}</span></div>`).join('') : '<p class="muted">No ticket records yet.</p>'}</section>
+<section class="panel"><h2>Transcripts</h2>${ticketTranscripts.length ? ticketTranscripts.map(item => `<div class="row"><span><strong>${escapeHtml(item.ticketName || item.channelName)}</strong><br><span class="muted">${escapeHtml(new Date(item.createdAt).toLocaleString())} - ${escapeHtml(item.messageCount)} messages</span></span><a class="button secondary" href="/transcripts/${encodeURIComponent(item.id)}">Open</a></div>`).join('') : '<p class="muted">No transcripts have been generated yet.</p>'}</section>`;
     const communitySection = `
 ${renderConfigSectionEditor('WelcomeEmbed', 'Welcome / Leave Editor', 'Configure welcome copy and media. Leave messages can be added as leaveEmbed in config.json.', session, config.WelcomeEmbed || {})}
 ${renderConfigSectionEditor('reactionRoles', 'Reaction Roles', 'Configure reaction-role panels. Use messageId, emoji, and roleId entries for each panel.', session, config.reactionRoles || { enabled: false, panels: [] })}
@@ -1023,6 +1045,18 @@ function startDashboard(client) {
     app.get('/commands', requireAuth, renderPage('commands'));
     app.get('/moderation', requireAuth, renderPage('moderation'));
     app.get('/tickets', requireAuth, renderPage('tickets'));
+    app.get('/transcripts/:id', requireAuth, async (req, res) => {
+        const transcript = await getTicketTranscript(req.params.id);
+        if (!transcript) {
+            return res.status(404).send(renderLayout('Transcript not found', '<section class="panel"><h2>Transcript not found</h2><p>That transcript does not exist.</p></section>', req.dashboardSession.user, client, 'tickets'));
+        }
+
+        if (!await canViewTranscript(client, req.dashboardSession, transcript)) {
+            return res.status(403).send(renderLayout('Transcript unavailable', '<section class="panel"><h2>Transcript unavailable</h2><p>You are not allowed to view this transcript.</p></section>', req.dashboardSession.user, client, 'tickets'));
+        }
+
+        return res.type('html').send(transcript.html);
+    });
     app.get('/community', requireAuth, renderPage('community'));
     app.get('/leveling', requireAuth, renderPage('leveling'));
     app.get('/voice', requireAuth, renderPage('voice'));
