@@ -20,6 +20,7 @@ const play = require('play-dl');
 const queues = new Map();
 const voiceConnectionAttempts = new Map();
 const observedConnections = new WeakSet();
+const observedNetworkings = new WeakSet();
 let dependencyReportLogged = false;
 let ytDlpAvailable = null;
 
@@ -423,11 +424,51 @@ function sanitizeVoiceDebugMessage(message) {
         .replace(/session_?id[=:]\s*["']?[^"',\s}]+/gi, 'sessionId=<redacted>');
 }
 
+function observeNetworking(networking, guildId, settings = getMusicSettings()) {
+    if (!networking || observedNetworkings.has(networking)) return;
+    observedNetworkings.add(networking);
+
+    networking.on('stateChange', (oldState, newState) => {
+        console.log('[MUSIC] Voice networking state changed:', {
+            guildId,
+            oldNetworking: NETWORKING_STATUS_NAMES.get(oldState.code) || `Unknown(${oldState.code})`,
+            newNetworking: NETWORKING_STATUS_NAMES.get(newState.code) || `Unknown(${newState.code})`,
+        });
+    });
+
+    networking.on('close', code => {
+        console.warn('[MUSIC] Voice networking closed:', {
+            guildId,
+            code,
+        });
+    });
+
+    networking.on('error', error => {
+        console.warn('[MUSIC] Voice networking error:', {
+            guildId,
+            error: error?.message || String(error),
+            code: error?.code,
+            name: error?.name,
+        });
+    });
+
+    if (settings.voiceDebug) {
+        networking.on('debug', message => {
+            console.log('[MUSIC] Voice networking debug:', {
+                guildId,
+                message: sanitizeVoiceDebugMessage(message),
+            });
+        });
+    }
+}
+
 function observeConnection(connection, guildId, settings = getMusicSettings()) {
     if (!connection || observedConnections.has(connection)) return;
     observedConnections.add(connection);
+    observeNetworking(connection.state?.networking, guildId, settings);
 
     connection.on('stateChange', (oldState, newState) => {
+        observeNetworking(newState.networking, guildId, settings);
         console.log('[MUSIC] Voice connection state changed:', {
             guildId,
             oldStatus: oldState.status,
