@@ -1,25 +1,40 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { createEmbed } = require('../../utils/embeds');
-const { getTotalXp, listLevelLeaderboard } = require('../../utils/leveling');
+const { formatXp, getTotalXp, listLevelLeaderboard } = require('../../utils/leveling');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('leaderboard')
         .setDescription('Shows the XP leaderboard.')
-        .setDMPermission(false),
+        .setDMPermission(false)
+        .addStringOption(option => option
+            .setName('type')
+            .setDescription('Which XP leaderboard to show.')
+            .addChoices(
+                { name: 'Total XP', value: 'total' },
+                { name: 'Text XP', value: 'text' },
+                { name: 'Voice XP', value: 'voice' },
+            )),
 
     async execute(interaction) {
-        const records = await listLevelLeaderboard(interaction.guild.id, 10);
+        const type = interaction.options.getString('type') || 'total';
+        const records = await listLevelLeaderboard(interaction.guild.id, 10, type);
 
         if (!records.length) {
-            return interaction.reply({ content: 'No XP has been recorded yet.', flags: 64 });
+            return interaction.reply({ content: `No ${type} XP has been recorded yet.`, flags: 64 });
         }
 
+        const score = record => {
+            if (type === 'text') return Number(record.textXp || 0);
+            if (type === 'voice') return Number(record.voiceXp || 0);
+            return getTotalXp(record);
+        };
+
         const embed = createEmbed({
-            title: 'XP Leaderboard',
+            title: `${type[0].toUpperCase()}${type.slice(1)} XP Leaderboard`,
             color: 'blue',
             description: records.map((record, index) => {
-                return `${index + 1}. <@${record.userId}> - ${getTotalXp(record)} total (${record.textXp || 0} text, ${record.voiceXp || 0} voice)`;
+                return `**${index + 1}.** <@${record.userId}> - **${formatXp(score(record))} XP** (${formatXp(record.textXp)} text, ${formatXp(record.voiceXp)} voice)`;
             }).join('\n'),
         });
 

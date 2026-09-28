@@ -65,6 +65,10 @@ function formatProgressBar(percent, size = 20) {
     return `[${'#'.repeat(filled)}${'-'.repeat(size - filled)}]`;
 }
 
+function formatXp(value) {
+    return Number(value || 0).toLocaleString('en-US');
+}
+
 function getMultiplier(member, channelId, settings) {
     const roleMultiplier = settings.roleMultipliers
         .filter(item => item.roleId && member?.roles?.cache?.has(item.roleId))
@@ -141,6 +145,7 @@ async function awardVoiceXp(client) {
 
 function startLevelingScheduler(client) {
     const run = () => awardVoiceXp(client).catch(error => console.error('Voice XP scheduler failed:', error));
+    run();
     return setInterval(run, 60 * 1000);
 }
 
@@ -157,6 +162,7 @@ module.exports = {
     getUserLevelRecord,
     getXpForLevel,
     formatProgressBar,
+    formatXp,
     isIgnoredForXp,
     listLevelLeaderboard,
     startLevelingScheduler,

@@ -1,9 +1,11 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { createEmbed } = require('../../utils/embeds');
 const {
+    formatXp,
     formatProgressBar,
     getLevelProgress,
     getUserLevelRecord,
+    listLevelLeaderboard,
 } = require('../../utils/leveling');
 
 module.exports = {
@@ -28,16 +30,41 @@ module.exports = {
 
         const progress = getLevelProgress(record);
         const percent = Math.floor(progress.percent * 100);
+        const leaderboard = await listLevelLeaderboard(interaction.guild.id, 1000, 'total');
+        const placement = leaderboard.findIndex(item => item.userId === user.id);
+        const textXp = Number(record.textXp || 0);
+        const voiceXp = Number(record.voiceXp || 0);
+        const total = Math.max(1, textXp + voiceXp);
+        const textPercent = Math.round((textXp / total) * 100);
+        const voicePercent = Math.round((voiceXp / total) * 100);
+
         const embed = createEmbed({
             title: `${user.username}'s Rank`,
             color: 'blue',
             thumbnail: user.displayAvatarURL({ extension: 'png', size: 128 }),
+            description: [
+                `**Level ${progress.level}** with **${formatXp(progress.totalXp)} XP**`,
+                `Server placement: **${placement === -1 ? 'Unranked' : `#${placement + 1}`}**`,
+            ].join('\n'),
             fields: [
-                { name: 'Level', value: `${progress.level}`, inline: true },
-                { name: 'Total XP', value: `${progress.totalXp}`, inline: true },
-                { name: 'Next level', value: `${progress.progressXp}/${progress.neededXp} XP (${percent}%)`, inline: false },
+                { name: 'Next Level', value: `${formatXp(progress.progressXp)} / ${formatXp(progress.neededXp)} XP (${percent}%)`, inline: false },
                 { name: 'Progress', value: `\`${formatProgressBar(progress.percent)}\``, inline: false },
-                { name: 'Breakdown', value: `${record.textXp || 0} text XP\n${record.voiceXp || 0} voice XP`, inline: true },
+                {
+                    name: 'Breakdown',
+                    value: [
+                        `Text: **${formatXp(textXp)} XP** (${textPercent}%)`,
+                        `Voice: **${formatXp(voiceXp)} XP** (${voicePercent}%)`,
+                    ].join('\n'),
+                    inline: true,
+                },
+                {
+                    name: 'Totals',
+                    value: [
+                        `Current level starts at ${formatXp(progress.currentLevelXp)} XP`,
+                        `Next level at ${formatXp(progress.nextLevelXp)} XP`,
+                    ].join('\n'),
+                    inline: true,
+                },
             ],
         });
 
