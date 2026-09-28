@@ -2,6 +2,9 @@ const { ChannelType, PermissionFlagsBits } = require('discord.js');
 const { getConfig } = require('./config');
 const { getTempVoiceChannel, listTempVoiceChannelsForGuild, removeTempVoiceChannel, upsertTempVoiceChannel } = require('./store');
 
+const emptyDeletionTimers = new Map();
+const channelLocks = new Map();
+
 function getJoinToCreateConfig(config = getConfig()) {
     return {
         enabled: config.joinToCreate?.enabled === true,
@@ -9,7 +12,32 @@ function getJoinToCreateConfig(config = getConfig()) {
         categoryId: config.joinToCreate?.categoryId || '',
         nameFormat: config.joinToCreate?.nameFormat || "{username}'s Channel",
         userLimitMax: Number(config.joinToCreate?.userLimitMax || 25),
+        emptyGraceMs: Number(config.joinToCreate?.emptyGraceMs || 10_000),
     };
+}
+
+async function withChannelLock(channelId, callback) {
+    const previous = channelLocks.get(channelId) || Promise.resolve();
+    let release;
+    const current = new Promise(resolve => {
+        release = resolve;
+    });
+    const tail = previous.catch(() => null).then(() => current);
+    channelLocks.set(channelId, tail);
+
+    await previous.catch(() => null);
+    try {
+        return await callback();
+    } finally {
+        release();
+        if (channelLocks.get(channelId) === tail) channelLocks.delete(channelId);
+    }
+}
+
+function getHumanMembers(channel) {
+    return [...(channel?.members?.values?.() || [])]
+        .filter(member => !member.user?.bot)
+        .sort((a, b) => String(a.joinedTimestamp || a.id).localeCompare(String(b.joinedTimestamp || b.id)));
 }
 
 function formatVoiceChannelName(template, member) {
@@ -39,6 +67,86 @@ async function sendJoinToCreateIntro(channel, member) {
         ].join('\n'),
         allowedMentions: { users: [member.id] },
     }).then(() => true).catch(() => false);
+}
+
+function cancelEmptyDeletion(channelId) {
+    const timer = emptyDeletionTimers.get(channelId);
+    if (!timer) return false;
+    clearTimeout(timer);
+    emptyDeletionTimers.delete(channelId);
+    return true;
+}
+
+async function deleteTemporaryVoiceChannelUnlocked(guild, channelId, reason, { force = false } = {}) {
+    cancelEmptyDeletion(channelId);
+    const record = await getTempVoiceChannel(channelId);
+    if (!record) return false;
+
+    const channel = guild.channels.cache.get(channelId) || await guild.channels.fetch(channelId).catch(() => null);
+    if (!channel) {
+        await removeTempVoiceChannel(channelId);
+        return true;
+    }
+
+    const humans = getHumanMembers(channel);
+    if (!force && humans.length > 0) {
+        await upsertTempVoiceChannel({
+            ...record,
+            lastOccupiedAt: Date.now(),
+        });
+        return false;
+    }
+
+    const botMember = guild.members.me || await guild.members.fetchMe?.().catch(() => null);
+    if (botMember?.voice?.channelId === channel.id) {
+        await botMember.voice.disconnect(reason).catch(() => null);
+    }
+
+    await channel.delete(reason).catch(() => null);
+    await removeTempVoiceChannel(channelId);
+    return true;
+}
+
+async function deleteTemporaryVoiceChannel(guild, channelId, reason = 'Deleting empty join-to-create channel', options = {}) {
+    return withChannelLock(channelId, () => deleteTemporaryVoiceChannelUnlocked(guild, channelId, reason, options));
+}
+
+function scheduleEmptyChannelDeletion(guild, channelId, delayMs, reason) {
+    cancelEmptyDeletion(channelId);
+    const timer = setTimeout(() => {
+        emptyDeletionTimers.delete(channelId);
+        deleteTemporaryVoiceChannel(guild, channelId, reason).catch(error => {
+            console.error(`Failed to delete empty join-to-create channel ${channelId}:`, error);
+        });
+    }, delayMs);
+    emptyDeletionTimers.set(channelId, timer);
+    return timer;
+}
+
+async function transferOwnership(record, channel, nextOwner) {
+    if (!record || !channel || !nextOwner || record.ownerId === nextOwner.id) return record;
+
+    const previousOwnerId = record.ownerId;
+    const updated = {
+        ...record,
+        ownerId: nextOwner.id,
+        transferredAt: Date.now(),
+        lastOccupiedAt: Date.now(),
+    };
+
+    await upsertTempVoiceChannel(updated);
+    await channel.permissionOverwrites.edit(nextOwner.id, {
+        Connect: true,
+        ManageChannels: true,
+        MoveMembers: true,
+        ViewChannel: true,
+    }).catch(() => null);
+    await channel.permissionOverwrites.edit(previousOwnerId, {
+        ManageChannels: null,
+        MoveMembers: null,
+    }).catch(() => null);
+    await channel.send?.(`<@${nextOwner.id}> is now the temporary voice channel owner.`).catch(() => null);
+    return updated;
 }
 
 async function deleteJoinToCreateChannels(guild) {
@@ -93,6 +201,11 @@ async function handleJoinToCreate(oldState, newState) {
             guildId: newState.guild.id,
             channelId: channel.id,
             ownerId: newState.member.id,
+            triggerChannelId: settings.triggerChannelId,
+            name: channel.name,
+            locked: false,
+            userLimit: channel.userLimit || 0,
+            lastOccupiedAt: Date.now(),
             createdAt: Date.now(),
         });
         await newState.setChannel(channel, 'Moving user to join-to-create channel').catch(() => null);
@@ -100,32 +213,82 @@ async function handleJoinToCreate(oldState, newState) {
         return;
     }
 
-    if (oldState.channelId && oldState.channelId !== newState.channelId) {
-        const record = await getTempVoiceChannel(oldState.channelId);
-        if (!record) return;
+    if (newState.channelId && newState.channelId !== oldState.channelId) {
+        const joinedRecord = await getTempVoiceChannel(newState.channelId);
+        if (joinedRecord) cancelEmptyDeletion(newState.channelId);
+    }
 
-        const oldChannel = oldState.guild.channels.cache.get(oldState.channelId) || await oldState.guild.channels.fetch(oldState.channelId).catch(() => null);
-        if (oldChannel && oldChannel.members.size === 0) {
-            await removeTempVoiceChannel(oldState.channelId);
-            await oldChannel.delete('Deleting empty join-to-create channel').catch(() => null);
-        } else if (oldChannel && record.ownerId === oldState.member?.id) {
-            const nextOwner = oldChannel.members.find(member => !member.user.bot);
-            if (nextOwner) {
+    if (oldState.channelId && oldState.channelId !== newState.channelId) {
+        await withChannelLock(oldState.channelId, async () => {
+            const record = await getTempVoiceChannel(oldState.channelId);
+            if (!record) return;
+
+            const oldChannel = oldState.guild.channels.cache.get(oldState.channelId) || await oldState.guild.channels.fetch(oldState.channelId).catch(() => null);
+            if (!oldChannel) {
+                await removeTempVoiceChannel(oldState.channelId);
+                return;
+            }
+
+            const humans = getHumanMembers(oldChannel);
+            if (humans.length === 0) {
                 await upsertTempVoiceChannel({
                     ...record,
-                    ownerId: nextOwner.id,
-                    transferredAt: Date.now(),
+                    lastOccupiedAt: Date.now(),
                 });
-                await oldChannel.permissionOverwrites.edit(nextOwner.id, {
-                    Connect: true,
-                    ManageChannels: true,
-                    MoveMembers: true,
-                    ViewChannel: true,
-                }).catch(() => null);
-                await oldChannel.send?.(`<@${nextOwner.id}> is now the temporary voice channel owner.`).catch(() => null);
+                scheduleEmptyChannelDeletion(oldState.guild, oldState.channelId, settings.emptyGraceMs, 'Deleting empty join-to-create channel after grace period');
+            } else if (record.ownerId === oldState.member?.id) {
+                await transferOwnership(record, oldChannel, humans[0]);
             }
-        }
+        });
     }
+}
+
+async function reconcileGuildTempVoiceChannels(guild) {
+    const records = await listTempVoiceChannelsForGuild(guild.id);
+    let preserved = 0;
+    let removed = 0;
+    let transferred = 0;
+
+    for (const record of records) {
+        await withChannelLock(record.channelId, async () => {
+            const channel = guild.channels.cache.get(record.channelId) || await guild.channels.fetch(record.channelId).catch(() => null);
+            if (!channel) {
+                await removeTempVoiceChannel(record.channelId);
+                removed += 1;
+                return;
+            }
+
+            const humans = getHumanMembers(channel);
+            if (humans.length === 0) {
+                await deleteTemporaryVoiceChannelUnlocked(guild, record.channelId, 'Startup cleanup of empty join-to-create channel');
+                removed += 1;
+                return;
+            }
+
+            if (!humans.some(member => member.id === record.ownerId)) {
+                await transferOwnership(record, channel, humans[0]);
+                transferred += 1;
+            } else {
+                await upsertTempVoiceChannel({
+                    ...record,
+                    lastOccupiedAt: Date.now(),
+                    name: channel.name,
+                    userLimit: channel.userLimit || 0,
+                });
+                preserved += 1;
+            }
+        });
+    }
+
+    return { guildId: guild.id, records: records.length, preserved, removed, transferred };
+}
+
+async function reconcileJoinToCreate(client) {
+    const results = [];
+    for (const guild of client.guilds.cache.values()) {
+        results.push(await reconcileGuildTempVoiceChannels(guild));
+    }
+    return results;
 }
 
 async function getOwnedVoiceChannel(interaction) {
@@ -142,8 +305,13 @@ async function getOwnedVoiceChannel(interaction) {
 
 module.exports = {
     deleteJoinToCreateChannels,
+    deleteTemporaryVoiceChannel,
     formatVoiceChannelName,
     getJoinToCreateConfig,
     getOwnedVoiceChannel,
     handleJoinToCreate,
+    reconcileGuildTempVoiceChannels,
+    reconcileJoinToCreate,
+    scheduleEmptyChannelDeletion,
+    transferOwnership,
 };

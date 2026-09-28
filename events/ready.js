@@ -11,6 +11,7 @@ const { startScheduledMessageScheduler } = require('../utils/scheduledMessages')
 const { initializeStorage } = require('../utils/store');
 const { startTicketScheduler } = require('../utils/tickets');
 const { createScheduler } = require('../services/scheduler');
+const { reconcileJoinToCreate } = require('../utils/joinToCreate');
 
 module.exports = {
     name: Events.ClientReady,
@@ -28,6 +29,12 @@ module.exports = {
         client.ticketScheduler = startTicketScheduler(client);
         client.scheduler = createScheduler(client);
         client.scheduler.start();
+        reconcileJoinToCreate(client).then(results => {
+            const changed = results.filter(result => result.records > 0);
+            if (changed.length) console.log(`[VOICE] Reconciled join-to-create state: ${JSON.stringify(changed)}`);
+        }).catch(error => {
+            console.error('[VOICE] Join-to-create startup reconciliation failed:', error);
+        });
         bootstrapNameless(client).then(scheduler => {
             client.namelessMcScheduler = scheduler;
         }).catch(error => {
