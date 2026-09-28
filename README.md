@@ -166,9 +166,11 @@ Useful dashboard environment variables:
 
 ## Database / State Storage
 
-No external database is required. The bot uses SQLite at `data/bot.sqlite` by default, which keeps moderation state local while avoiding fragile direct JSON writes.
+No external database is required. The bot uses a normalized SQLite database at `data/bot.sqlite` by default, powered by `better-sqlite3`. SQLite runs with foreign keys and WAL enabled, so production backups should include `bot.sqlite` plus any `bot.sqlite-wal` and `bot.sqlite-shm` sidecar files.
 
-Existing small installs can still use JSON storage by setting `database.provider` to `json`; the JSON file lives at `data/bot-state.json`. MySQL is supported by setting `database.provider` to `mysql` and putting a MySQL connection string in `database.mysql.url`. Startup logs show the active provider, with credentials redacted.
+Existing `bot_state` SQLite files and `data/bot-state.json` files are imported into the normalized schema once on startup. The old file is copied to a `.pre-normalized.<timestamp>.bak` backup first and is not deleted automatically.
+
+Existing small installs can still use JSON storage by setting `database.provider` to `json`; the JSON file lives at `data/bot-state.json`. MySQL is supported by setting `database.provider` to `mysql` and putting a MySQL connection string in `database.mysql.url`. Startup logs show the active provider and migration summary, with credentials redacted.
 
 ## Commands
 

@@ -465,7 +465,7 @@ function listDueScheduledMessages(db, timestamp = now(), limit = 25) {
 }
 
 function updateScheduledMessageStatus(db, id, status, error = null) {
-    db.prepare('UPDATE scheduled_messages SET status = ?, error = ?, sent_at = CASE WHEN ? = "sent" THEN ? ELSE sent_at END, updated_at = ? WHERE id = ?').run(status, error, status, now(), now(), id);
+    db.prepare("UPDATE scheduled_messages SET status = ?, error = ?, sent_at = CASE WHEN ? = 'sent' THEN ? ELSE sent_at END, updated_at = ? WHERE id = ?").run(status, error, status, now(), now(), id);
     return mapScheduledMessage(db.prepare('SELECT * FROM scheduled_messages WHERE id = ?').get(id));
 }
 
@@ -635,7 +635,7 @@ function listReminders(db, userId = null, limit = 50) {
 }
 
 function updateReminderStatus(db, id, status, error = null) {
-    db.prepare('UPDATE reminders SET status = ?, error = ?, delivered_at = CASE WHEN ? = "sent" THEN ? ELSE delivered_at END, updated_at = ? WHERE id = ?').run(status, error, status, now(), now(), id);
+    db.prepare("UPDATE reminders SET status = ?, error = ?, delivered_at = CASE WHEN ? = 'sent' THEN ? ELSE delivered_at END, updated_at = ? WHERE id = ?").run(status, error, status, now(), now(), id);
     return mapReminder(db.prepare('SELECT * FROM reminders WHERE id = ?').get(id));
 }
 

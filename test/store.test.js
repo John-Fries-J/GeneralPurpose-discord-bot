@@ -6,6 +6,7 @@ const assert = require('node:assert/strict');
 
 function loadStoreWithEnvironment(environment) {
     const previous = {};
+    const database = require('../database');
 
     for (const [key, value] of Object.entries(environment)) {
         previous[key] = process.env[key];
@@ -18,6 +19,7 @@ function loadStoreWithEnvironment(environment) {
     return {
         store,
         restore() {
+            database.closeDatabase();
             for (const [key, value] of Object.entries(previous)) {
                 if (value === undefined) {
                     delete process.env[key];

@@ -1,10 +1,10 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const Database = require('better-sqlite3');
 const { getConfig } = require('../utils/config');
 
 const schemaVersion = 1;
 
-let sqlPromise = null;
 let cached = null;
 
 function resolveSqlitePath(config = getConfig()) {
@@ -19,120 +19,15 @@ function ensureDirectory(filePath) {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
 }
 
-async function getSqlJs() {
-    if (!sqlPromise) sqlPromise = require('sql.js')();
-    return sqlPromise;
-}
-
-function normalizeParams(params) {
-    if (params.length === 1 && Array.isArray(params[0])) return params[0];
-    return params;
-}
-
-class SqlJsStatement {
-    constructor(owner, sql) {
-        this.owner = owner;
-        this.sql = sql;
-    }
-
-    run(...params) {
-        const statement = this.owner.raw.prepare(this.sql);
-        const values = normalizeParams(params);
-        try {
-            statement.run(values);
-            const changes = this.owner.raw.getRowsModified();
-            this.owner.persistAfterWrite();
-            return {
-                changes,
-                lastInsertRowid: Number(this.owner.raw.exec('SELECT last_insert_rowid() AS id')?.[0]?.values?.[0]?.[0] || 0),
-            };
-        } finally {
-            statement.free();
-        }
-    }
-
-    get(...params) {
-        const rows = this.all(...params);
-        return rows[0] || undefined;
-    }
-
-    all(...params) {
-        const statement = this.owner.raw.prepare(this.sql);
-        const values = normalizeParams(params);
-        const rows = [];
-        try {
-            statement.bind(values);
-            while (statement.step()) rows.push(statement.getAsObject());
-            return rows;
-        } finally {
-            statement.free();
-        }
-    }
-}
-
-class SqlJsDatabase {
-    constructor(filePath, raw) {
-        this.path = filePath;
-        this.raw = raw;
-        this.transactionDepth = 0;
-    }
-
-    prepare(sql) {
-        return new SqlJsStatement(this, sql);
-    }
-
-    exec(sql) {
-        this.raw.run(sql);
-        if (/^\s*(CREATE|INSERT|UPDATE|DELETE|DROP|ALTER|REPLACE)\b/im.test(sql)) {
-            this.persistAfterWrite();
-        }
-    }
-
-    transaction(callback) {
-        return (...args) => {
-            this.raw.run('BEGIN TRANSACTION');
-            this.transactionDepth += 1;
-            try {
-                const result = callback(...args);
-                this.transactionDepth -= 1;
-                this.raw.run('COMMIT');
-                this.save();
-                return result;
-            } catch (error) {
-                this.transactionDepth -= 1;
-                this.raw.run('ROLLBACK');
-                throw error;
-            }
-        };
-    }
-
-    persistAfterWrite() {
-        if (this.transactionDepth === 0) this.save();
-    }
-
-    save() {
-        ensureDirectory(this.path);
-        fs.writeFileSync(this.path, Buffer.from(this.raw.export()));
-    }
-
-    close() {
-        this.save();
-        this.raw.close();
-    }
-}
-
 async function openDatabase(filePath = resolveSqlitePath()) {
     const resolved = path.resolve(filePath);
     if (cached?.path === resolved) return cached.db;
 
     if (cached?.db) cached.db.close();
     ensureDirectory(resolved);
-    const SQL = await getSqlJs();
-    const raw = fs.existsSync(resolved)
-        ? new SQL.Database(fs.readFileSync(resolved))
-        : new SQL.Database();
-    const db = new SqlJsDatabase(resolved, raw);
-    db.raw.run('PRAGMA foreign_keys = ON');
+    const db = new Database(resolved);
+    db.pragma('foreign_keys = ON');
+    db.pragma('journal_mode = WAL');
     cached = { path: resolved, db };
     return db;
 }
