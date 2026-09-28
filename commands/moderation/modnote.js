@@ -1,6 +1,6 @@
 const { PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
 const { createEmbed } = require('../../utils/embeds');
-const { addModNote, deleteModNote, listModNotes } = require('../../utils/store');
+const { addModNote, addUserHistory, deleteModNote, listModNotes } = require('../../utils/store');
 
 function formatNote(note) {
     return [
@@ -48,11 +48,34 @@ module.exports = {
                 note: interaction.options.getString('note', true),
             });
 
+            await addUserHistory({
+                guildId: interaction.guild.id,
+                userId: user.id,
+                userTag: user.tag,
+                type: 'modnote',
+                summary: note.note,
+                channelId: interaction.channelId,
+                moderatorId: interaction.user.id,
+                metadata: { noteId: note.id },
+            });
+
             return interaction.reply({ content: `Saved mod note ${note.id} for ${user.tag}.`, flags: 64 });
         }
 
         if (subcommand === 'delete') {
             const deleted = await deleteModNote(interaction.guild.id, interaction.options.getString('id', true));
+            if (deleted) {
+                await addUserHistory({
+                    guildId: interaction.guild.id,
+                    userId: deleted.userId,
+                    userTag: deleted.userTag,
+                    type: 'modnote:delete',
+                    summary: `Deleted note ${deleted.id}: ${deleted.note}`,
+                    channelId: interaction.channelId,
+                    moderatorId: interaction.user.id,
+                    metadata: { noteId: deleted.id },
+                });
+            }
             return interaction.reply({ content: deleted ? `Deleted mod note ${deleted.id}.` : 'No matching note was found.', flags: 64 });
         }
 

@@ -7,6 +7,11 @@ function getMemberCounters(config = getConfig()) {
 
 async function countCounter(guild, counter) {
     const fetchedMembers = await guild.members.fetch().catch(error => {
+        if (error?.name === 'GatewayRateLimitError' || error?.data?.opcode === 8) {
+            console.warn(`Member counter ${counter.channelId} used cached members after gateway rate limit. Retry after ${error.data?.retry_after || 'unknown'} seconds.`);
+            return null;
+        }
+
         console.error(`Failed to fetch members for counter ${counter.channelId}:`, error);
         return null;
     });

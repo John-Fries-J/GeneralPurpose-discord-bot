@@ -34,11 +34,24 @@ async function safeDm(user, payload) {
 }
 
 async function safeReply(interaction, payload) {
-    if (interaction.replied || interaction.deferred) {
-        return interaction.followUp(payload);
-    }
+    try {
+        if (interaction.replied) {
+            return interaction.followUp(payload);
+        }
 
-    return interaction.reply(payload);
+        if (interaction.deferred) {
+            return interaction.editReply(payload);
+        }
+
+        return interaction.reply(payload);
+    } catch (error) {
+        if (error?.code === 10062 || error?.code === 40060) {
+            console.warn(`Interaction response skipped: ${error.message}`);
+            return null;
+        }
+
+        throw error;
+    }
 }
 
 function truncate(value, maxLength = 1000) {

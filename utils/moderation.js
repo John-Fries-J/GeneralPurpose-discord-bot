@@ -126,7 +126,7 @@ async function getOrCreateMuteRole(guild) {
     const roleName = config.moderation?.muteRoleName || 'Muted';
     const role = await guild.roles.create({
         name: roleName,
-        color: 0x747f8d,
+        colors: { primaryColor: 0x747f8d },
         permissions: [],
         reason: 'Creating role-based mute role',
     });

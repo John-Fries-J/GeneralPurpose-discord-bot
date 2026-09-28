@@ -1,6 +1,7 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const language = require('../../utils/language');
 const { parseDuration } = require('../../utils/duration');
+const { safeReply } = require('../../utils/discord');
 const { createEmbed } = require('../../utils/embeds');
 const { upsertTempMute } = require('../../utils/store');
 const { getOrCreateMuteRole, logModerationAction, muteMemberWithRole, sendModerationDm, validateTarget } = require('../../utils/moderation');
@@ -16,6 +17,8 @@ module.exports = {
         .addStringOption(option => option.setName('reason').setDescription('The reason for the mute.')),
 
     async execute(interaction) {
+        await interaction.deferReply({ flags: 64 });
+
         const user = interaction.options.getUser('user', true);
         const duration = interaction.options.getString('duration', true);
         const reason = interaction.options.getString('reason') || language.general.noReason;
@@ -23,11 +26,11 @@ module.exports = {
         const target = await validateTarget(interaction, user, 'moderatable');
 
         if (!target.ok) {
-            return interaction.reply({ content: target.message === language.moderation.cannotModerateUser ? language.moderation.cannotMute : target.message, flags: 64 });
+            return safeReply(interaction, { content: target.message === language.moderation.cannotModerateUser ? language.moderation.cannotMute : target.message });
         }
 
         if (!durationInMs) {
-            return interaction.reply({ content: language.moderation.invalidDuration, flags: 64 });
+            return safeReply(interaction, { content: language.moderation.invalidDuration });
         }
 
         const muteRole = await getOrCreateMuteRole(interaction.guild);
@@ -71,6 +74,6 @@ module.exports = {
             ],
         });
 
-        await interaction.reply({ embeds: [embed], flags: 64 });
+        await safeReply(interaction, { embeds: [embed] });
     },
 };
