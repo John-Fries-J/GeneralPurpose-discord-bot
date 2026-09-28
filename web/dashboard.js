@@ -9,6 +9,7 @@ const { appendDashboardLog, clearDashboardLogs, readDashboardLogs } = require('.
 const { getCommandSettings } = require('../utils/features');
 const language = require('../utils/language');
 const { getCommandAccess, normalizeIdList } = require('../utils/permissions');
+const { buildHealthReport } = require('../services/diagnostics');
 const {
     createScheduledMessage,
     deleteEmbedTemplate,
@@ -986,12 +987,15 @@ function startDashboard(client) {
         next();
     });
 
-    app.get('/health', (req, res) => res.json({
-        ok: true,
-        discordReady: client.isReady?.() === true,
-        guilds: client.guilds?.cache?.size || 0,
-        uptimeSeconds: Math.floor(process.uptime()),
-    }));
+    app.get('/health', async (req, res) => {
+        const health = await buildHealthReport(client);
+        res.status(health.processAlive ? 200 : 500).json(health);
+    });
+
+    app.get('/ready', async (req, res) => {
+        const health = await buildHealthReport(client);
+        res.status(health.ok ? 200 : 503).json(health);
+    });
 
     app.get('/login', (req, res) => {
         const currentSettings = getDashboardConfig();

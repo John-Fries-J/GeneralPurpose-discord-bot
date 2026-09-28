@@ -515,8 +515,13 @@ async function initializeDatabase(options = {}) {
 async function healthcheck() {
     const db = await openDatabase();
     const started = Date.now();
+    runMigrations(db);
     db.prepare('SELECT 1 AS ok').get();
-    return { provider: 'sqlite', latencyMs: Date.now() - started, path: cached.path };
+    db.transaction(() => {
+        db.prepare('INSERT OR REPLACE INTO scheduled_jobs (name, last_run_at, last_duration_ms, last_error, running_since, updated_at) VALUES (?, ?, ?, NULL, NULL, ?)').run('__healthcheck', Date.now(), 0, Date.now());
+        db.prepare('DELETE FROM scheduled_jobs WHERE name = ?').run('__healthcheck');
+    })();
+    return { provider: 'sqlite', latencyMs: Date.now() - started, path: cached.path, writable: true };
 }
 
 module.exports = {
