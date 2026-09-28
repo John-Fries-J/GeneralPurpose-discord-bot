@@ -12,18 +12,23 @@ module.exports = {
             await newMessage.fetch().catch(() => null);
         }
 
-        if (!oldMessage.guild || oldMessage.author?.bot || oldMessage.content === newMessage.content) return;
+        const guild = newMessage.guild || oldMessage.guild;
+        const author = newMessage.author || oldMessage.author;
+        const oldContent = String(oldMessage.content || '').trim();
+        const newContent = String(newMessage.content || '').trim();
 
-        await sendLog(oldMessage.guild, {
+        if (!guild || !author || author.bot || oldContent === newContent || (!oldContent && !newContent)) return;
+
+        await sendLog(guild, {
             type: 'messageUpdate',
-            title: `Message edited in #${oldMessage.channel?.name || 'unknown'}`,
+            title: `Message edited in #${newMessage.channel?.name || oldMessage.channel?.name || 'unknown'}`,
             color: 'orange',
-            user: oldMessage.author,
+            user: author,
             fields: [
-                { name: 'Author', value: oldMessage.author ? `${oldMessage.author.tag} (${oldMessage.author.id})` : 'Unknown', inline: true },
-                { name: 'Channel', value: oldMessage.channel ? `<#${oldMessage.channel.id}>` : 'Unknown', inline: true },
-                { name: 'Old message', value: truncate(oldMessage.content, 1024) },
-                { name: 'New message', value: truncate(newMessage.content, 1024) },
+                { name: 'Author', value: `${author.tag || author.username} (${author.id})`, inline: true },
+                { name: 'Channel', value: newMessage.channel ? `<#${newMessage.channel.id}>` : 'Unknown', inline: true },
+                { name: 'Old message', value: truncate(oldContent, 1024) },
+                { name: 'New message', value: truncate(newContent, 1024) },
                 { name: 'Jump', value: `[Go to message](${newMessage.url})` },
             ],
         }).catch(error => {
