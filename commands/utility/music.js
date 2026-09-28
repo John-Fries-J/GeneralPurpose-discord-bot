@@ -2,6 +2,7 @@ const { SlashCommandBuilder } = require('discord.js');
 const {
     createAttachmentTrack,
     enqueue,
+    generateDependencyReport,
     getMusicErrorMessage,
     getMusicSettings,
     getQueueSummary,
@@ -36,7 +37,11 @@ module.exports = {
         .addSubcommand(subcommand =>
             subcommand
                 .setName('stop')
-                .setDescription('Stop playback and leave voice.')),
+                .setDescription('Stop playback and leave voice.'))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('debug')
+                .setDescription('Show music voice diagnostics.')),
 
     async execute(interaction) {
         const subcommand = interaction.options.getSubcommand();
@@ -46,7 +51,10 @@ module.exports = {
             try {
                 const track = await resolvePlayableTrack(interaction.options.getString('query', true), interaction.user.id);
                 const queue = await enqueue(interaction, track);
-                const position = queue.current === track ? 'now playing' : `queued at position ${queue.tracks.length}`;
+                const connecting = queue.connection?.state.status !== 'ready';
+                const position = queue.current === track
+                    ? (connecting ? `queued; voice is still connecting (${queue.connection.state.status})` : 'now playing')
+                    : `queued at position ${queue.tracks.length}`;
                 return interaction.editReply(`Added **${track.title}** (${track.source}); ${position}.`);
             } catch (error) {
                 return interaction.editReply(getMusicErrorMessage(error));
@@ -67,7 +75,10 @@ module.exports = {
 
                 const track = createAttachmentTrack(attachment, interaction.user.id);
                 const queue = await enqueue(interaction, track);
-                const position = queue.current === track ? 'now playing' : `queued at position ${queue.tracks.length}`;
+                const connecting = queue.connection?.state.status !== 'ready';
+                const position = queue.current === track
+                    ? (connecting ? `queued; voice is still connecting (${queue.connection.state.status})` : 'now playing')
+                    : `queued at position ${queue.tracks.length}`;
                 return interaction.editReply(`Added **${track.title}**; ${position}.`);
             } catch (error) {
                 return interaction.editReply(getMusicErrorMessage(error));
@@ -78,8 +89,9 @@ module.exports = {
             const queue = getQueueSummary(interaction.guild.id);
             const lines = [
                 queue.current ? `Now: **${queue.current.title}**` : 'Nothing is currently playing.',
+                queue.connectionState ? `Voice: ${queue.connectionState}` : null,
                 ...queue.tracks.slice(0, 10).map((track, index) => `${index + 1}. ${track.title}`),
-            ];
+            ].filter(Boolean);
             return interaction.reply({ content: lines.join('\n'), flags: 64 });
         }
 
@@ -89,6 +101,26 @@ module.exports = {
 
         if (subcommand === 'stop') {
             return interaction.reply({ content: stop(interaction.guild.id) ? 'Stopped playback and left voice.' : 'Nothing is playing.', flags: 64 });
+        }
+
+        if (subcommand === 'debug') {
+            const queue = getQueueSummary(interaction.guild.id);
+            const report = generateDependencyReport()
+                .split('\n')
+                .filter(line => /@discordjs\/voice|discord\.js|libsodium|ffmpeg|node/i.test(line))
+                .join('\n')
+                .slice(0, 1500);
+            return interaction.reply({
+                content: [
+                    `Voice: ${queue.connectionState || 'not connected'}`,
+                    `Current: ${queue.current?.title || 'none'}`,
+                    `Queued: ${queue.tracks.length}`,
+                    '```',
+                    report,
+                    '```',
+                ].join('\n'),
+                flags: 64,
+            });
         }
     },
 };

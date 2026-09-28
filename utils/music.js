@@ -6,6 +6,7 @@ const {
     createAudioPlayer,
     createAudioResource,
     entersState,
+    generateDependencyReport,
     getVoiceConnection,
     joinVoiceChannel,
     NoSubscriberBehavior,
@@ -15,6 +16,8 @@ const play = require('play-dl');
 
 const queues = new Map();
 const voiceConnectionAttempts = new Map();
+const observedConnections = new WeakSet();
+let dependencyReportLogged = false;
 
 class MusicUserError extends Error {}
 
@@ -157,6 +160,35 @@ function logVoiceJoinFailure(interaction, voiceChannel, error, attempt) {
     });
 }
 
+function logMusicDependencyReport() {
+    if (dependencyReportLogged) return;
+    dependencyReportLogged = true;
+    console.log(`[MUSIC] Voice dependency report:\n${generateDependencyReport()}`);
+}
+
+function describeConnectionState(connection) {
+    const state = connection?.state;
+    if (!state) return 'unknown';
+    const reason = state.reason ? ` reason=${state.reason}` : '';
+    const closeCode = state.closeCode ? ` closeCode=${state.closeCode}` : '';
+    return `${state.status}${reason}${closeCode}`;
+}
+
+function observeConnection(connection, guildId) {
+    if (!connection || observedConnections.has(connection)) return;
+    observedConnections.add(connection);
+
+    connection.on('stateChange', (oldState, newState) => {
+        console.log('[MUSIC] Voice connection state changed:', {
+            guildId,
+            oldStatus: oldState.status,
+            newStatus: newState.status,
+            reason: newState.reason,
+            closeCode: newState.closeCode,
+        });
+    });
+}
+
 function destroyVoiceConnection(connection) {
     if (!connection || connection.state.status === VoiceConnectionStatus.Destroyed) return;
 
@@ -172,31 +204,38 @@ function destroyVoiceConnection(connection) {
 }
 
 async function joinReadyVoiceChannel(interaction, voiceChannel, attempt = 1, settings = getMusicSettings()) {
+    logMusicDependencyReport();
+
     const connection = joinVoiceChannel({
         channelId: voiceChannel.id,
         guildId: interaction.guild.id,
         adapterCreator: interaction.guild.voiceAdapterCreator,
         selfDeaf: true,
     });
+    observeConnection(connection, interaction.guild.id);
 
     try {
         return await entersState(connection, VoiceConnectionStatus.Ready, settings.readyTimeoutMs);
     } catch (error) {
         logVoiceJoinFailure(interaction, voiceChannel, error, attempt);
-        destroyVoiceConnection(connection);
 
         if (attempt <= settings.maxJoinRetries && isAbortError(error)) {
+            destroyVoiceConnection(connection);
             await wait(settings.retryDelayMs);
             return joinReadyVoiceChannel(interaction, voiceChannel, attempt + 1, settings);
         }
 
         if (isAbortError(error)) {
-            const retryText = settings.maxJoinRetries
-                ? `I retried ${settings.maxJoinRetries} time(s) and reset the voice connection.`
-                : 'I reset the voice connection and did not retry automatically.';
-            throw new MusicUserError(`Discord voice timed out while I was joining. ${retryText} Try \`/music play\` again. If it keeps happening, restart the bot container and check outbound UDP/networking.`);
+            console.warn('[MUSIC] Voice connection did not become ready before timeout; keeping it alive for Discord voice to finish connecting.', {
+                guildId: interaction.guild.id,
+                channelId: voiceChannel.id,
+                state: describeConnectionState(connection),
+                timeoutMs: settings.readyTimeoutMs,
+            });
+            return connection;
         }
 
+        destroyVoiceConnection(connection);
         throw error;
     }
 }
@@ -208,6 +247,7 @@ async function connectVoiceChannel(interaction, voiceChannel) {
     const queue = queues.get(guildId);
 
     if (existing) {
+        observeConnection(existing, guildId);
         if (existing.joinConfig?.channelId && existing.joinConfig.channelId !== voiceChannel.id) {
             if (queue?.current || queue?.tracks?.length) {
                 throw new MusicUserError(`I am already playing in <#${existing.joinConfig.channelId}>. Use \`/music stop\` there before moving me.`);
@@ -220,6 +260,16 @@ async function connectVoiceChannel(interaction, voiceChannel) {
                 return await entersState(existing, VoiceConnectionStatus.Ready, settings.readyTimeoutMs);
             } catch (error) {
                 logVoiceJoinFailure(interaction, voiceChannel, error, 'existing');
+                if (isAbortError(error)) {
+                    console.warn('[MUSIC] Existing voice connection is still not ready; reusing it instead of forcing a leave/rejoin.', {
+                        guildId,
+                        channelId: voiceChannel.id,
+                        state: describeConnectionState(existing),
+                        timeoutMs: settings.readyTimeoutMs,
+                    });
+                    return existing;
+                }
+
                 destroyVoiceConnection(existing);
             }
         }
@@ -273,6 +323,12 @@ async function playNext(queue) {
     const track = queue.tracks.shift();
     queue.current = track;
     try {
+        if (queue.connection?.state.status !== VoiceConnectionStatus.Ready) {
+            console.warn('[MUSIC] Starting audio player before voice connection is ready; audio will begin once Discord voice is ready.', {
+                guildId: queue.guildId,
+                state: describeConnectionState(queue.connection),
+            });
+        }
         const source = await track.streamFactory();
         const resource = source.inputType
             ? createAudioResource(source.stream, { inputType: source.inputType })
@@ -333,10 +389,12 @@ function stop(guildId) {
 
 function getQueueSummary(guildId) {
     const queue = queues.get(guildId);
-    if (!queue) return { current: null, tracks: [] };
+    if (!queue) return { current: null, tracks: [], connectionState: null };
     return {
         current: queue.current,
         tracks: queue.tracks,
+        connectionState: describeConnectionState(queue.connection),
+        connectionReady: queue.connection?.state.status === VoiceConnectionStatus.Ready,
     };
 }
 
@@ -356,6 +414,8 @@ module.exports = {
     enqueue,
     getMusicErrorMessage,
     getQueueSummary,
+    describeConnectionState,
+    generateDependencyReport,
     resolvePlayableTrack,
     skip,
     stop,
