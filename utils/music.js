@@ -1,4 +1,5 @@
 const { Readable } = require('node:stream');
+const { PermissionFlagsBits } = require('discord.js');
 const {
     AudioPlayerStatus,
     createAudioPlayer,
@@ -12,6 +13,9 @@ const {
 const play = require('play-dl');
 
 const queues = new Map();
+const voiceReadyTimeoutMs = 20_000;
+
+class MusicUserError extends Error {}
 
 function getQueue(guildId) {
     if (!queues.has(guildId)) {
@@ -103,18 +107,39 @@ async function resolvePlayableTrack(query, requestedBy) {
         source,
         requestedBy,
         streamFactory: async () => {
-            const stream = await play.stream(url, { discordPlayerCompatibility: true });
+            const stream = await play.stream(url);
             return { stream: stream.stream, inputType: stream.type };
         },
     };
 }
 
+function getBotVoicePermissions(voiceChannel, interaction) {
+    const botMember = interaction.guild.members.me;
+    return botMember ? voiceChannel.permissionsFor(botMember) : null;
+}
+
 async function ensureConnection(interaction) {
     const voiceChannel = interaction.member?.voice?.channel;
-    if (!voiceChannel) throw new Error('Join a voice channel first.');
+    if (!voiceChannel) throw new MusicUserError('Join a voice channel first.');
+
+    const permissions = getBotVoicePermissions(voiceChannel, interaction);
+    if (permissions && !permissions.has(PermissionFlagsBits.Connect)) {
+        throw new MusicUserError('I need permission to connect to your voice channel.');
+    }
+    if (permissions && !permissions.has(PermissionFlagsBits.Speak)) {
+        throw new MusicUserError('I need permission to speak in your voice channel.');
+    }
 
     const existing = getVoiceConnection(interaction.guild.id);
-    if (existing) return existing;
+    if (existing) {
+        if (existing.state.status === VoiceConnectionStatus.Ready) return existing;
+
+        try {
+            return await entersState(existing, VoiceConnectionStatus.Ready, 5_000);
+        } catch {
+            existing.destroy();
+        }
+    }
 
     const connection = joinVoiceChannel({
         channelId: voiceChannel.id,
@@ -122,8 +147,16 @@ async function ensureConnection(interaction) {
         adapterCreator: interaction.guild.voiceAdapterCreator,
         selfDeaf: true,
     });
-    await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
-    return connection;
+
+    try {
+        return await entersState(connection, VoiceConnectionStatus.Ready, voiceReadyTimeoutMs);
+    } catch (error) {
+        connection.destroy();
+        if (error?.name === 'AbortError' || error?.code === 'ABORT_ERR') {
+            throw new MusicUserError('I could not connect to the voice channel before Discord timed out. Check the channel permissions, region, and that I can connect/speak.');
+        }
+        throw error;
+    }
 }
 
 async function playNext(queue) {
@@ -131,12 +164,20 @@ async function playNext(queue) {
 
     const track = queue.tracks.shift();
     queue.current = track;
-    const source = await track.streamFactory();
-    const resource = source.inputType
-        ? createAudioResource(source.stream, { inputType: source.inputType })
-        : createAudioResource(source.stream);
-    queue.player.play(resource);
-    queue.textChannel?.send(`Now playing: **${track.title}**`).catch(() => null);
+    try {
+        const source = await track.streamFactory();
+        const resource = source.inputType
+            ? createAudioResource(source.stream, { inputType: source.inputType })
+            : createAudioResource(source.stream);
+        queue.player.play(resource);
+        queue.textChannel?.send(`Now playing: **${track.title}**`).catch(() => null);
+    } catch (error) {
+        queue.current = null;
+        if (/FFmpeg|avconv/i.test(error?.message || '')) {
+            throw new MusicUserError('Music playback needs FFmpeg. Rebuild the Docker image so the new FFmpeg package is installed, then restart the bot.');
+        }
+        throw error;
+    }
 }
 
 async function enqueue(interaction, track) {
@@ -176,9 +217,21 @@ function getQueueSummary(guildId) {
     };
 }
 
+function getMusicErrorMessage(error) {
+    if (error instanceof MusicUserError) return error.message;
+    if (error?.name === 'AbortError' || error?.code === 'ABORT_ERR') {
+        return 'I could not connect to the voice channel before Discord timed out. Check the channel permissions, region, and that I can connect/speak.';
+    }
+    if (/FFmpeg|avconv/i.test(error?.message || '')) {
+        return 'Music playback needs FFmpeg. Rebuild the Docker image so the new FFmpeg package is installed, then restart the bot.';
+    }
+    return error?.message || 'Music playback failed.';
+}
+
 module.exports = {
     createAttachmentTrack,
     enqueue,
+    getMusicErrorMessage,
     getQueueSummary,
     resolvePlayableTrack,
     skip,

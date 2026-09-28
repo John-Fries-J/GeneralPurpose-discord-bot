@@ -2,6 +2,7 @@ const { SlashCommandBuilder } = require('discord.js');
 const {
     createAttachmentTrack,
     enqueue,
+    getMusicErrorMessage,
     getQueueSummary,
     resolvePlayableTrack,
     skip,
@@ -41,23 +42,31 @@ module.exports = {
 
         if (subcommand === 'play') {
             await interaction.deferReply({ flags: 64 });
-            const track = await resolvePlayableTrack(interaction.options.getString('query', true), interaction.user.id);
-            const queue = await enqueue(interaction, track);
-            const position = queue.current === track ? 'now playing' : `queued at position ${queue.tracks.length}`;
-            return interaction.editReply(`Added **${track.title}** (${track.source}); ${position}.`);
+            try {
+                const track = await resolvePlayableTrack(interaction.options.getString('query', true), interaction.user.id);
+                const queue = await enqueue(interaction, track);
+                const position = queue.current === track ? 'now playing' : `queued at position ${queue.tracks.length}`;
+                return interaction.editReply(`Added **${track.title}** (${track.source}); ${position}.`);
+            } catch (error) {
+                return interaction.editReply(getMusicErrorMessage(error));
+            }
         }
 
         if (subcommand === 'file') {
             await interaction.deferReply({ flags: 64 });
-            const attachment = interaction.options.getAttachment('audio', true);
-            if (!attachment.contentType?.startsWith('audio/') && !/\.(mp3|wav|ogg|flac|m4a|aac)$/i.test(attachment.name || '')) {
-                return interaction.editReply('Upload a recognizable audio file.');
-            }
+            try {
+                const attachment = interaction.options.getAttachment('audio', true);
+                if (!attachment.contentType?.startsWith('audio/') && !/\.(mp3|wav|ogg|flac|m4a|aac)$/i.test(attachment.name || '')) {
+                    return interaction.editReply('Upload a recognizable audio file.');
+                }
 
-            const track = createAttachmentTrack(attachment, interaction.user.id);
-            const queue = await enqueue(interaction, track);
-            const position = queue.current === track ? 'now playing' : `queued at position ${queue.tracks.length}`;
-            return interaction.editReply(`Added **${track.title}**; ${position}.`);
+                const track = createAttachmentTrack(attachment, interaction.user.id);
+                const queue = await enqueue(interaction, track);
+                const position = queue.current === track ? 'now playing' : `queued at position ${queue.tracks.length}`;
+                return interaction.editReply(`Added **${track.title}**; ${position}.`);
+            } catch (error) {
+                return interaction.editReply(getMusicErrorMessage(error));
+            }
         }
 
         if (subcommand === 'queue') {
