@@ -169,6 +169,10 @@ function removeTempBan(db, guildId, userId) {
     db.prepare('DELETE FROM temporary_bans WHERE guild_id = ? AND user_id = ?').run(guildId, userId);
 }
 
+function listExpiredTempBans(db, timestamp = now()) {
+    return db.prepare('SELECT guild_id guildId, user_id userId, user_tag userTag, moderator_id moderatorId, reason, expires_at expiresAt, created_at createdAt, updated_at updatedAt FROM temporary_bans WHERE expires_at <= ? ORDER BY expires_at ASC').all(timestamp);
+}
+
 function upsertTempMute(db, record) {
     const timestamp = now();
     db.prepare(`
@@ -186,6 +190,11 @@ function upsertTempMute(db, record) {
 
 function removeTempMute(db, guildId, userId) {
     db.prepare('DELETE FROM temporary_mutes WHERE guild_id = ? AND user_id = ?').run(guildId, userId);
+}
+
+function listExpiredTempMutes(db, timestamp = now()) {
+    return db.prepare('SELECT guild_id guildId, user_id userId, user_tag userTag, moderator_id moderatorId, reason, removed_role_ids removedRoleIds, expires_at expiresAt, created_at createdAt, updated_at updatedAt FROM temporary_mutes WHERE expires_at <= ? ORDER BY expires_at ASC').all(timestamp)
+        .map(row => ({ ...row, removedRoleIds: parseJson(row.removedRoleIds, []) }));
 }
 
 function getTempMute(db, guildId, userId) {
@@ -732,6 +741,8 @@ module.exports = {
     listDueReminders,
     listDueScheduledMessages,
     listEmbedTemplates,
+    listExpiredTempBans,
+    listExpiredTempMutes,
     listExpiredTempRoles,
     listLevelLeaderboard,
     listModNotes,

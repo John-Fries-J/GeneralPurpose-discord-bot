@@ -1,4 +1,4 @@
-const { listExpiredTempRoles, readState, removeTempBan, removeTempMute, removeTempRole } = require('./store');
+const { listExpiredTempBans, listExpiredTempMutes, listExpiredTempRoles, removeTempBan, removeTempMute, removeTempRole } = require('./store');
 const { appendDashboardLog } = require('./dashboardLogs');
 const { getOrCreateMuteRole, restoreMutedMember } = require('./moderation');
 
@@ -6,7 +6,7 @@ const checkIntervalMs = 60 * 1000;
 
 async function expireTempBans(client) {
     const now = Date.now();
-    const expired = (await readState()).tempBans.filter(record => record.expiresAt <= now);
+    const expired = await listExpiredTempBans(now);
 
     for (const record of expired) {
         const guild = client.guilds.cache.get(record.guildId);
@@ -26,7 +26,7 @@ async function expireTempBans(client) {
 
 async function expireTempMutes(client) {
     const now = Date.now();
-    const expired = (await readState()).tempMutes.filter(record => record.expiresAt <= now);
+    const expired = await listExpiredTempMutes(now);
 
     for (const record of expired) {
         const guild = client.guilds.cache.get(record.guildId);

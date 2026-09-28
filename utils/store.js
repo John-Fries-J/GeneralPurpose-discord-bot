@@ -520,6 +520,18 @@ async function listExpiredTempRoles(timestamp = Date.now()) {
     return (await readState()).tempRoles.filter(record => record.expiresAt <= timestamp);
 }
 
+async function listExpiredTempBans(timestamp = Date.now()) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listExpiredTempBans(await getSqliteDb(), timestamp);
+    return (await readState()).tempBans.filter(record => record.expiresAt <= timestamp);
+}
+
+async function listExpiredTempMutes(timestamp = Date.now()) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listExpiredTempMutes(await getSqliteDb(), timestamp);
+    return (await readState()).tempMutes.filter(record => record.expiresAt <= timestamp);
+}
+
 async function appendVoiceActivity(record) {
     const settings = getStorageSettings();
     if (settings.provider === 'sqlite') return repository.appendVoiceActivity(await getSqliteDb(), record);
@@ -1027,6 +1039,8 @@ module.exports = {
     listCommandStats,
     listDueReminders,
     listEmbedTemplates,
+    listExpiredTempBans,
+    listExpiredTempMutes,
     listExpiredTempRoles,
     listLevelLeaderboard,
     listDueScheduledMessages,
