@@ -10,6 +10,7 @@ const { startPunishmentScheduler } = require('../utils/punishments');
 const { startScheduledMessageScheduler } = require('../utils/scheduledMessages');
 const { initializeStorage } = require('../utils/store');
 const { startTicketScheduler } = require('../utils/tickets');
+const { createScheduler } = require('../services/scheduler');
 
 module.exports = {
     name: Events.ClientReady,
@@ -25,6 +26,8 @@ module.exports = {
         client.levelingScheduler = startLevelingScheduler(client);
         client.scheduledMessageScheduler = startScheduledMessageScheduler(client);
         client.ticketScheduler = startTicketScheduler(client);
+        client.scheduler = createScheduler(client);
+        client.scheduler.start();
         bootstrapNameless(client).then(scheduler => {
             client.namelessMcScheduler = scheduler;
         }).catch(error => {

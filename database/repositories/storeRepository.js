@@ -630,6 +630,35 @@ function updateReminderStatus(db, id, status, error = null) {
     return mapReminder(db.prepare('SELECT * FROM reminders WHERE id = ?').get(id));
 }
 
+function markScheduledJobStart(db, name) {
+    const timestamp = now();
+    db.prepare(`
+        INSERT INTO scheduled_jobs (name, running_since, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(name) DO UPDATE SET
+            running_since = excluded.running_since,
+            updated_at = excluded.updated_at
+    `).run(name, timestamp, timestamp);
+}
+
+function markScheduledJobFinish(db, name, durationMs, error = null) {
+    const timestamp = now();
+    db.prepare(`
+        INSERT INTO scheduled_jobs (name, last_run_at, last_duration_ms, last_error, running_since, updated_at)
+        VALUES (?, ?, ?, ?, NULL, ?)
+        ON CONFLICT(name) DO UPDATE SET
+            last_run_at = excluded.last_run_at,
+            last_duration_ms = excluded.last_duration_ms,
+            last_error = excluded.last_error,
+            running_since = NULL,
+            updated_at = excluded.updated_at
+    `).run(name, timestamp, durationMs, error, timestamp);
+}
+
+function listScheduledJobStatus(db) {
+    return db.prepare('SELECT name, last_run_at lastRunAt, last_duration_ms lastDurationMs, last_error lastError, running_since runningSince, updated_at updatedAt FROM scheduled_jobs ORDER BY name ASC').all();
+}
+
 function importState(db, state = {}) {
     const counts = {};
     const count = (name, records, fn) => {
@@ -707,6 +736,7 @@ module.exports = {
     listLevelLeaderboard,
     listModNotes,
     listReminders,
+    listScheduledJobStatus,
     listScheduledMessages,
     listTempVoiceChannelsForGuild,
     listTicketRecords,
@@ -722,6 +752,8 @@ module.exports = {
     removeTempVoiceChannel,
     updateModerationCaseReason,
     updateReminderStatus,
+    markScheduledJobFinish,
+    markScheduledJobStart,
     updateScheduledMessageStatus,
     upsertEmbedTemplate,
     upsertStarboardMessage,

@@ -982,6 +982,24 @@ async function updateReminderStatus(id, status, error = null) {
     return updated;
 }
 
+async function markScheduledJobStart(name) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.markScheduledJobStart(await getSqliteDb(), name);
+    return null;
+}
+
+async function markScheduledJobFinish(name, durationMs, error = null) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.markScheduledJobFinish(await getSqliteDb(), name, durationMs, error);
+    return null;
+}
+
+async function listScheduledJobStatus() {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listScheduledJobStatus(await getSqliteDb());
+    return [];
+}
+
 module.exports = {
     addUserHistory,
     addModNote,
@@ -1014,6 +1032,7 @@ module.exports = {
     listDueScheduledMessages,
     listModNotes,
     listScheduledMessages,
+    listScheduledJobStatus,
     listTicketRecords,
     listTicketTranscripts,
     listTempVoiceChannelsForGuild,
@@ -1027,6 +1046,8 @@ module.exports = {
     removeTempVoiceChannel,
     recordCommandUsage,
     updateReminderStatus,
+    markScheduledJobFinish,
+    markScheduledJobStart,
     updateScheduledMessageStatus,
     updateModerationCaseReason,
     upsertEmbedTemplate,
