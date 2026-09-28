@@ -13,6 +13,7 @@ function getLevelingConfig(config = getConfig()) {
         ignoredRoleIds: Array.isArray(config.leveling?.ignoredRoleIds) ? config.leveling.ignoredRoleIds : [],
         roleMultipliers: Array.isArray(config.leveling?.roleMultipliers) ? config.leveling.roleMultipliers : [],
         channelMultipliers: Array.isArray(config.leveling?.channelMultipliers) ? config.leveling.channelMultipliers : [],
+        xpPerLevelBase: Number(config.leveling?.xpPerLevelBase || 100),
     };
 }
 
@@ -26,6 +27,42 @@ function allowsVoiceXp(settings) {
 
 function getTotalXp(record) {
     return Number(record?.textXp || 0) + Number(record?.voiceXp || 0);
+}
+
+function getXpForLevel(level, settings = getLevelingConfig()) {
+    const safeLevel = Math.max(0, Number(level) || 0);
+    const base = Math.max(1, Number(settings.xpPerLevelBase || 100));
+    return Math.floor((base * safeLevel * (safeLevel + 1)) / 2);
+}
+
+function getLevelProgress(record, settings = getLevelingConfig()) {
+    const totalXp = getTotalXp(record);
+    let level = 0;
+
+    while (totalXp >= getXpForLevel(level + 1, settings)) {
+        level += 1;
+    }
+
+    const currentLevelXp = getXpForLevel(level, settings);
+    const nextLevelXp = getXpForLevel(level + 1, settings);
+    const progressXp = totalXp - currentLevelXp;
+    const neededXp = nextLevelXp - currentLevelXp;
+
+    return {
+        level,
+        totalXp,
+        currentLevelXp,
+        nextLevelXp,
+        progressXp,
+        neededXp,
+        percent: neededXp > 0 ? progressXp / neededXp : 1,
+    };
+}
+
+function formatProgressBar(percent, size = 20) {
+    const safePercent = Math.max(0, Math.min(1, Number(percent) || 0));
+    const filled = Math.round(safePercent * size);
+    return `[${'#'.repeat(filled)}${'-'.repeat(size - filled)}]`;
 }
 
 function getMultiplier(member, channelId, settings) {
@@ -114,9 +151,12 @@ module.exports = {
     awardTextXp,
     awardVoiceXp,
     getLevelingConfig,
+    getLevelProgress,
     getMultiplier,
     getTotalXp,
     getUserLevelRecord,
+    getXpForLevel,
+    formatProgressBar,
     isIgnoredForXp,
     listLevelLeaderboard,
     startLevelingScheduler,

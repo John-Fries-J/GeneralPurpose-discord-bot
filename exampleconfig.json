@@ -65,6 +65,7 @@
         "textXpPerMessage": 1,
         "voiceXpPerMinute": 1,
         "cooldownSeconds": 60,
+        "xpPerLevelBase": 100,
         "roleRewards": [],
         "ignoredChannelIds": [],
         "ignoredRoleIds": [],

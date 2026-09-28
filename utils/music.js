@@ -13,7 +13,7 @@ const {
 const play = require('play-dl');
 
 const queues = new Map();
-const voiceReadyTimeoutMs = 20_000;
+const voiceReadyTimeoutMs = 45_000;
 
 class MusicUserError extends Error {}
 
@@ -118,6 +118,55 @@ function getBotVoicePermissions(voiceChannel, interaction) {
     return botMember ? voiceChannel.permissionsFor(botMember) : null;
 }
 
+function isAbortError(error) {
+    return error?.name === 'AbortError' || error?.code === 'ABORT_ERR';
+}
+
+function wait(ms) {
+    return new Promise(resolve => {
+        setTimeout(resolve, ms);
+    });
+}
+
+function logVoiceJoinFailure(interaction, voiceChannel, error, attempt) {
+    console.warn('Music voice connection attempt failed:', {
+        attempt,
+        guildId: interaction.guild.id,
+        channelId: voiceChannel.id,
+        channelName: voiceChannel.name,
+        error: error?.message || String(error),
+        code: error?.code,
+        name: error?.name,
+    });
+}
+
+async function joinReadyVoiceChannel(interaction, voiceChannel, attempt = 1) {
+    const connection = joinVoiceChannel({
+        channelId: voiceChannel.id,
+        guildId: interaction.guild.id,
+        adapterCreator: interaction.guild.voiceAdapterCreator,
+        selfDeaf: true,
+    });
+
+    try {
+        return await entersState(connection, VoiceConnectionStatus.Ready, voiceReadyTimeoutMs);
+    } catch (error) {
+        logVoiceJoinFailure(interaction, voiceChannel, error, attempt);
+        connection.destroy();
+
+        if (attempt < 2 && isAbortError(error)) {
+            await wait(1_000);
+            return joinReadyVoiceChannel(interaction, voiceChannel, attempt + 1);
+        }
+
+        if (isAbortError(error)) {
+            throw new MusicUserError('Discord voice timed out while I was joining. I reset the voice connection and retried once; try `/music play` again. If it keeps happening, restart the bot container and check outbound UDP/networking.');
+        }
+
+        throw error;
+    }
+}
+
 async function ensureConnection(interaction) {
     const voiceChannel = interaction.member?.voice?.channel;
     if (!voiceChannel) throw new MusicUserError('Join a voice channel first.');
@@ -132,31 +181,21 @@ async function ensureConnection(interaction) {
 
     const existing = getVoiceConnection(interaction.guild.id);
     if (existing) {
-        if (existing.state.status === VoiceConnectionStatus.Ready) return existing;
-
-        try {
-            return await entersState(existing, VoiceConnectionStatus.Ready, 5_000);
-        } catch {
+        if (existing.joinConfig?.channelId && existing.joinConfig.channelId !== voiceChannel.id) {
             existing.destroy();
+        } else {
+            if (existing.state.status === VoiceConnectionStatus.Ready) return existing;
+
+            try {
+                return await entersState(existing, VoiceConnectionStatus.Ready, 10_000);
+            } catch (error) {
+                logVoiceJoinFailure(interaction, voiceChannel, error, 0);
+                existing.destroy();
+            }
         }
     }
 
-    const connection = joinVoiceChannel({
-        channelId: voiceChannel.id,
-        guildId: interaction.guild.id,
-        adapterCreator: interaction.guild.voiceAdapterCreator,
-        selfDeaf: true,
-    });
-
-    try {
-        return await entersState(connection, VoiceConnectionStatus.Ready, voiceReadyTimeoutMs);
-    } catch (error) {
-        connection.destroy();
-        if (error?.name === 'AbortError' || error?.code === 'ABORT_ERR') {
-            throw new MusicUserError('I could not connect to the voice channel before Discord timed out. Check the channel permissions, region, and that I can connect/speak.');
-        }
-        throw error;
-    }
+    return joinReadyVoiceChannel(interaction, voiceChannel);
 }
 
 async function playNext(queue) {
@@ -219,8 +258,8 @@ function getQueueSummary(guildId) {
 
 function getMusicErrorMessage(error) {
     if (error instanceof MusicUserError) return error.message;
-    if (error?.name === 'AbortError' || error?.code === 'ABORT_ERR') {
-        return 'I could not connect to the voice channel before Discord timed out. Check the channel permissions, region, and that I can connect/speak.';
+    if (isAbortError(error)) {
+        return 'Discord voice timed out while I was joining. Try `/music play` again. If it keeps happening, restart the bot container and check outbound UDP/networking.';
     }
     if (/FFmpeg|avconv/i.test(error?.message || '')) {
         return 'Music playback needs FFmpeg. Rebuild the Docker image so the new FFmpeg package is installed, then restart the bot.';
