@@ -5,7 +5,7 @@ const { isCommandEnabled } = require('../utils/features');
 const { memberCanUseCommand } = require('../utils/permissions');
 const { addUserHistory, recordCommandUsage } = require('../utils/store');
 const { handleHoneypotButton } = require('../utils/honeypot');
-const { closeTicket, customIds: ticketCustomIds, deleteTicket, openTicket } = require('../utils/tickets');
+const { handleTicketButton, handleTicketModal, handleTicketUserSelect } = require('../utils/tickets');
 const { handleRulesAgreementButton } = require('../utils/community');
 const { handleMusicButton } = require('../utils/musicButtons');
 const {
@@ -136,19 +136,7 @@ async function runButton(interaction) {
     if (await handleRulesAgreementButton(interaction)) return true;
     if (await handleMusicButton(interaction)) return true;
     if (await handleVoicePanelButton(interaction)) return true;
-
-    if (interaction.customId === ticketCustomIds.open || interaction.customId === 'open_ticket') {
-        await openTicket(interaction);
-        return true;
-    }
-    if (interaction.customId === ticketCustomIds.close || interaction.customId === 'close_ticket') {
-        await closeTicket(interaction);
-        return true;
-    }
-    if (interaction.customId === ticketCustomIds.delete || interaction.customId === 'delete_ticket') {
-        await deleteTicket(interaction);
-        return true;
-    }
+    if (await handleTicketButton(interaction)) return true;
 
     return false;
 }
@@ -172,6 +160,8 @@ async function routeInteraction(interaction) {
         || interaction.isChannelSelectMenu?.()
         || interaction.isMentionableSelectMenu?.()
     ) {
+        if (interaction.guild && interaction.isModalSubmit?.() && await handleTicketModal(interaction)) return true;
+        if (interaction.guild && interaction.isUserSelectMenu?.() && await handleTicketUserSelect(interaction)) return true;
         if (interaction.guild && interaction.isModalSubmit?.() && await handleVoicePanelModal(interaction)) return true;
         if (interaction.guild && interaction.isUserSelectMenu?.() && await handleVoicePanelUserSelect(interaction)) return true;
         await replyUnknownComponent(interaction);
