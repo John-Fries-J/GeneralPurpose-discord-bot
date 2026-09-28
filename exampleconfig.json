@@ -20,6 +20,15 @@
         "threadDelete": "",
         "threadUpdate": ""
     },
+    "logging": {
+        "showUserAvatars": true
+    },
+    "history": {
+        "enabled": true,
+        "recordMessages": true,
+        "recordCommands": true,
+        "maxEntries": 50000
+    },
     "tickets": {
         "channelId": "",
         "messageId": "",
@@ -160,7 +169,10 @@
     "music": {
         "enabled": true,
         "maxQueueLength": 50,
-        "allowFileUploads": true
+        "allowFileUploads": true,
+        "voiceReadyTimeoutMs": 60000,
+        "voiceJoinRetries": 0,
+        "voiceRetryDelayMs": 1000
     },
     "namelessmc": {
         "enabled": false,

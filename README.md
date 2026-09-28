@@ -168,7 +168,7 @@ Useful dashboard environment variables:
 
 No external database is required. The bot uses SQLite at `data/bot.sqlite` by default, which keeps moderation state local while avoiding fragile direct JSON writes.
 
-Existing small installs can still use JSON storage by setting `database.provider` to `json`; the JSON file lives at `data/bot-state.json`. MySQL and MongoDB fields remain in the example config as deployment placeholders, but the included adapters are SQLite and JSON.
+Existing small installs can still use JSON storage by setting `database.provider` to `json`; the JSON file lives at `data/bot-state.json`. MySQL is supported by setting `database.provider` to `mysql` and putting a MySQL connection string in `database.mysql.url`. Startup logs show the active provider, with credentials redacted.
 
 ## Commands
 
@@ -216,7 +216,7 @@ Tickets:
 - `/ticket add user` adds a user to the current ticket.
 - `/ticket remove user` removes a user from the current ticket.
 - `/ticket rename name` renames the current ticket.
-- `/ticket transcript` generates a paginated ticket transcript with message metadata, attachments, and embed counts.
+- `/ticket transcript` saves a dashboard transcript link with Discord-style HTML rendering. Viewers must sign in to the dashboard and be involved in the ticket or have staff/dashboard access.
 - `/close` closes the current ticket channel.
 - `/delete` deletes a closed ticket channel.
 
@@ -251,7 +251,7 @@ Config:
 - `/levelconfig enable mode text_xp voice_xp cooldown` enables leveling.
 - `/levelconfig add-role xp role` adds an XP role reward.
 - `/levelconfig remove-role role` removes a reward.
-- `/leaderboard` shows text, voice, and total XP leaders.
+- `/leaderboard type` shows total, text, or voice XP leaders.
 
 Honeypot:
 
