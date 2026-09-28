@@ -4,6 +4,7 @@ const { Client, Collection, GatewayIntentBits, Partials } = require('discord.js'
 const { getConfig } = require('./utils/config');
 const { assertValidConfig } = require('./utils/configValidation');
 const { loadCommands } = require('./utils/commands');
+const { destroyAllMusicVoiceConnections } = require('./services/musicLifecycle');
 const { startDashboard } = require('./web/dashboard');
 
 const config = getConfig();
@@ -92,6 +93,7 @@ async function shutdown(signal, exitCode = 0) {
     if (client.scheduler) {
         client.scheduler.stop();
     }
+    destroyAllMusicVoiceConnections(client);
 
     if (dashboardServer) {
         await new Promise(resolve => dashboardServer.close(resolve));
