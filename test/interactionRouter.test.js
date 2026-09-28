@@ -98,3 +98,37 @@ test('routeInteraction executes user context commands through command routing', 
         fs.rmSync(directory, { recursive: true, force: true });
     }
 });
+
+test('routeInteraction handles persistent music buttons through the central router', async () => {
+    const replies = [];
+
+    const handled = await routeInteraction({
+        guild: { id: 'guild' },
+        customId: 'music:queue',
+        isChatInputCommand: () => false,
+        isUserContextMenuCommand: () => false,
+        isMessageContextMenuCommand: () => false,
+        isAutocomplete: () => false,
+        isButton: () => true,
+        reply: async payload => replies.push(payload),
+    });
+
+    assert.equal(handled, true);
+    assert.equal(replies.length, 1);
+    assert.equal(replies[0].flags, MessageFlags.Ephemeral);
+    assert.equal(replies[0].embeds.length, 1);
+});
+
+test('/voice panel returns a persistent interactive control panel', async () => {
+    const command = require('../commands/utility/voice');
+    const replies = [];
+
+    await command.execute({
+        options: { getSubcommand: () => 'panel' },
+        reply: async payload => replies.push(payload),
+    });
+
+    assert.equal(replies.length, 1);
+    assert.equal(replies[0].flags, MessageFlags.Ephemeral);
+    assert.equal(replies[0].components.length, 5);
+});

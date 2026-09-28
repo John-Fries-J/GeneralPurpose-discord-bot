@@ -2,12 +2,14 @@ const { MessageFlags, PermissionFlagsBits, SlashCommandBuilder } = require('disc
 const { getConfig } = require('../../utils/config');
 const { deleteTemporaryVoiceChannel, getOwnedVoiceChannel, transferOwnership } = require('../../utils/joinToCreate');
 const { getTempVoiceChannel, upsertTempVoiceChannel } = require('../../utils/store');
+const { createVoicePanelPayload } = require('../../utils/voicePanel');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('voice')
         .setDescription('Manage your join-to-create voice channel.')
         .setDMPermission(false)
+        .addSubcommand(subcommand => subcommand.setName('panel').setDescription('Open the interactive temporary voice control panel.'))
         .addSubcommand(subcommand =>
             subcommand
                 .setName('limit')
@@ -46,6 +48,10 @@ module.exports = {
     async execute(interaction) {
         const subcommand = interaction.options.getSubcommand();
         const activeChannel = interaction.member?.voice?.channel;
+
+        if (subcommand === 'panel') {
+            return interaction.reply(createVoicePanelPayload());
+        }
 
         if (subcommand === 'claim') {
             if (!activeChannel) return interaction.reply({ content: 'Join the temporary voice channel first.', flags: MessageFlags.Ephemeral });

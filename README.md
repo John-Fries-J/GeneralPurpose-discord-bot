@@ -255,7 +255,8 @@ Config:
 
 Music:
 
-- `/music play query` accepts a direct URL or search text. Spotify track links are converted to a searchable track name; full Spotify audio is not streamed directly.
+- `/play query` accepts a direct URL or search text. `/play audio` accepts an uploaded audio file. The legacy `/music play` and `/music file` commands remain available for compatibility. Spotify track links are converted to a searchable track name; full Spotify audio is not streamed directly.
+- `/queue`, `/skip`, `/stop`, and `/volume amount` manage playback.
 - YouTube may require browser cookies on hosted servers. Export YouTube cookies in Netscape format to `data/youtube-cookies.txt`, or set `music.ytDlpCookiesPath` / `YTDLP_COOKIES_PATH` to another mounted path. Rebuild the Docker image after music dependency changes.
 
 Honeypot:
