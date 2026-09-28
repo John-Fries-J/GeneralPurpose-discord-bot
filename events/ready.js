@@ -3,13 +3,8 @@ const { getConfig } = require('../utils/config');
 const language = require('../utils/language');
 const { createEmbed } = require('../utils/embeds');
 const { findSendableChannel } = require('../utils/discord');
-const { startLevelingScheduler } = require('../utils/leveling');
-const { startMemberCounterScheduler } = require('../utils/memberCounters');
 const { bootstrapNameless } = require('../utils/namelessmc');
-const { startPunishmentScheduler } = require('../utils/punishments');
-const { startScheduledMessageScheduler } = require('../utils/scheduledMessages');
 const { initializeStorage } = require('../utils/store');
-const { startTicketScheduler } = require('../utils/tickets');
 const { createScheduler } = require('../services/scheduler');
 const { reconcileJoinToCreate } = require('../utils/joinToCreate');
 
@@ -22,11 +17,6 @@ module.exports = {
         await initializeStorage().catch(error => {
             console.error(`[DATABASE] Startup initialization failed: ${error.message}`);
         });
-        client.punishmentScheduler = startPunishmentScheduler(client);
-        client.memberCounterScheduler = startMemberCounterScheduler(client);
-        client.levelingScheduler = startLevelingScheduler(client);
-        client.scheduledMessageScheduler = startScheduledMessageScheduler(client);
-        client.ticketScheduler = startTicketScheduler(client);
         client.scheduler = createScheduler(client);
         client.scheduler.start();
         reconcileJoinToCreate(client).then(results => {

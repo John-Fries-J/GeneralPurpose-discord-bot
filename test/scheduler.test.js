@@ -117,3 +117,39 @@ test('due reminders persist and are delivered by the scheduler job', async () =>
         fs.rmSync(directory, { recursive: true, force: true });
     }
 });
+
+test('createScheduler registers restart-safe recurring maintenance jobs', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'bot-scheduler-jobs-'));
+    const { scheduler: schedulerModule, restore } = loadWithEnvironment({
+        DATABASE_PROVIDER: 'sqlite',
+        DATABASE_SQLITE_PATH: path.join(directory, 'state.sqlite'),
+        DATABASE_JSON_PATH: path.join(directory, 'missing.json'),
+    });
+
+    try {
+        const scheduler = schedulerModule.createScheduler({
+            guilds: { cache: new Map() },
+            users: { fetch: async () => null },
+        }, {
+            punishmentIntervalMs: 0,
+            scheduledMessageIntervalMs: 0,
+            memberCounterIntervalMs: 0,
+            voiceXpIntervalMs: 0,
+            ticketIntervalMs: 0,
+            reminderIntervalMs: 0,
+        });
+
+        const names = (await scheduler.status()).jobs.map(job => job.name).sort();
+        assert.deepEqual(names, [
+            'member-counters',
+            'punishments',
+            'reminders',
+            'scheduled-messages',
+            'ticket-inactivity',
+            'voice-xp',
+        ]);
+    } finally {
+        restore();
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});

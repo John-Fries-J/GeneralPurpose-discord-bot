@@ -735,12 +735,13 @@ async function deleteTicket(interaction) {
 async function autoCloseInactiveTickets(client) {
     const config = getConfig();
     const days = Number(config.tickets?.autoCloseDays || 0);
-    if (!days) return;
+    if (!days) return { closed: 0 };
 
     const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
     const records = await listTicketRecords(config.guildId, 500);
     const ticketConfig = getTicketConfig(config);
 
+    let closed = 0;
     for (const record of records.filter(item => item.status === 'open' && Number(item.lastActivityAt || item.createdAt || 0) <= cutoff)) {
         const guild = client.guilds.cache.get(record.guildId);
         if (!guild) continue;
@@ -769,7 +770,10 @@ async function autoCloseInactiveTickets(client) {
         await channel.setName(channel.name.replace('ticket-', 'closed-')).catch(() => null);
         await upsertTicketRecord({ ...record, status: 'closed', lastActivityAt: Date.now() });
         await channel.send(`Ticket auto-closed after ${days} day(s) of inactivity.`).catch(() => null);
+        closed += 1;
     }
+
+    return { closed };
 }
 
 function startTicketScheduler(client) {
@@ -780,6 +784,7 @@ function startTicketScheduler(client) {
 
 module.exports = {
     addTicketUser,
+    autoCloseInactiveTickets,
     buildTranscript,
     createDashboardTranscript,
     claimTicket,

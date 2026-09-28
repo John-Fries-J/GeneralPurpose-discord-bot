@@ -35,6 +35,8 @@ async function dispatchScheduledMessage(client, record) {
 
 async function runScheduledMessages(client) {
     const due = await listDueScheduledMessages();
+    let sent = 0;
+    let failed = 0;
 
     for (const record of due) {
         try {
@@ -42,11 +44,15 @@ async function runScheduledMessages(client) {
             await dispatchScheduledMessage(client, record);
             await updateScheduledMessageStatus(record.id, 'sent');
             appendDashboardLog('Scheduled message sent', { channelId: record.channelId, scheduledMessageId: record.id });
+            sent += 1;
         } catch (error) {
             await updateScheduledMessageStatus(record.id, 'failed', error.message);
             appendDashboardLog('Scheduled message failed', { channelId: record.channelId, scheduledMessageId: record.id, error: error.message });
+            failed += 1;
         }
     }
+
+    return { due: due.length, sent, failed };
 }
 
 function startScheduledMessageScheduler(client) {

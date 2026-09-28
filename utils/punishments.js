@@ -20,6 +20,8 @@ async function expireTempBans(client) {
             console.error(`Automatic unban failed for ${record.userId}:`, error);
         }
     }
+
+    return expired.length;
 }
 
 async function expireTempMutes(client) {
@@ -40,6 +42,8 @@ async function expireTempMutes(client) {
             console.error(`Automatic unmute failed for ${record.userId}:`, error);
         }
     }
+
+    return expired.length;
 }
 
 async function expireTempRoles(client) {
@@ -60,6 +64,8 @@ async function expireTempRoles(client) {
             console.error(`Temporary role expiry failed for ${record.userId}/${record.roleId}:`, error);
         }
     }
+
+    return expired.length;
 }
 
 function startPunishmentScheduler(client) {
@@ -74,6 +80,8 @@ function startPunishmentScheduler(client) {
 }
 
 module.exports = {
+    expireTempBans,
+    expireTempMutes,
     expireTempRoles,
     startPunishmentScheduler,
 };

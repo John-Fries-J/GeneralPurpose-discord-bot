@@ -6,6 +6,11 @@ const {
     markScheduledJobStart,
     updateReminderStatus,
 } = require('../utils/store');
+const { autoCloseInactiveTickets } = require('../utils/tickets');
+const { awardVoiceXp } = require('../utils/leveling');
+const { expireTempBans, expireTempMutes, expireTempRoles } = require('../utils/punishments');
+const { refreshMemberCounters } = require('../utils/memberCounters');
+const { runScheduledMessages } = require('../utils/scheduledMessages');
 
 const defaultReminderIntervalMs = 30 * 1000;
 
@@ -143,8 +148,45 @@ async function runReminderJob(client, { limit = 25 } = {}) {
 function createScheduler(client, options = {}) {
     const scheduler = new Scheduler({ logger: options.logger || console });
     scheduler.register({
+        name: 'punishments',
+        intervalMs: options.punishmentIntervalMs ?? 60 * 1000,
+        runOnStart: true,
+        run: async () => {
+            const [bans, mutes, roles] = await Promise.all([
+                expireTempBans(client),
+                expireTempMutes(client),
+                expireTempRoles(client),
+            ]);
+            return { bans, mutes, roles };
+        },
+    });
+    scheduler.register({
+        name: 'scheduled-messages',
+        intervalMs: options.scheduledMessageIntervalMs ?? 30 * 1000,
+        runOnStart: true,
+        run: () => runScheduledMessages(client),
+    });
+    scheduler.register({
+        name: 'member-counters',
+        intervalMs: options.memberCounterIntervalMs ?? 5 * 60 * 1000,
+        runOnStart: true,
+        run: () => refreshMemberCounters(client),
+    });
+    scheduler.register({
+        name: 'voice-xp',
+        intervalMs: options.voiceXpIntervalMs ?? 60 * 1000,
+        runOnStart: true,
+        run: () => awardVoiceXp(client),
+    });
+    scheduler.register({
+        name: 'ticket-inactivity',
+        intervalMs: options.ticketIntervalMs ?? 60 * 60 * 1000,
+        runOnStart: true,
+        run: () => autoCloseInactiveTickets(client),
+    });
+    scheduler.register({
         name: 'reminders',
-        intervalMs: options.reminderIntervalMs || defaultReminderIntervalMs,
+        intervalMs: options.reminderIntervalMs ?? defaultReminderIntervalMs,
         runOnStart: true,
         run: () => runReminderJob(client, options.reminders),
     });
