@@ -28,10 +28,26 @@ class MusicUserError extends Error {}
 const DEFAULT_VOICE_READY_TIMEOUT_MS = 60_000;
 const DEFAULT_VOICE_JOIN_RETRIES = 1;
 const DEFAULT_VOICE_RETRY_DELAY_MS = 1_000;
+const NETWORKING_STATUS_NAMES = new Map([
+    [0, 'OpeningWs'],
+    [1, 'Identifying'],
+    [2, 'UdpHandshaking'],
+    [3, 'SelectingProtocol'],
+    [4, 'Ready'],
+    [5, 'Resuming'],
+    [6, 'Closed'],
+]);
 
 function getIntegerSetting(value, fallback, min) {
     const number = Number(value ?? fallback);
     return Number.isInteger(number) && number >= min ? number : fallback;
+}
+
+function getBooleanSetting(value, envValue, fallback = false) {
+    if (typeof envValue === 'string') {
+        return /^(1|true|yes|on)$/i.test(envValue);
+    }
+    return typeof value === 'boolean' ? value : fallback;
 }
 
 function getMusicSettings(config = getConfig()) {
@@ -39,6 +55,7 @@ function getMusicSettings(config = getConfig()) {
     const maxJoinRetries = getIntegerSetting(config.music?.voiceJoinRetries, DEFAULT_VOICE_JOIN_RETRIES, 0);
     const retryDelayMs = getIntegerSetting(config.music?.voiceRetryDelayMs, DEFAULT_VOICE_RETRY_DELAY_MS, 0);
     const maxQueueLength = getIntegerSetting(config.music?.maxQueueLength, 50, 1);
+    const voiceDebug = getBooleanSetting(config.music?.voiceDebug, process.env.MUSIC_VOICE_DEBUG);
     const ytDlpCookiesPath = process.env.YTDLP_COOKIES_PATH || config.music?.ytDlpCookiesPath || 'data/youtube-cookies.txt';
 
     return {
@@ -48,6 +65,7 @@ function getMusicSettings(config = getConfig()) {
         readyTimeoutMs,
         maxJoinRetries,
         retryDelayMs,
+        voiceDebug,
         ytDlpCookiesPath,
     };
 }
@@ -392,7 +410,20 @@ function describeConnectionState(connection) {
     return `${state.status}${reason}${closeCode}`;
 }
 
-function observeConnection(connection, guildId) {
+function describeNetworkingState(state) {
+    const networking = state?.networking;
+    if (!networking?.state) return null;
+    const code = networking.state.code;
+    return NETWORKING_STATUS_NAMES.get(code) || `Unknown(${code})`;
+}
+
+function sanitizeVoiceDebugMessage(message) {
+    return String(message || '')
+        .replace(/token[=:]\s*["']?[^"',\s}]+/gi, 'token=<redacted>')
+        .replace(/session_?id[=:]\s*["']?[^"',\s}]+/gi, 'sessionId=<redacted>');
+}
+
+function observeConnection(connection, guildId, settings = getMusicSettings()) {
     if (!connection || observedConnections.has(connection)) return;
     observedConnections.add(connection);
 
@@ -401,10 +432,31 @@ function observeConnection(connection, guildId) {
             guildId,
             oldStatus: oldState.status,
             newStatus: newState.status,
+            oldNetworking: describeNetworkingState(oldState),
+            newNetworking: describeNetworkingState(newState),
             reason: newState.reason,
             closeCode: newState.closeCode,
         });
     });
+
+    connection.on('error', error => {
+        console.warn('[MUSIC] Voice connection error:', {
+            guildId,
+            error: error?.message || String(error),
+            code: error?.code,
+            name: error?.name,
+            state: describeConnectionState(connection),
+        });
+    });
+
+    if (settings.voiceDebug) {
+        connection.on('debug', message => {
+            console.log('[MUSIC] Voice debug:', {
+                guildId,
+                message: sanitizeVoiceDebugMessage(message),
+            });
+        });
+    }
 }
 
 function destroyVoiceConnection(connection) {
@@ -429,8 +481,9 @@ async function joinReadyVoiceChannel(interaction, voiceChannel, attempt = 1, set
         guildId: interaction.guild.id,
         adapterCreator: interaction.guild.voiceAdapterCreator,
         selfDeaf: true,
+        debug: settings.voiceDebug,
     });
-    observeConnection(connection, interaction.guild.id);
+    observeConnection(connection, interaction.guild.id, settings);
 
     try {
         return await entersState(connection, VoiceConnectionStatus.Ready, settings.readyTimeoutMs);
@@ -466,7 +519,7 @@ async function connectVoiceChannel(interaction, voiceChannel) {
     const queue = queues.get(guildId);
 
     if (existing) {
-        observeConnection(existing, guildId);
+        observeConnection(existing, guildId, settings);
         if (existing.joinConfig?.channelId && existing.joinConfig.channelId !== voiceChannel.id) {
             if (queue?.current || queue?.tracks?.length) {
                 throw new MusicUserError(`I am already playing in <#${existing.joinConfig.channelId}>. Use \`/music stop\` there before moving me.`);

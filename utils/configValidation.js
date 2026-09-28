@@ -271,6 +271,7 @@ function validateConfig(config, options = {}) {
         } else {
             validateBoolean(errors, config, 'music.enabled');
             validateBoolean(errors, config, 'music.allowFileUploads');
+            validateBoolean(errors, config, 'music.voiceDebug');
             validateInteger(errors, config, 'music.maxQueueLength', { min: 1, max: 1000 });
             validateInteger(errors, config, 'music.voiceReadyTimeoutMs', { min: 5000, max: 300000 });
             validateInteger(errors, config, 'music.voiceJoinRetries', { min: 0, max: 10 });

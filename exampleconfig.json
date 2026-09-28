@@ -173,6 +173,7 @@
         "voiceReadyTimeoutMs": 60000,
         "voiceJoinRetries": 1,
         "voiceRetryDelayMs": 1000,
+        "voiceDebug": false,
         "ytDlpCookiesPath": "data/youtube-cookies.txt"
     },
     "namelessmc": {
