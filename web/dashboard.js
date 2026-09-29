@@ -10,6 +10,15 @@ const { getCommandSettings } = require('../utils/features');
 const language = require('../utils/language');
 const { getCommandAccess, normalizeIdList } = require('../utils/permissions');
 const { buildHealthReport } = require('../services/diagnostics');
+const { applyDashboardSettings } = require('./services/dashboardConfig');
+const {
+    renderSegmented,
+    renderSelect,
+    renderSettingsForm,
+    renderTextInput,
+    renderTextarea,
+    renderToggle,
+} = require('./views/components/forms');
 const { escapeHtml } = require('./views/components/html');
 const { renderMetricCard, renderPageHeader } = require('./views/components/ui');
 const { renderLayout } = require('./views/layout');
@@ -178,6 +187,30 @@ function csrfInput(session) {
     return `<input type="hidden" name="_csrf" value="${escapeHtml(session.csrfToken)}">`;
 }
 
+function wantsJson(req) {
+    return req.get('x-dashboard-async') === '1' || req.accepts(['json', 'html']) === 'json';
+}
+
+function sendSettingsError(req, res, client, error) {
+    const message = error?.message || 'Settings were not saved.';
+    if (wantsJson(req)) {
+        return res.status(400).json({ ok: false, message });
+    }
+
+    return res.status(400).send(renderLayout('Settings not saved', `<section class="panel"><h2>Settings not saved</h2><p>${escapeHtml(message)}</p><p>Use the browser back button to keep editing.</p></section>`, req.dashboardSession.user, client));
+}
+
+function dashboardSettingsPage(section) {
+    return {
+        modules: '/modules',
+        welcome: '/community',
+        logging: '/config',
+        tickets: '/tickets',
+        joinToCreate: '/voice',
+        leveling: '/leveling',
+    }[section] || '/config';
+}
+
 function makeDiscordOauthUrl(settings) {
     cleanupExpiringMaps();
     const state = crypto.randomBytes(24).toString('hex');
@@ -291,6 +324,33 @@ function getSendableChannels(client) {
         .filter(channel => supported.has(channel.type))
         .filter(channel => channel.permissionsFor?.(guild.members.me)?.has(PermissionFlagsBits.SendMessages) !== false)
         .sort((a, b) => a.rawPosition - b.rawPosition || a.name.localeCompare(b.name));
+}
+
+function getGuildChannels(client) {
+    const guild = getDashboardGuild(client);
+    if (!guild?.channels?.cache) return [];
+
+    return [...guild.channels.cache.values()]
+        .filter(channel => channel?.id && channel?.name)
+        .sort((a, b) => (a.rawPosition ?? 0) - (b.rawPosition ?? 0) || a.name.localeCompare(b.name));
+}
+
+function channelLabel(channel) {
+    if (channel.type === ChannelType.GuildCategory) return `[category] ${channel.name}`;
+    if (channel.type === ChannelType.GuildVoice || channel.type === ChannelType.GuildStageVoice) return `[voice] ${channel.name}`;
+    if (channel.type === ChannelType.GuildAnnouncement) return `# ${channel.name} (announcement)`;
+    return `# ${channel.name}`;
+}
+
+function channelOptions(channels, types) {
+    const allowed = new Set(types);
+    return channels
+        .filter(channel => allowed.has(channel.type))
+        .map(channel => ({ value: channel.id, label: channelLabel(channel) }));
+}
+
+function roleOptions(roles) {
+    return roles.map(role => ({ value: role.id, label: `@${role.name}` }));
 }
 
 function getGuildRoles(client) {
@@ -516,6 +576,141 @@ ${csrfInput(session)}
 </section>`;
 }
 
+function renderModuleSettingsForm(grouped, settings, session) {
+    const rows = grouped.map(([category, commands]) => renderToggle(
+        `module:${category}`,
+        humanize(category),
+        settings.modules[category] !== false,
+        `${commands.length} command${commands.length === 1 ? '' : 's'}`,
+    )).join('');
+
+    return renderSettingsForm({
+        title: 'Module Settings',
+        description: 'Enable or disable command modules without editing commandSettings JSON.',
+        section: 'modules',
+        session,
+        body: `
+<input type="hidden" name="moduleKeys" value="${escapeHtml(grouped.map(([category]) => category).join(','))}">
+<div class="settings-grid">${rows}</div>`,
+    });
+}
+
+function renderWelcomeSettingsForm(config, channels, session) {
+    const welcome = config.WelcomeEmbed || {};
+    return renderSettingsForm({
+        title: 'Welcome',
+        description: 'Choose the welcome channel and edit the message users see when joining.',
+        section: 'welcome',
+        session,
+        body: `
+<div class="settings-stack">
+${renderToggle('welcomeEnabled', 'Welcome messages', Boolean(config.welcomeID), 'Send a welcome embed when a member joins.')}
+<div class="settings-grid">
+${renderSelect('welcomeID', 'Welcome channel', channelOptions(channels, [ChannelType.GuildText, ChannelType.GuildAnnouncement]), config.welcomeID, { emptyLabel: 'Choose a channel' })}
+${renderTextInput('welcomeTitle', 'Embed title', welcome.title || '', { maxLength: 256 })}
+</div>
+${renderTextarea('welcomeDescription', 'Message', welcome.description || '', { rows: 5, description: 'Supports placeholders already used by the welcome command, such as ${user}.' })}
+${renderTextInput('welcomeFooter', 'Footer', welcome.footer || '', { maxLength: 2048 })}
+</div>`,
+    });
+}
+
+function renderLoggingSettingsForm(config, channels, session) {
+    const logChannels = config.logChannels || {};
+    const sendable = channelOptions(channels, [ChannelType.GuildText, ChannelType.GuildAnnouncement]);
+    const select = (name, label) => renderSelect(name, label, sendable, logChannels[name], { emptyLabel: 'Use default / disabled' });
+
+    return renderSettingsForm({
+        title: 'Logging',
+        description: 'Map each log category to a Discord channel. Leave a category unset to use the default log channel where supported.',
+        section: 'logging',
+        session,
+        body: `
+<div class="settings-stack">
+${renderToggle('showUserAvatars', 'Show user avatars', config.logging?.showUserAvatars !== false, 'Include user avatars in supported log embeds.')}
+<div class="settings-grid">
+${select('logChannel', 'Default logs')}
+${select('moderation', 'Moderation')}
+${select('ticket', 'Tickets')}
+${select('suggestion', 'Suggestions')}
+${select('messageDelete', 'Message deletes')}
+${select('editMessage', 'Message edits')}
+${select('threadCreate', 'Thread creates')}
+${select('threadDelete', 'Thread deletes')}
+${select('threadUpdate', 'Thread updates')}
+${select('directMessage', 'Direct messages')}
+</div>
+</div>`,
+    });
+}
+
+function renderTicketSettingsForm(config, channels, roles, session) {
+    const tickets = config.tickets || {};
+    return renderSettingsForm({
+        title: 'Tickets',
+        description: 'Configure the ticket panel, ticket category, and staff access using Discord channel and role selectors.',
+        section: 'tickets',
+        session,
+        body: `
+<div class="settings-grid">
+${renderSelect('ticketChannelId', 'Panel channel', channelOptions(channels, [ChannelType.GuildText, ChannelType.GuildAnnouncement]), tickets.channelId, { emptyLabel: 'Choose a channel' })}
+${renderSelect('ticketCategoryId', 'Ticket category', channelOptions(channels, [ChannelType.GuildCategory]), tickets.categoryId, { emptyLabel: 'Choose a category' })}
+${renderSelect('supportRoleId', 'Support role', roleOptions(roles), tickets.supportRoleId || config.ticketRole, { emptyLabel: 'Choose a role' })}
+${renderTextInput('closeInactivityDays', 'Close inactivity days', tickets.closeInactivityDays ?? '', { type: 'number', description: '0 disables inactivity closing.' })}
+</div>
+<div class="settings-grid">
+${renderToggle('allowTranscripts', 'Allow transcripts', tickets.allowTranscripts !== false, 'Staff can generate transcript records.')}
+${renderToggle('allowUserAdding', 'Allow user adding', tickets.allowUserAdding !== false, 'Staff can add or remove ticket participants.')}
+${renderToggle('allowClaiming', 'Allow claiming', tickets.allowClaiming !== false, 'Staff can claim tickets.')}
+</div>`,
+    });
+}
+
+function renderJoinToCreateSettingsForm(config, channels, session) {
+    const voice = config.joinToCreate || {};
+    return renderSettingsForm({
+        title: 'Temporary Voice',
+        description: 'Configure join-to-create using real voice channel and category selectors.',
+        section: 'joinToCreate',
+        session,
+        body: `
+<div class="settings-stack">
+${renderToggle('enabled', 'Join-to-create', voice.enabled === true, 'Create temporary voice channels when users join the trigger channel.')}
+<div class="settings-grid">
+${renderSelect('triggerChannelId', 'Trigger channel', channelOptions(channels, [ChannelType.GuildVoice, ChannelType.GuildStageVoice]), voice.triggerChannelId, { emptyLabel: 'Choose a voice channel' })}
+${renderSelect('categoryId', 'Temporary channel category', channelOptions(channels, [ChannelType.GuildCategory]), voice.categoryId, { emptyLabel: 'Choose a category' })}
+${renderTextInput('nameFormat', 'Name format', voice.nameFormat || "{username}'s Channel", { description: 'Use {username}, {displayName}, {tag}, or {id}.' })}
+${renderTextInput('userLimitMax', 'Maximum users', voice.userLimitMax || 25, { type: 'number' })}
+${renderTextInput('emptyGraceSeconds', 'Empty grace period seconds', Math.round(Number(voice.emptyGraceMs || 10000) / 1000), { type: 'number' })}
+</div>
+</div>`,
+    });
+}
+
+function renderLevelingSettingsForm(config, session) {
+    const leveling = config.leveling || {};
+    return renderSettingsForm({
+        title: 'Leveling',
+        description: 'Configure leveling mode and XP pacing with bounded controls.',
+        section: 'leveling',
+        session,
+        body: `
+<div class="settings-stack">
+${renderToggle('enabled', 'Leveling', leveling.enabled === true, 'Award XP through text, voice, or both.')}
+<label>Mode${renderSegmented('mode', [
+        { value: 'text', label: 'Text' },
+        { value: 'voice', label: 'Voice' },
+        { value: 'both', label: 'Both' },
+    ], leveling.mode || 'both')}</label>
+<div class="settings-grid">
+${renderTextInput('textXpPerMessage', 'Text XP per message', leveling.textXpPerMessage ?? 1, { type: 'number' })}
+${renderTextInput('voiceXpPerMinute', 'Voice XP per minute', leveling.voiceXpPerMinute ?? 1, { type: 'number' })}
+${renderTextInput('cooldownSeconds', 'Text XP cooldown seconds', leveling.cooldownSeconds ?? 60, { type: 'number' })}
+</div>
+</div>`,
+    });
+}
+
 async function renderDashboard(client, session, notice = '', page = 'overview') {
     const config = getStoredConfig();
     const redactedConfig = redactSensitiveConfig(config);
@@ -526,6 +721,7 @@ async function renderDashboard(client, session, notice = '', page = 'overview') 
     const lockedWatermark = language.getLockedWatermark();
     const logs = readDashboardLogs(120);
     const channels = getSendableChannels(client);
+    const allChannels = getGuildChannels(client);
     const roles = getGuildRoles(client);
     const dashboardGuild = getDashboardGuild(client);
     const activeGuildId = dashboardGuild?.id || getDashboardConfig().guildId || config.guildId;
@@ -594,6 +790,12 @@ ${includeLanguageEditors ? getLanguageSectionsForCategory(category).map(section 
         : '<p class="muted">No saved templates yet.</p>';
     const commandsHtml = renderCommandSections(true);
     const accessHtml = renderCommandSections(false);
+    const moduleSettingsSection = renderModuleSettingsForm(grouped, settings, session);
+    const welcomeSettingsSection = renderWelcomeSettingsForm(config, allChannels, session);
+    const loggingSettingsSection = renderLoggingSettingsForm(config, allChannels, session);
+    const ticketSettingsSection = renderTicketSettingsForm(config, allChannels, roles, session);
+    const joinToCreateSettingsSection = renderJoinToCreateSettingsForm(config, allChannels, session);
+    const levelingSettingsForm = renderLevelingSettingsForm(config, session);
     const topbar = renderPageHeader({
         eyebrow: dashboardGuild?.name || 'Dashboard',
         title: 'Dashboard',
@@ -688,8 +890,10 @@ ${csrfInput(session)}
 </form>
 </section>`;
     const configSection = `
+${moduleSettingsSection}
+${loggingSettingsSection}
 <section class="panel" id="config">
-<h2>Config</h2>
+<h2>Advanced Config JSON</h2>
 <p class="muted">This edits config.json directly. Sensitive values are redacted and preserved if left unchanged. Create a backup before risky edits.</p>
 <form method="post" action="/config/backup" style="margin-bottom:12px">${csrfInput(session)}<input type="hidden" name="label" value="before-config-edit"><button class="secondary" type="submit">Create backup</button></form>
 <form method="post" action="/config-json">
@@ -749,20 +953,24 @@ ${renderConfigSectionEditor('autoMod', 'Auto-Mod Rules', 'Configure invite links
 ${renderConfigSectionEditor('moderation', 'Moderation Settings', 'Configure mute role and appeal URL for moderation DMs.', session, config.moderation || {})}
 <section class="grid"><div class="panel wide"><h2>Recent Cases</h2>${moderationCases.slice(0, 20).map(item => `<div class="row"><span>#${escapeHtml(item.id)} ${escapeHtml(item.type)} ${escapeHtml(item.userTag || item.userId)}<br><span class="muted">${escapeHtml(item.reason)}</span></span><span>${escapeHtml(new Date(item.createdAt).toLocaleString())}</span></div>`).join('') || '<p class="muted">No cases yet.</p>'}</div><div class="panel side"><h2>Recent Notes</h2>${modNotes.slice(0, 10).map(item => `<div class="row"><span>${escapeHtml(item.userTag || item.userId)}<br><span class="muted">${escapeHtml(item.note)}</span></span></div>`).join('') || '<p class="muted">No notes yet.</p>'}</div></section>`;
     const ticketsSection = `
-${renderConfigSectionEditor('tickets', 'Ticket Settings', 'Configure ticket panel channel, category, support role, auto-close days, and transcript behavior.', session, config.tickets || {})}
+${ticketSettingsSection}
+${renderConfigSectionEditor('tickets', 'Advanced Ticket JSON', 'Advanced ticket options that do not yet have dedicated controls.', session, config.tickets || {})}
 <section class="panel"><h2>Tickets</h2>${ticketRecords.length ? ticketRecords.map(item => `<div class="row"><span><strong><#${escapeHtml(item.channelId)}></strong><br><span class="muted">${escapeHtml(item.status)} - ${escapeHtml(item.priority)} - ${escapeHtml(item.tags?.join(', ') || 'no tags')}</span></span><span>${item.claimedById ? `Claimed by ${escapeHtml(item.claimedByTag || item.claimedById)}` : 'Unclaimed'}</span></div>`).join('') : '<p class="muted">No ticket records yet.</p>'}</section>
 <section class="panel"><h2>Transcripts</h2>${ticketTranscripts.length ? ticketTranscripts.map(item => `<div class="row"><span><strong>${escapeHtml(item.ticketName || item.channelName)}</strong><br><span class="muted">${escapeHtml(new Date(item.createdAt).toLocaleString())} - ${escapeHtml(item.messageCount)} messages</span></span><a class="button secondary" href="/transcripts/${encodeURIComponent(item.id)}">Open</a></div>`).join('') : '<p class="muted">No transcripts have been generated yet.</p>'}</section>`;
     const communitySection = `
-${renderConfigSectionEditor('WelcomeEmbed', 'Welcome / Leave Editor', 'Configure welcome copy and media. Leave messages can be added as leaveEmbed in config.json.', session, config.WelcomeEmbed || {})}
+${welcomeSettingsSection}
+${renderConfigSectionEditor('WelcomeEmbed', 'Advanced Welcome JSON', 'Advanced welcome embed options such as thumbnails and icons.', session, config.WelcomeEmbed || {})}
 ${renderConfigSectionEditor('reactionRoles', 'Reaction Roles', 'Configure reaction-role panels. Use messageId, emoji, and roleId entries for each panel.', session, config.reactionRoles || { enabled: false, panels: [] })}
 ${renderConfigSectionEditor('rulesAgreement', 'Rules Agreement Panel', 'Configure a rules acknowledgement panel and verified role.', session, config.rulesAgreement || { enabled: false, channelId: '', roleId: '' })}
 ${renderConfigSectionEditor('birthdays', 'Birthday Reminders', 'Configure birthday reminder channel and timezone.', session, config.birthdays || { enabled: false, channelId: '', timezone: 'Europe/London' })}
 ${renderConfigSectionEditor('starboard', 'Starboard', 'Configure highlight/starboard emoji, threshold, and destination channel.', session, config.starboard || { enabled: false, channelId: '', emoji: '⭐', threshold: 3 })}
 ${renderConfigSectionEditor('pollTemplates', 'Poll Templates', 'Saved poll presets for staff workflows.', session, config.pollTemplates || [])}`;
     const levelingSection = `
-${renderConfigSectionEditor('leveling', 'Leveling Rewards and Multipliers', 'Configure reward roles, ignored channels/roles, role/channel multipliers, and reset policy.', session, config.leveling || {})}`;
+${levelingSettingsForm}
+${renderConfigSectionEditor('leveling', 'Advanced Leveling JSON', 'Advanced leveling rewards, ignored channels/roles, and multipliers.', session, config.leveling || {})}`;
     const voiceSection = `
-${renderConfigSectionEditor('joinToCreate', 'Temporary Voice Controls', 'Configure join-to-create, naming, limits, categories, and presets.', session, config.joinToCreate || {})}
+${joinToCreateSettingsSection}
+${renderConfigSectionEditor('joinToCreate', 'Advanced Temporary Voice JSON', 'Advanced join-to-create options and future presets.', session, config.joinToCreate || {})}
 <section class="grid"><div class="panel wide"><h2>Active Temporary Channels</h2>${tempVoiceChannels.map(item => `<div class="row"><span><#${escapeHtml(item.channelId)}> owner <@${escapeHtml(item.ownerId)}></span><span>${escapeHtml(new Date(item.createdAt).toLocaleString())}</span></div>`).join('') || '<p class="muted">No active temporary voice channels.</p>'}</div><div class="panel side"><h2>Voice Activity</h2>${voiceActivity.slice(0, 20).map(item => `<div class="row"><span>${escapeHtml(item.userTag)} ${escapeHtml(item.type)}<br><span class="muted">${escapeHtml(item.oldChannelId || '-')} -> ${escapeHtml(item.newChannelId || '-')}</span></span></div>`).join('') || '<p class="muted">No voice activity yet.</p>'}</div></section>`;
     const mediaSection = `
 ${renderConfigSectionEditor('youtube', 'YouTube Targets', 'Manage channels to announce and their Discord destination channels.', session, config.youtube || {})}
@@ -779,7 +987,7 @@ ${renderConfigSectionEditor('music', 'Music Settings', 'Configure music feature 
         audit: `${topbar}${auditSection}`,
         analytics: `${topbar}${analyticsSection}`,
         health: `${topbar}${healthSection}`,
-        modules: `${topbar}${moduleLinksSection}<section>${commandsHtml}</section>`,
+        modules: `${topbar}${moduleSettingsSection}${moduleLinksSection}<section>${commandsHtml}</section>`,
         commands: `${topbar}${roleReferenceSection}<section>${accessHtml}</section>`,
         moderation: `${topbar}${moderationSection}`,
         tickets: `${topbar}${ticketsSection}`,
@@ -951,6 +1159,44 @@ function startDashboard(client) {
 
         appendDashboardLog('Command access updated', { command: commandName, userId: req.dashboardSession.user.id });
         res.redirect('/commands');
+    });
+
+    app.post('/dashboard-settings', requireAuth, requireCsrf, (req, res) => {
+        try {
+            let result;
+            const channels = getGuildChannels(client);
+            const roles = getGuildRoles(client);
+            const allowedModules = groupCommands(client).map(([category]) => category);
+
+            updateConfig(config => {
+                result = applyDashboardSettings(config, req.body, {
+                    allowedModules,
+                    channels,
+                    roles,
+                });
+
+                const errors = validateConfig(config);
+                if (errors.length) {
+                    throw new Error(errors.join(' '));
+                }
+
+                return config;
+            });
+
+            appendDashboardLog('Dashboard settings saved', {
+                section: result.section,
+                userId: req.dashboardSession.user.id,
+            });
+
+            if (wantsJson(req)) {
+                return res.json({ ok: true, message: result.message });
+            }
+
+            const page = dashboardSettingsPage(result.section);
+            return res.redirect(`${page}?message=${encodeURIComponent(result.message)}`);
+        } catch (error) {
+            return sendSettingsError(req, res, client, error);
+        }
     });
 
     app.post('/language-section', requireAuth, requireCsrf, (req, res) => {

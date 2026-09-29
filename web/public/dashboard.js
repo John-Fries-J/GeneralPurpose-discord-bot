@@ -52,3 +52,73 @@ if (messageForm) {
     messageForm.addEventListener('input', renderPreview);
     renderPreview();
 }
+
+const serializeForm = form => new URLSearchParams(new FormData(form)).toString();
+const dirtyForms = new Set();
+
+document.querySelectorAll('[data-dirty-form]').forEach(form => {
+    let initial = serializeForm(form);
+    const feedback = form.querySelector('[data-form-feedback]');
+    const submitButton = form.querySelector('button[type="submit"]');
+    const setFeedback = (message, type = '') => {
+        if (!feedback) return;
+        feedback.textContent = message;
+        feedback.hidden = !message;
+        feedback.classList.toggle('success', type === 'success');
+        feedback.classList.toggle('error', type === 'error');
+    };
+    const updateDirtyState = () => {
+        const isDirty = serializeForm(form) !== initial;
+        form.classList.toggle('is-dirty', isDirty);
+        if (isDirty) {
+            dirtyForms.add(form);
+        } else {
+            dirtyForms.delete(form);
+        }
+    };
+
+    form.addEventListener('input', updateDirtyState);
+    form.addEventListener('change', updateDirtyState);
+    form.addEventListener('reset', () => {
+        window.setTimeout(updateDirtyState, 0);
+    });
+    form.addEventListener('submit', async event => {
+        if (!window.fetch) return;
+
+        event.preventDefault();
+        setFeedback('');
+        if (submitButton) submitButton.disabled = true;
+
+        try {
+            const response = await fetch(form.action, {
+                method: form.method || 'POST',
+                headers: {
+                    Accept: 'application/json',
+                    'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                    'X-Dashboard-Async': '1',
+                },
+                body: serializeForm(form),
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(data.message || 'Settings were not saved.');
+            }
+
+            initial = serializeForm(form);
+            form.classList.remove('is-dirty');
+            dirtyForms.delete(form);
+            setFeedback(data.message || 'Settings saved.', 'success');
+        } catch (error) {
+            updateDirtyState();
+            setFeedback(error.message || 'Settings were not saved.', 'error');
+        } finally {
+            if (submitButton) submitButton.disabled = false;
+        }
+    });
+});
+
+window.addEventListener('beforeunload', event => {
+    if (!dirtyForms.size) return;
+    event.preventDefault();
+    event.returnValue = '';
+});
