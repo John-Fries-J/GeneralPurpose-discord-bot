@@ -3,7 +3,7 @@ const path = require('node:path');
 const Database = require('better-sqlite3');
 const { getConfig } = require('../utils/config');
 
-const schemaVersion = 1;
+const schemaVersion = 2;
 
 let cached = null;
 
@@ -337,6 +337,55 @@ function runMigrations(db) {
             updated_at INTEGER NOT NULL,
             PRIMARY KEY (guild_id, message_id)
         );
+    `);
+
+    applyMigration(db, 2, 'guild_configuration_schema', `
+        CREATE TABLE guild_settings (
+            guild_id TEXT NOT NULL,
+            section TEXT NOT NULL,
+            setting_key TEXT NOT NULL,
+            value_json TEXT NOT NULL,
+            updated_by TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (guild_id, section, setting_key)
+        );
+        CREATE INDEX idx_guild_settings_section ON guild_settings(guild_id, section);
+
+        CREATE TABLE guild_log_channels (
+            guild_id TEXT NOT NULL,
+            log_key TEXT NOT NULL,
+            channel_id TEXT NOT NULL DEFAULT '',
+            updated_by TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (guild_id, log_key)
+        );
+
+        CREATE TABLE guild_level_rewards (
+            guild_id TEXT NOT NULL,
+            role_id TEXT NOT NULL,
+            xp INTEGER NOT NULL,
+            updated_by TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (guild_id, role_id)
+        );
+        CREATE INDEX idx_guild_level_rewards_guild_xp ON guild_level_rewards(guild_id, xp);
+
+        CREATE TABLE guild_config_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            guild_id TEXT NOT NULL,
+            actor_id TEXT,
+            section TEXT NOT NULL,
+            setting_key TEXT NOT NULL,
+            previous_value TEXT NOT NULL,
+            new_value TEXT NOT NULL,
+            source TEXT NOT NULL,
+            created_at INTEGER NOT NULL
+        );
+        CREATE INDEX idx_guild_config_audit_guild_created ON guild_config_audit(guild_id, created_at);
+        CREATE INDEX idx_guild_config_audit_section ON guild_config_audit(guild_id, section, created_at);
     `);
 }
 
