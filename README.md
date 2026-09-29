@@ -10,7 +10,7 @@ For support questions, join the Discord: https://discord.gg/dCCksYzPWU
 
 ## Requirements
 
-- Node.js 20 or newer
+- Node.js 22.12 or newer
 - A Discord bot token
 - Server member, message content, and moderation intents enabled in the Discord Developer Portal
 - Bot permissions for moderation features: manage roles, manage channels, ban members, moderate members, and create invites
