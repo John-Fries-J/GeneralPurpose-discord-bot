@@ -5,7 +5,12 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { closeDatabase } = require('../database');
 const { routeInteraction } = require('../interactions/router');
-const { createAddModeratorNoteModal, createModerationActionModal, moderationContextIds } = require('../utils/moderationContext');
+const {
+    createAddModeratorNoteModal,
+    createModerationActionModal,
+    moderationContextIds,
+    showModerateUserInterface,
+} = require('../utils/moderationContext');
 const { listModNotes, listModerationCases, listUserHistory } = require('../utils/store');
 const { createUserHistoryPayload } = require('../utils/userHistoryView');
 
@@ -47,6 +52,22 @@ test('createModerationActionModal encodes the action and target user id', () => 
 
     assert.equal(modal.custom_id, `${moderationContextIds.actionModalPrefix}warn:target`);
     assert.equal(modal.components[0].components[0].custom_id, 'reason');
+});
+
+test('showModerateUserInterface renders a structured moderation panel', async () => {
+    const replies = [];
+    await showModerateUserInterface({
+        targetUser: {
+            id: 'target',
+            tag: 'Target#0001',
+        },
+        reply: async payload => replies.push(payload),
+    });
+
+    assert.equal(replies.length, 1);
+    assert.equal(replies[0].embeds.length, 1);
+    assert.match(replies[0].embeds[0].data.title, /Moderate Target#0001/);
+    assert.equal(replies[0].components.length, 1);
 });
 
 test('routeInteraction opens moderation action modals from string selects', async () => {

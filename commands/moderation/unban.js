@@ -1,7 +1,5 @@
-const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
-const language = require('../../utils/language');
-const { logModerationAction } = require('../../utils/moderation');
-const { removeTempBan } = require('../../utils/store');
+const { MessageFlags, PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
+const moderationService = require('../../services/moderation');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -15,21 +13,11 @@ module.exports = {
     async execute(interaction) {
         const userId = interaction.options.getString('user_id', true).trim();
         const reason = interaction.options.getString('reason') || 'Unbanned';
+        const result = await moderationService.unban(interaction, { userId, reason });
 
-        try {
-            const user = await interaction.guild.members.unban(userId, reason);
-            await removeTempBan(interaction.guild.id, userId);
-            await logModerationAction(interaction, {
-                caseType: 'unban',
-                title: 'User unbanned',
-                color: 'green',
-                user,
-                reason,
-            });
-            await interaction.reply({ content: `${user.tag} has been unbanned. ${language.moderation.caseLogged}`, flags: 64 });
-        } catch (error) {
-            console.error('Unban failed:', error);
-            await interaction.reply({ content: 'I could not unban that user. Make sure the ID is correct and the user is banned.', flags: 64 });
-        }
+        return interaction.reply({
+            content: result.ok ? result.content : result.message,
+            flags: MessageFlags.Ephemeral,
+        });
     },
 };

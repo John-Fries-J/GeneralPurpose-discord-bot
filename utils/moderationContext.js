@@ -11,7 +11,7 @@ const {
     TextInputStyle,
 } = require('discord.js');
 const moderationService = require('../services/moderation');
-const { addModNote, addUserHistory } = require('./store');
+const { createEmbed } = require('./embeds');
 const { safeReply, truncate } = require('./discord');
 
 const moderationContextIds = {
@@ -149,7 +149,15 @@ async function showAddModeratorNoteModal(interaction) {
 async function showModerateUserInterface(interaction) {
     const user = interaction.targetUser;
     await interaction.reply({
-        content: `Moderation actions for **${user.tag || user.username || user.id}**`,
+        embeds: [createEmbed({
+            title: `Moderate ${user.tag || user.username || user.id}`,
+            description: 'Choose an action. Kick and ban require confirmation before the reason form opens.',
+            color: 'orange',
+            fields: [
+                { name: 'Target', value: `<@${user.id}>`, inline: true },
+                { name: 'User ID', value: user.id, inline: true },
+            ],
+        })],
         components: createModerationActionComponents(user),
         flags: MessageFlags.Ephemeral,
     });
@@ -291,28 +299,14 @@ async function handleModerationContextModal(interaction) {
         return true;
     }
 
-    const note = await addModNote({
-        guildId: interaction.guild.id,
-        userId: user.id,
-        userTag: user.tag,
-        moderatorId: interaction.user.id,
-        moderatorTag: interaction.user.tag,
+    const result = await moderationService.addNote(interaction, {
+        user,
         note: noteText,
-    });
-
-    await addUserHistory({
-        guildId: interaction.guild.id,
-        userId: user.id,
-        userTag: user.tag,
-        type: 'modnote',
-        summary: note.note,
-        channelId: interaction.channelId,
-        moderatorId: interaction.user.id,
-        metadata: { noteId: note.id, source: 'context-menu' },
+        source: 'context-menu',
     });
 
     await interaction.reply({
-        content: `Saved mod note ${note.id} for ${user.tag}.`,
+        content: result.ok ? result.content : result.message,
         flags: MessageFlags.Ephemeral,
     });
     return true;
