@@ -45,6 +45,55 @@ test('routeInteraction replies gracefully to unknown buttons', async () => {
     assert.equal(replies[0].flags, MessageFlags.Ephemeral);
 });
 
+test('routeInteraction replies gracefully to unknown modals', async () => {
+    const replies = [];
+    const handled = await routeInteraction({
+        guild: { id: 'guild' },
+        customId: 'old:modal',
+        isChatInputCommand: () => false,
+        isUserContextMenuCommand: () => false,
+        isMessageContextMenuCommand: () => false,
+        isAutocomplete: () => false,
+        isButton: () => false,
+        isModalSubmit: () => true,
+        isRepliable: () => true,
+        replied: false,
+        deferred: false,
+        reply: async payload => replies.push(payload),
+    });
+
+    assert.equal(handled, false);
+    assert.equal(replies.length, 1);
+    assert.equal(replies[0].flags, MessageFlags.Ephemeral);
+});
+
+test('routeInteraction replies gracefully to unknown select menus', async () => {
+    const replies = [];
+    const handled = await routeInteraction({
+        guild: { id: 'guild' },
+        customId: 'old:role-select',
+        isChatInputCommand: () => false,
+        isUserContextMenuCommand: () => false,
+        isMessageContextMenuCommand: () => false,
+        isAutocomplete: () => false,
+        isButton: () => false,
+        isModalSubmit: () => false,
+        isStringSelectMenu: () => false,
+        isUserSelectMenu: () => false,
+        isRoleSelectMenu: () => true,
+        isChannelSelectMenu: () => false,
+        isMentionableSelectMenu: () => false,
+        isRepliable: () => true,
+        replied: false,
+        deferred: false,
+        reply: async payload => replies.push(payload),
+    });
+
+    assert.equal(handled, false);
+    assert.equal(replies.length, 1);
+    assert.equal(replies[0].flags, MessageFlags.Ephemeral);
+});
+
 test('routeInteraction returns empty autocomplete choices for commands without handlers', async () => {
     const responses = [];
     await routeInteraction({

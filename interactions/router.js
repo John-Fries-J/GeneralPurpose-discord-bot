@@ -4,16 +4,11 @@ const { formatInteractionCommand, safeReply } = require('../utils/discord');
 const { isCommandEnabled } = require('../utils/features');
 const { memberCanUseCommand } = require('../utils/permissions');
 const { addUserHistory, recordCommandUsage } = require('../utils/store');
-const { handleHoneypotButton } = require('../utils/honeypot');
-const { handleTicketButton, handleTicketModal, handleTicketUserSelect } = require('../utils/tickets');
-const { handleRulesAgreementButton } = require('../utils/community');
-const { handleMusicButton } = require('../utils/musicButtons');
-const {
-    handleVoicePanelButton,
-    handleVoicePanelModal,
-    handleVoicePanelUserSelect,
-} = require('../utils/voicePanel');
 const { logger } = require('../utils/logger');
+const { routeButtonInteraction } = require('./buttons');
+const { isContextCommand, routeContextCommand } = require('./context');
+const { routeModalInteraction } = require('./modals');
+const { isSelectInteraction, routeSelectInteraction } = require('./selects');
 
 const interactionLogger = logger.child({ component: 'interactions' });
 
@@ -130,20 +125,20 @@ async function runAutocomplete(interaction) {
 }
 
 async function runButton(interaction) {
-    if (!interaction.guild) return false;
+    return routeButtonInteraction(interaction);
+}
 
-    if (await handleHoneypotButton(interaction)) return true;
-    if (await handleRulesAgreementButton(interaction)) return true;
-    if (await handleMusicButton(interaction)) return true;
-    if (await handleVoicePanelButton(interaction)) return true;
-    if (await handleTicketButton(interaction)) return true;
+async function runModal(interaction) {
+    return routeModalInteraction(interaction);
+}
 
-    return false;
+async function runSelect(interaction) {
+    return routeSelectInteraction(interaction);
 }
 
 async function routeInteraction(interaction) {
     if (interaction.isChatInputCommand?.()) return runChatInputCommand(interaction);
-    if (interaction.isUserContextMenuCommand?.() || interaction.isMessageContextMenuCommand?.()) return runApplicationCommand(interaction);
+    if (isContextCommand(interaction)) return routeContextCommand(interaction, runApplicationCommand);
     if (interaction.isAutocomplete?.()) return runAutocomplete(interaction);
 
     if (interaction.isButton?.()) {
@@ -152,20 +147,16 @@ async function routeInteraction(interaction) {
         return handled;
     }
 
-    if (
-        interaction.isModalSubmit?.()
-        || interaction.isStringSelectMenu?.()
-        || interaction.isUserSelectMenu?.()
-        || interaction.isRoleSelectMenu?.()
-        || interaction.isChannelSelectMenu?.()
-        || interaction.isMentionableSelectMenu?.()
-    ) {
-        if (interaction.guild && interaction.isModalSubmit?.() && await handleTicketModal(interaction)) return true;
-        if (interaction.guild && interaction.isUserSelectMenu?.() && await handleTicketUserSelect(interaction)) return true;
-        if (interaction.guild && interaction.isModalSubmit?.() && await handleVoicePanelModal(interaction)) return true;
-        if (interaction.guild && interaction.isUserSelectMenu?.() && await handleVoicePanelUserSelect(interaction)) return true;
-        await replyUnknownComponent(interaction);
-        return false;
+    if (interaction.isModalSubmit?.()) {
+        const handled = await runModal(interaction);
+        if (!handled) await replyUnknownComponent(interaction);
+        return handled;
+    }
+
+    if (isSelectInteraction(interaction)) {
+        const handled = await runSelect(interaction);
+        if (!handled) await replyUnknownComponent(interaction);
+        return handled;
     }
 
     return false;
@@ -177,4 +168,6 @@ module.exports = {
     runApplicationCommand,
     runButton,
     runChatInputCommand,
+    runModal,
+    runSelect,
 };
