@@ -1,6 +1,12 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createSessionToken, redactSensitiveConfig, restoreRedactedSecrets, verifySessionToken } = require('../web/dashboard');
+const {
+    createSessionToken,
+    redactSensitiveConfig,
+    restoreRedactedSecrets,
+    validateConfigSectionEdit,
+    verifySessionToken,
+} = require('../web/dashboard');
 
 test('redactSensitiveConfig hides dashboard secrets without changing normal fields', () => {
     const redacted = redactSensitiveConfig({
@@ -64,4 +70,20 @@ test('expired dashboard session tokens are rejected', () => {
     });
 
     assert.equal(verifySessionToken(token), null);
+});
+
+test('advanced config section edits are limited and shape validated', () => {
+    assert.doesNotThrow(() => validateConfigSectionEdit('youtube', { apiKey: '', channels: [] }, {}));
+    assert.throws(
+        () => validateConfigSectionEdit('pollTemplates', {}, {}),
+        /pollTemplates must be a JSON array/,
+    );
+    assert.throws(
+        () => validateConfigSectionEdit('dashboard', { enabled: true }, {}),
+        /Unsupported config section/,
+    );
+    assert.throws(
+        () => validateConfigSectionEdit('twitch', { channels: {} }, {}),
+        /twitch\.channels must be an array/,
+    );
 });

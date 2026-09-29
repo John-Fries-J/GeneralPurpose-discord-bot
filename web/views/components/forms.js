@@ -21,11 +21,14 @@ ${description ? `<span class="field-help">${escapeHtml(description)}</span>` : '
 function renderTextInput(name, label, value = '', {
     description = '',
     maxLength = '',
+    max = '',
+    min = '',
     placeholder = '',
+    step = '',
     type = 'text',
 } = {}) {
     return `<label>${escapeHtml(label)}
-<input name="${escapeHtml(name)}" type="${escapeHtml(type)}" value="${escapeHtml(value)}"${maxLength ? ` maxlength="${escapeHtml(maxLength)}"` : ''}${placeholder ? ` placeholder="${escapeHtml(placeholder)}"` : ''}>
+<input name="${escapeHtml(name)}" type="${escapeHtml(type)}" value="${escapeHtml(value)}"${maxLength ? ` maxlength="${escapeHtml(maxLength)}"` : ''}${min !== '' ? ` min="${escapeHtml(min)}"` : ''}${max !== '' ? ` max="${escapeHtml(max)}"` : ''}${step !== '' ? ` step="${escapeHtml(step)}"` : ''}${placeholder ? ` placeholder="${escapeHtml(placeholder)}"` : ''}>
 ${description ? `<span class="field-help">${escapeHtml(description)}</span>` : ''}
 </label>`;
 }

@@ -228,6 +228,8 @@ function dashboardSettingsPage(section) {
         tickets: '/tickets',
         joinToCreate: '/voice',
         leveling: '/leveling',
+        moderation: '/moderation',
+        music: '/music',
     }[section] || '/config';
 }
 
@@ -651,16 +653,55 @@ ${csrfInput(session)}
 }
 
 function renderConfigSectionEditor(section, title, description, session, object) {
-    return `<section class="panel">
-<h2>${escapeHtml(title)}</h2>
-<p class="muted">${escapeHtml(description)}</p>
+    return `<details class="panel advanced-json">
+<summary><span><strong>Advanced JSON: ${escapeHtml(title)}</strong><small>${escapeHtml(description)}</small></span></summary>
 <form method="post" action="/config-section">
 ${csrfInput(session)}
 <input type="hidden" name="section" value="${escapeHtml(section)}">
 <textarea class="config-json" name="json">${escapeHtml(JSON.stringify(object || {}, null, 4))}</textarea>
 <p><button class="success" type="submit">Save ${escapeHtml(title)}</button></p>
 </form>
-</section>`;
+</details>`;
+}
+
+const editableConfigSectionPages = Object.freeze({
+    autoMod: 'moderation',
+    reactionRoles: 'community',
+    rulesAgreement: 'community',
+    birthdays: 'community',
+    starboard: 'community',
+    pollTemplates: 'community',
+    youtube: 'media',
+    twitch: 'media',
+    socialAnnouncements: 'media',
+});
+
+const editableConfigSectionTypes = Object.freeze({
+    autoMod: 'object',
+    reactionRoles: 'object',
+    rulesAgreement: 'object',
+    birthdays: 'object',
+    starboard: 'object',
+    pollTemplates: 'array',
+    youtube: 'object',
+    twitch: 'object',
+    socialAnnouncements: 'object',
+});
+
+function validateConfigSectionEdit(section, value, currentConfig) {
+    const expectedType = editableConfigSectionTypes[section];
+    if (!expectedType) throw new Error('Unsupported config section.');
+
+    if (expectedType === 'array' && !Array.isArray(value)) {
+        throw new Error(`${section} must be a JSON array.`);
+    }
+    if (expectedType === 'object' && (!value || typeof value !== 'object' || Array.isArray(value))) {
+        throw new Error(`${section} must be a JSON object.`);
+    }
+
+    const candidate = { ...currentConfig, [section]: value };
+    const errors = validateConfig(candidate);
+    if (errors.length) throw new Error(errors.join('\n'));
 }
 
 function renderModuleSettingsForm(grouped, settings, session) {
@@ -802,6 +843,43 @@ ${renderTextInput('cooldownSeconds', 'Text XP cooldown seconds', leveling.cooldo
     });
 }
 
+function renderModerationSettingsForm(config, roles, session) {
+    const moderation = config.moderation || {};
+    return renderSettingsForm({
+        title: 'Moderation Settings',
+        description: 'Configure mute role behavior and the appeal link used in moderation messages.',
+        section: 'moderation',
+        session,
+        body: `<div class="settings-stack">
+${renderSelect('muteRoleId', 'Mute role', roleOptions(roles), moderation.muteRoleId || '', { emptyLabel: 'Use mute role name' })}
+${renderTextInput('muteRoleName', 'Mute role name', moderation.muteRoleName || 'Muted', { maxLength: 80 })}
+${renderTextInput('appealUrl', 'Appeal URL', moderation.appealUrl || '', { type: 'url', placeholder: 'https://example.com/appeal' })}
+</div>`,
+    });
+}
+
+function renderMusicSettingsForm(config, session) {
+    const music = config.music || {};
+    return renderSettingsForm({
+        title: 'Music Settings',
+        description: 'Configure playback availability, queue limits, upload behavior, and voice connection retries.',
+        section: 'music',
+        session,
+        body: `<div class="settings-stack">
+${renderToggle('enabled', 'Music commands', music.enabled !== false, 'Allow music playback commands.')}
+${renderToggle('allowFileUploads', 'File uploads', music.allowFileUploads !== false, 'Allow users to play uploaded audio files.')}
+${renderToggle('voiceDebug', 'Voice diagnostics', music.voiceDebug === true, 'Include additional voice connection diagnostics.')}
+<div class="settings-grid">
+${renderTextInput('maxQueueLength', 'Maximum queue length', music.maxQueueLength ?? 50, { type: 'number', min: 1, max: 1000 })}
+${renderTextInput('voiceReadyTimeoutMs', 'Voice ready timeout', music.voiceReadyTimeoutMs ?? 60000, { type: 'number', min: 5000, max: 300000, step: 1000 })}
+${renderTextInput('voiceJoinRetries', 'Voice join retries', music.voiceJoinRetries ?? 1, { type: 'number', min: 0, max: 10 })}
+${renderTextInput('voiceRetryDelayMs', 'Voice retry delay', music.voiceRetryDelayMs ?? 1000, { type: 'number', min: 0, max: 60000, step: 100 })}
+</div>
+${renderTextInput('ytDlpCookiesPath', 'YouTube cookies path', music.ytDlpCookiesPath || '', { placeholder: 'data/youtube-cookies.txt' })}
+</div>`,
+    });
+}
+
 async function renderDashboard(client, session, notice = '', page = 'overview') {
     const config = getStoredConfig();
     const redactedConfig = redactSensitiveConfig(config);
@@ -885,6 +963,8 @@ ${includeLanguageEditors ? getLanguageSectionsForCategory(category).map(section 
     const ticketSettingsSection = renderTicketSettingsForm(effectiveConfig, allChannels, roles, session);
     const joinToCreateSettingsSection = renderJoinToCreateSettingsForm(effectiveConfig, allChannels, session);
     const levelingSettingsForm = renderLevelingSettingsForm(effectiveConfig, session);
+    const moderationSettingsSection = renderModerationSettingsForm(config, roles, session);
+    const musicSettingsSection = renderMusicSettingsForm(config, session);
     const topbar = renderPageHeader({
         eyebrow: dashboardGuild?.name || 'Dashboard',
         title: 'Dashboard',
@@ -1059,13 +1139,13 @@ ${csrfInput(session)}
 ${['punishmentScheduler', 'memberCounterScheduler', 'mediaAnnouncementScheduler', 'levelingScheduler', 'scheduledMessageScheduler'].map(key => `<div class="row"><span>${escapeHtml(humanize(key))}</span><strong>${client[key] ? 'Running' : 'Stopped'}</strong></div>`).join('')}
 </section>`;
     const moderationSection = `
+${moderationSettingsSection}
 ${renderConfigSectionEditor('autoMod', 'Auto-Mod Rules', 'Configure invite links, mass mentions, caps/spam, suspicious domains, exemptions, and escalation ladder.', session, config.autoMod || {
     enabled: false,
     deleteMatches: true,
     rules: { inviteLinks: true, massMentions: true, caps: true, spam: true, suspiciousDomains: true },
     escalation: [{ after: 3, action: 'mute', durationMs: 600000 }],
 })}
-${renderConfigSectionEditor('moderation', 'Moderation Settings', 'Configure mute role and appeal URL for moderation DMs.', session, config.moderation || {})}
 <section class="grid"><div class="panel wide"><h2>Recent Cases</h2>${moderationCases.slice(0, 20).map(item => `<div class="row"><span>#${escapeHtml(item.id)} ${escapeHtml(item.type)} ${escapeHtml(item.userTag || item.userId)}<br><span class="muted">${escapeHtml(item.reason)}</span></span><span>${escapeHtml(new Date(item.createdAt).toLocaleString())}</span></div>`).join('') || '<p class="muted">No cases yet.</p>'}</div><div class="panel side"><h2>Recent Notes</h2>${modNotes.slice(0, 10).map(item => `<div class="row"><span>${escapeHtml(item.userTag || item.userId)}<br><span class="muted">${escapeHtml(item.note)}</span></span></div>`).join('') || '<p class="muted">No notes yet.</p>'}</div></section>`;
     const ticketsSection = `
 ${ticketSettingsSection}
@@ -1090,7 +1170,7 @@ ${renderConfigSectionEditor('socialAnnouncements', 'Multi-Platform Targets', 'Co
 <section class="panel"><h2>Config Backups</h2><form method="post" action="/config/backup">${csrfInput(session)}<label>Label<input name="label" placeholder="before-risky-edit"></label><p><button class="success" type="submit">Create backup</button></p></form></section>
 <section class="panel"><h2>Restore</h2>${configBackups.length ? configBackups.map(item => `<div class="row"><span>${escapeHtml(item.file)}<br><span class="muted">${escapeHtml(new Date(item.createdAt).toLocaleString())}</span></span><form method="post" action="/config/restore">${csrfInput(session)}<input type="hidden" name="file" value="${escapeHtml(item.file)}"><button class="danger" type="submit">Restore</button></form></div>`).join('') : '<p class="muted">No backups yet.</p>'}</section>`;
     const musicSection = `
-${renderConfigSectionEditor('music', 'Music Settings', 'Configure music feature limits, allowed roles/channels, and provider notes. Spotify playback resolves track metadata to a streamable source.', session, config.music || { enabled: true, maxQueueLength: 50, allowFileUploads: true })}
+${musicSettingsSection}
 <section class="panel"><h2>Playback</h2><p class="muted">Use /music play, /music file, /music queue, /music skip, and /music stop in Discord.</p></section>`;
     const pageBodies = {
         overview: `${topbar}${overviewSection}${moduleLinksSection}<section class="grid">${logsSection}</section>`,
@@ -1279,6 +1359,7 @@ function startDashboard(client) {
 
     app.post('/dashboard-settings', requireAuth, requireCsrf, async (req, res) => {
         try {
+            const activeGuildId = getDashboardGuild(client)?.id || getDashboardConfig().guildId || getStoredConfig().guildId;
             const channels = getGuildChannels(client);
             const roles = getGuildRoles(client);
             const allowedModules = groupCommands(client).map(([category]) => category);
@@ -1287,16 +1368,18 @@ function startDashboard(client) {
                 botMember: req.dashboardGuild?.members?.me,
                 channels,
                 enforceSendable: true,
+                guildId: activeGuildId,
                 roles,
             });
 
-            if (result.section === 'modules') {
+            if (['moderation', 'modules', 'music'].includes(result.section)) {
                 updateConfig(config => {
                     applyDashboardSettings(config, req.body, {
                         allowedModules,
                         botMember: req.dashboardGuild?.members?.me,
                         channels,
                         enforceSendable: true,
+                        guildId: activeGuildId,
                         roles,
                     });
 
@@ -1308,7 +1391,6 @@ function startDashboard(client) {
                     return config;
                 });
             } else {
-                const activeGuildId = getDashboardGuild(client)?.id || getDashboardConfig().guildId || getStoredConfig().guildId;
                 await updateGuildSettings(activeGuildId, result.section, result.values, {
                     actorId: req.dashboardSession.user.id,
                     source: 'dashboard',
@@ -1455,35 +1537,19 @@ function startDashboard(client) {
     app.post('/config-section', requireAuth, requireCsrf, (req, res) => {
         try {
             const section = String(req.body.section || '').trim();
-            if (!section || ['token', 'clientId', 'guildId', 'dashboard', 'database'].includes(section)) {
+            if (!editableConfigSectionPages[section]) {
                 return res.status(400).send(renderLayout('Invalid section', '<section class="panel"><h2>Invalid config section</h2><p>Use the full config editor for this section.</p></section>', req.dashboardSession.user, client));
             }
 
             const parsed = JSON.parse(req.body.json || '{}');
             assertSafeConfigObject(parsed);
             updateConfig(config => {
+                validateConfigSectionEdit(section, parsed, config);
                 config[section] = parsed;
                 return config;
             });
             appendDashboardLog('Config section saved', { section, userId: req.dashboardSession.user.id });
-            const sectionPages = {
-                autoMod: 'moderation',
-                moderation: 'moderation',
-                tickets: 'tickets',
-                WelcomeEmbed: 'community',
-                reactionRoles: 'community',
-                rulesAgreement: 'community',
-                birthdays: 'community',
-                starboard: 'community',
-                pollTemplates: 'community',
-                leveling: 'leveling',
-                joinToCreate: 'voice',
-                youtube: 'media',
-                twitch: 'media',
-                socialAnnouncements: 'media',
-                music: 'music',
-            };
-            res.redirect(`/${sectionPages[section] || 'config'}?message=Saved`);
+            res.redirect(`/${editableConfigSectionPages[section] || 'config'}?message=Saved`);
         } catch (error) {
             res.status(400).send(renderLayout('Invalid JSON', `<section class="panel"><h2>Invalid JSON</h2><p>${escapeHtml(safeErrorMessage(error, 'Config section was not saved.'))}</p></section>`, req.dashboardSession.user, client));
         }
@@ -1548,5 +1614,6 @@ module.exports = {
     restoreRedactedSecrets,
     startDashboard,
     userCanAdminDashboard,
+    validateConfigSectionEdit,
     verifySessionToken,
 };

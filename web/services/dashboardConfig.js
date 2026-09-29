@@ -1,6 +1,6 @@
 const { ChannelType } = require('discord.js');
 
-const allowedSections = new Set(['welcome', 'logging', 'tickets', 'joinToCreate', 'leveling', 'modules']);
+const allowedSections = new Set(['welcome', 'logging', 'tickets', 'joinToCreate', 'leveling', 'moderation', 'music', 'modules']);
 const textChannelTypes = new Set([ChannelType.GuildText, ChannelType.GuildAnnouncement]);
 const voiceChannelTypes = new Set([ChannelType.GuildVoice, ChannelType.GuildStageVoice]);
 const categoryChannelTypes = new Set([ChannelType.GuildCategory]);
@@ -33,6 +33,26 @@ function intField(body, key, {
     return value;
 }
 
+function urlField(body, key, {
+    label = key,
+} = {}) {
+    const raw = field(body[key]);
+    if (!raw) return '';
+
+    let parsed;
+    try {
+        parsed = new URL(raw);
+    } catch {
+        throw new Error(`${label} must be a valid URL.`);
+    }
+
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+        throw new Error(`${label} must use http or https.`);
+    }
+
+    return raw;
+}
+
 function moduleKeys(body) {
     return field(body.moduleKeys)
         .split(',')
@@ -63,6 +83,9 @@ function validateChannel(context, id, label, allowedTypes, { required = false, r
 
     const channel = context.channelMap?.get(value);
     if (!channel) throw new Error(`${label} must be a channel from this server.`);
+    if (context.guildId && channel.guildId && channel.guildId !== context.guildId) {
+        throw new Error(`${label} must be a channel from this server.`);
+    }
     if (allowedTypes && !allowedTypes.has(channel.type)) {
         throw new Error(`${label} has the wrong channel type.`);
     }
@@ -93,6 +116,7 @@ function createValidationContext(options = {}) {
         botMember: options.botMember || null,
         channelMap: idMap(options.channels || []),
         enforceSendable: options.enforceSendable === true,
+        guildId: options.guildId ? String(options.guildId) : '',
         roleMap: idMap(options.roles || []),
     };
 }
@@ -226,6 +250,55 @@ function parseDashboardSettings(body = {}, options = {}) {
         };
     }
 
+    if (section === 'moderation') {
+        return {
+            section,
+            message: 'Moderation settings saved',
+            values: {
+                muteRoleId: validateRole(context, body.muteRoleId, 'Mute role'),
+                muteRoleName: field(body.muteRoleName) || 'Muted',
+                appealUrl: urlField(body, 'appealUrl', { label: 'Appeal URL' }),
+            },
+        };
+    }
+
+    if (section === 'music') {
+        return {
+            section,
+            message: 'Music settings saved',
+            values: {
+                enabled: boolField(body, 'enabled'),
+                maxQueueLength: intField(body, 'maxQueueLength', {
+                    min: 1,
+                    max: 1000,
+                    fallback: 50,
+                    label: 'Maximum queue length',
+                }),
+                allowFileUploads: boolField(body, 'allowFileUploads'),
+                voiceReadyTimeoutMs: intField(body, 'voiceReadyTimeoutMs', {
+                    min: 5000,
+                    max: 300000,
+                    fallback: 60000,
+                    label: 'Voice ready timeout',
+                }),
+                voiceJoinRetries: intField(body, 'voiceJoinRetries', {
+                    min: 0,
+                    max: 10,
+                    fallback: 1,
+                    label: 'Voice join retries',
+                }),
+                voiceRetryDelayMs: intField(body, 'voiceRetryDelayMs', {
+                    min: 0,
+                    max: 60000,
+                    fallback: 1000,
+                    label: 'Voice retry delay',
+                }),
+                voiceDebug: boolField(body, 'voiceDebug'),
+                ytDlpCookiesPath: field(body.ytDlpCookiesPath),
+            },
+        };
+    }
+
     const keys = moduleKeys(body);
     if (context.allowedModules.size) {
         const unknownModule = keys.find(key => !context.allowedModules.has(key));
@@ -274,6 +347,16 @@ function applyDashboardSettings(config, body = {}, options = {}) {
         return { section: result.section, message: result.message };
     }
 
+    if (result.section === 'moderation') {
+        config.moderation = { ...(config.moderation || {}), ...result.values };
+        return { section: result.section, message: result.message };
+    }
+
+    if (result.section === 'music') {
+        config.music = { ...(config.music || {}), ...result.values };
+        return { section: result.section, message: result.message };
+    }
+
     config.commandSettings = config.commandSettings || {};
     config.commandSettings.modules = config.commandSettings.modules || {};
     Object.assign(config.commandSettings.modules, result.values.modules);
@@ -286,4 +369,5 @@ module.exports = {
     createValidationContext,
     intField,
     parseDashboardSettings,
+    urlField,
 };

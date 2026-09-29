@@ -54,7 +54,8 @@ a:focus-visible,
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
-textarea:focus-visible {
+textarea:focus-visible,
+summary:focus-visible {
     outline: 2px solid var(--brand);
     outline-offset: 2px;
 }
@@ -272,6 +273,12 @@ p {
     justify-content: space-between;
     padding: 11px 0;
     border-bottom: 1px solid var(--line);
+    flex-wrap: wrap;
+}
+
+.row > span {
+    min-width: 0;
+    overflow-wrap: anywhere;
 }
 
 .row:last-child {
@@ -503,6 +510,12 @@ input[type="checkbox"] {
     transform: translateX(22px);
 }
 
+.switch input:focus-visible + span,
+.segmented input:focus-visible + span {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+}
+
 .segmented {
     display: inline-flex;
     flex-wrap: wrap;
@@ -565,6 +578,7 @@ input[type="checkbox"] {
     display: none;
     align-items: center;
     justify-content: space-between;
+    flex-wrap: wrap;
     gap: 12px;
     margin-top: 16px;
     padding: 12px;
@@ -572,6 +586,7 @@ input[type="checkbox"] {
     border-radius: 8px;
     background: var(--panel-3);
     box-shadow: var(--shadow);
+    z-index: 5;
 }
 
 .is-dirty .save-bar {
@@ -725,6 +740,30 @@ button:disabled {
     margin-bottom: 16px;
 }
 
+.advanced-json summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    cursor: pointer;
+}
+
+.advanced-json summary strong,
+.advanced-json summary small {
+    display: block;
+}
+
+.advanced-json summary small {
+    margin-top: 4px;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 400;
+}
+
+.advanced-json form {
+    margin-top: 14px;
+}
+
 .preview {
     border: 1px solid var(--line);
     border-radius: 8px;
@@ -797,6 +836,45 @@ button:disabled {
 
     .page-header {
         display: block;
+    }
+}
+
+@media (max-width: 640px) {
+    .content {
+        padding: 12px;
+    }
+
+    .sidebar {
+        padding: 14px 12px;
+    }
+
+    .nav {
+        grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+    }
+
+    .panel {
+        padding: 13px;
+    }
+
+    .toolbar input {
+        max-width: none;
+    }
+
+    .split-actions,
+    .save-bar {
+        align-items: stretch;
+    }
+
+    .save-bar,
+    .split-actions,
+    .split-actions button,
+    .split-actions .button {
+        width: 100%;
+    }
+
+    button,
+    .button {
+        min-height: 42px;
     }
 }
 
