@@ -82,7 +82,7 @@ function createValidationContext(options = {}) {
     };
 }
 
-function applyDashboardSettings(config, body = {}, options = {}) {
+function parseDashboardSettings(body = {}, options = {}) {
     const section = field(body.section);
     if (!allowedSections.has(section)) {
         throw new Error('Unsupported dashboard settings section.');
@@ -90,92 +90,117 @@ function applyDashboardSettings(config, body = {}, options = {}) {
     const context = createValidationContext(options);
 
     if (section === 'welcome') {
-        config.WelcomeEmbed = config.WelcomeEmbed || {};
         const enabled = boolField(body, 'welcomeEnabled');
-        config.welcomeID = enabled
+        const channelId = enabled
             ? validateChannel(context, body.welcomeID, 'Welcome channel', textChannelTypes, { required: true })
             : '';
-        config.WelcomeEmbed.title = field(body.welcomeTitle);
-        config.WelcomeEmbed.description = field(body.welcomeDescription);
-        config.WelcomeEmbed.footer = field(body.welcomeFooter);
-        return { section, message: 'Welcome settings saved' };
+        return {
+            section,
+            message: 'Welcome settings saved',
+            values: {
+                enabled,
+                channelId,
+                title: field(body.welcomeTitle),
+                description: field(body.welcomeDescription),
+                footer: field(body.welcomeFooter),
+            },
+        };
     }
 
     if (section === 'logging') {
-        config.logging = config.logging || {};
-        config.logChannels = config.logChannels || {};
-        config.logging.showUserAvatars = boolField(body, 'showUserAvatars');
+        const channels = {};
         for (const key of ['logChannel', 'moderation', 'ticket', 'suggestion', 'messageDelete', 'editMessage', 'threadCreate', 'threadDelete', 'threadUpdate', 'directMessage']) {
-            config.logChannels[key] = validateChannel(context, body[key], `${key} log channel`, textChannelTypes);
+            channels[key] = validateChannel(context, body[key], `${key} log channel`, textChannelTypes);
         }
-        return { section, message: 'Logging settings saved' };
+        return {
+            section,
+            message: 'Logging settings saved',
+            values: {
+                showUserAvatars: boolField(body, 'showUserAvatars'),
+                channels,
+            },
+        };
     }
 
     if (section === 'tickets') {
-        config.tickets = config.tickets || {};
-        config.tickets.channelId = validateChannel(context, body.ticketChannelId, 'Ticket panel channel', textChannelTypes);
-        config.tickets.categoryId = validateChannel(context, body.ticketCategoryId, 'Ticket category', categoryChannelTypes);
-        config.tickets.supportRoleId = validateRole(context, body.supportRoleId, 'Support role');
-        config.tickets.allowTranscripts = boolField(body, 'allowTranscripts');
-        config.tickets.allowUserAdding = boolField(body, 'allowUserAdding');
-        config.tickets.allowClaiming = boolField(body, 'allowClaiming');
-        config.tickets.closeInactivityDays = intField(body, 'closeInactivityDays', {
+        const closeInactivityDays = intField(body, 'closeInactivityDays', {
             min: 0,
             max: 365,
             fallback: 0,
             label: 'Close inactivity days',
         });
-        return { section, message: 'Ticket settings saved' };
+        return {
+            section,
+            message: 'Ticket settings saved',
+            values: {
+                channelId: validateChannel(context, body.ticketChannelId, 'Ticket panel channel', textChannelTypes),
+                categoryId: validateChannel(context, body.ticketCategoryId, 'Ticket category', categoryChannelTypes),
+                supportRoleId: validateRole(context, body.supportRoleId, 'Support role'),
+                allowTranscripts: boolField(body, 'allowTranscripts'),
+                allowUserAdding: boolField(body, 'allowUserAdding'),
+                allowClaiming: boolField(body, 'allowClaiming'),
+                closeInactivityDays,
+            },
+        };
     }
 
     if (section === 'joinToCreate') {
-        config.joinToCreate = config.joinToCreate || {};
-        config.joinToCreate.enabled = boolField(body, 'enabled');
-        config.joinToCreate.triggerChannelId = validateChannel(context, body.triggerChannelId, 'Trigger channel', voiceChannelTypes, { required: config.joinToCreate.enabled });
-        config.joinToCreate.categoryId = validateChannel(context, body.categoryId, 'Temporary channel category', categoryChannelTypes);
-        config.joinToCreate.nameFormat = field(body.nameFormat) || "{username}'s Channel";
-        config.joinToCreate.userLimitMax = intField(body, 'userLimitMax', {
+        const enabled = boolField(body, 'enabled');
+        return {
+            section,
+            message: 'Temporary voice settings saved',
+            values: {
+                enabled,
+                triggerChannelId: validateChannel(context, body.triggerChannelId, 'Trigger channel', voiceChannelTypes, { required: enabled }),
+                categoryId: validateChannel(context, body.categoryId, 'Temporary channel category', categoryChannelTypes),
+                nameFormat: field(body.nameFormat) || "{username}'s Channel",
+                userLimitMax: intField(body, 'userLimitMax', {
             min: 1,
             max: 99,
             fallback: 25,
             label: 'Maximum users',
-        });
-        config.joinToCreate.emptyGraceMs = intField(body, 'emptyGraceSeconds', {
+                }),
+                emptyGraceMs: intField(body, 'emptyGraceSeconds', {
             min: 0,
             max: 3600,
             fallback: 10,
             label: 'Empty grace period seconds',
-        }) * 1000;
-        return { section, message: 'Temporary voice settings saved' };
+                }) * 1000,
+            },
+        };
     }
 
     if (section === 'leveling') {
-        config.leveling = config.leveling || {};
-        config.leveling.enabled = boolField(body, 'enabled');
         const mode = field(body.mode);
         if (!['text', 'voice', 'both'].includes(mode)) {
             throw new Error('Leveling mode must be text, voice, or both.');
         }
-        config.leveling.mode = mode;
-        config.leveling.textXpPerMessage = intField(body, 'textXpPerMessage', {
-            min: 0,
-            max: 1000,
-            fallback: 1,
-            label: 'Text XP per message',
-        });
-        config.leveling.voiceXpPerMinute = intField(body, 'voiceXpPerMinute', {
-            min: 0,
-            max: 1000,
-            fallback: 1,
-            label: 'Voice XP per minute',
-        });
-        config.leveling.cooldownSeconds = intField(body, 'cooldownSeconds', {
-            min: 0,
-            max: 86400,
-            fallback: 60,
-            label: 'Text XP cooldown seconds',
-        });
-        return { section, message: 'Leveling settings saved' };
+        return {
+            section,
+            message: 'Leveling settings saved',
+            values: {
+                enabled: boolField(body, 'enabled'),
+                mode,
+                textXpPerMessage: intField(body, 'textXpPerMessage', {
+                    min: 0,
+                    max: 1000,
+                    fallback: 1,
+                    label: 'Text XP per message',
+                }),
+                voiceXpPerMinute: intField(body, 'voiceXpPerMinute', {
+                    min: 0,
+                    max: 1000,
+                    fallback: 1,
+                    label: 'Voice XP per minute',
+                }),
+                cooldownSeconds: intField(body, 'cooldownSeconds', {
+                    min: 0,
+                    max: 86400,
+                    fallback: 60,
+                    label: 'Text XP cooldown seconds',
+                }),
+            },
+        };
     }
 
     const keys = moduleKeys(body);
@@ -184,12 +209,52 @@ function applyDashboardSettings(config, body = {}, options = {}) {
         if (unknownModule) throw new Error('Unknown module setting submitted.');
     }
 
+    const modules = {};
+    for (const key of keys) {
+        modules[key] = boolField(body, `module:${key}`);
+    }
+    return { section, message: 'Module settings saved', values: { modules } };
+}
+
+function applyDashboardSettings(config, body = {}, options = {}) {
+    const result = parseDashboardSettings(body, options);
+
+    if (result.section === 'welcome') {
+        config.WelcomeEmbed = config.WelcomeEmbed || {};
+        config.welcomeID = result.values.enabled ? result.values.channelId : '';
+        config.WelcomeEmbed.title = result.values.title;
+        config.WelcomeEmbed.description = result.values.description;
+        config.WelcomeEmbed.footer = result.values.footer;
+        return { section: result.section, message: result.message };
+    }
+
+    if (result.section === 'logging') {
+        config.logging = config.logging || {};
+        config.logChannels = config.logChannels || {};
+        config.logging.showUserAvatars = result.values.showUserAvatars;
+        Object.assign(config.logChannels, result.values.channels);
+        return { section: result.section, message: result.message };
+    }
+
+    if (result.section === 'tickets') {
+        config.tickets = { ...(config.tickets || {}), ...result.values };
+        return { section: result.section, message: result.message };
+    }
+
+    if (result.section === 'joinToCreate') {
+        config.joinToCreate = { ...(config.joinToCreate || {}), ...result.values };
+        return { section: result.section, message: result.message };
+    }
+
+    if (result.section === 'leveling') {
+        config.leveling = { ...(config.leveling || {}), ...result.values };
+        return { section: result.section, message: result.message };
+    }
+
     config.commandSettings = config.commandSettings || {};
     config.commandSettings.modules = config.commandSettings.modules || {};
-    for (const key of keys) {
-        config.commandSettings.modules[key] = boolField(body, `module:${key}`);
-    }
-    return { section, message: 'Module settings saved' };
+    Object.assign(config.commandSettings.modules, result.values.modules);
+    return { section: result.section, message: result.message };
 }
 
 module.exports = {
@@ -197,4 +262,5 @@ module.exports = {
     boolField,
     createValidationContext,
     intField,
+    parseDashboardSettings,
 };

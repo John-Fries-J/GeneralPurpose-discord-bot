@@ -11,7 +11,8 @@ const language = require('../utils/language');
 const { getQueueSummary } = require('../utils/music');
 const { getCommandAccess, normalizeIdList } = require('../utils/permissions');
 const { buildHealthReport } = require('../services/diagnostics');
-const { applyDashboardSettings } = require('./services/dashboardConfig');
+const { applyDashboardSettings, parseDashboardSettings } = require('./services/dashboardConfig');
+const { getGuildSettings, listConfigAudit, updateGuildSettings } = require('../utils/guildConfig');
 const {
     renderSegmented,
     renderSelect,
@@ -293,7 +294,8 @@ async function canViewTranscript(client, session, transcript) {
         return true;
     }
 
-    const supportRoleId = config.tickets?.supportRoleId || config.ticketRole;
+    const guildConfig = await getGuildSettings(transcript.guildId);
+    const supportRoleId = guildConfig.tickets?.supportRoleId || config.tickets?.supportRoleId || config.ticketRole;
     return Boolean(supportRoleId && member.roles?.cache?.has(supportRoleId));
 }
 
@@ -359,6 +361,14 @@ function channelOptions(channels, types) {
 
 function roleOptions(roles) {
     return roles.map(role => ({ value: role.id, label: `@${role.name}` }));
+}
+
+function resolveUserLabel(client, guild, userId) {
+    if (!userId) return 'System';
+    const member = guild?.members?.cache?.get?.(userId);
+    if (member) return member.displayName || member.user?.tag || userId;
+    const user = client.users?.cache?.get?.(userId);
+    return user?.tag || user?.username || userId;
 }
 
 function getGuildRoles(client) {
@@ -605,16 +615,20 @@ function renderModuleSettingsForm(grouped, settings, session) {
 
 function renderWelcomeSettingsForm(config, channels, session) {
     const welcome = config.WelcomeEmbed || {};
+    const welcomeState = config.welcome || {
+        enabled: Boolean(config.welcomeID),
+        channelId: config.welcomeID || '',
+    };
     return renderSettingsForm({
         title: 'Welcome',
-        description: 'Choose the welcome channel and edit the message users see when joining.',
+        description: 'Server-specific welcome settings for the selected guild.',
         section: 'welcome',
         session,
         body: `
 <div class="settings-stack">
-${renderToggle('welcomeEnabled', 'Welcome messages', Boolean(config.welcomeID), 'Send a welcome embed when a member joins.')}
+${renderToggle('welcomeEnabled', 'Welcome messages', welcomeState.enabled === true, 'Send a welcome embed when a member joins.')}
 <div class="settings-grid">
-${renderSelect('welcomeID', 'Welcome channel', channelOptions(channels, [ChannelType.GuildText, ChannelType.GuildAnnouncement]), config.welcomeID, { emptyLabel: 'Choose a channel' })}
+${renderSelect('welcomeID', 'Welcome channel', channelOptions(channels, [ChannelType.GuildText, ChannelType.GuildAnnouncement]), welcomeState.channelId, { emptyLabel: 'Choose a channel' })}
 ${renderTextInput('welcomeTitle', 'Embed title', welcome.title || '', { maxLength: 256 })}
 </div>
 ${renderTextarea('welcomeDescription', 'Message', welcome.description || '', { rows: 5, description: 'Supports placeholders already used by the welcome command, such as ${user}.' })}
@@ -630,7 +644,7 @@ function renderLoggingSettingsForm(config, channels, session) {
 
     return renderSettingsForm({
         title: 'Logging',
-        description: 'Map each log category to a Discord channel. Leave a category unset to use the default log channel where supported.',
+        description: 'Server-specific logging map for the selected guild. Leave a category unset to use the default log channel where supported.',
         section: 'logging',
         session,
         body: `
@@ -656,7 +670,7 @@ function renderTicketSettingsForm(config, channels, roles, session) {
     const tickets = config.tickets || {};
     return renderSettingsForm({
         title: 'Tickets',
-        description: 'Configure the ticket panel, ticket category, and staff access using Discord channel and role selectors.',
+        description: 'Server-specific ticket panel, category, and staff access for the selected guild.',
         section: 'tickets',
         session,
         body: `
@@ -678,7 +692,7 @@ function renderJoinToCreateSettingsForm(config, channels, session) {
     const voice = config.joinToCreate || {};
     return renderSettingsForm({
         title: 'Temporary Voice',
-        description: 'Configure join-to-create using real voice channel and category selectors.',
+        description: 'Server-specific join-to-create settings using real voice channel and category selectors.',
         section: 'joinToCreate',
         session,
         body: `
@@ -699,7 +713,7 @@ function renderLevelingSettingsForm(config, session) {
     const leveling = config.leveling || {};
     return renderSettingsForm({
         title: 'Leveling',
-        description: 'Configure leveling mode and XP pacing with bounded controls.',
+        description: 'Server-specific leveling mode and XP pacing with bounded controls.',
         section: 'leveling',
         session,
         body: `
@@ -733,6 +747,7 @@ async function renderDashboard(client, session, notice = '', page = 'overview') 
     const roles = getGuildRoles(client);
     const dashboardGuild = getDashboardGuild(client);
     const activeGuildId = dashboardGuild?.id || getDashboardConfig().guildId || config.guildId;
+    const effectiveConfig = activeGuildId ? await getGuildSettings(activeGuildId) : config;
     const scheduledMessages = await listScheduledMessages(activeGuildId, 25);
     const templates = await listEmbedTemplates(activeGuildId);
     const commandStats = await listCommandStats(activeGuildId, Date.now() - 30 * 24 * 60 * 60 * 1000);
@@ -747,6 +762,7 @@ async function renderDashboard(client, session, notice = '', page = 'overview') 
     const voiceActivity = await listVoiceActivity(activeGuildId, 80);
     const musicSummary = activeGuildId ? getQueueSummary(activeGuildId) : {};
     const configBackups = listConfigBackups();
+    const configAudit = activeGuildId ? await listConfigAudit(activeGuildId, { limit: 75 }) : [];
 
     const renderCommandSections = includeLanguageEditors => grouped.map(([category, commands]) => `
 <section class="panel module-card" id="module-${escapeHtml(slug(category))}">
@@ -794,11 +810,11 @@ ${includeLanguageEditors ? getLanguageSectionsForCategory(category).map(section 
     const commandsHtml = renderCommandSections(true);
     const accessHtml = renderCommandSections(false);
     const moduleSettingsSection = renderModuleSettingsForm(grouped, settings, session);
-    const welcomeSettingsSection = renderWelcomeSettingsForm(config, allChannels, session);
-    const loggingSettingsSection = renderLoggingSettingsForm(config, allChannels, session);
-    const ticketSettingsSection = renderTicketSettingsForm(config, allChannels, roles, session);
-    const joinToCreateSettingsSection = renderJoinToCreateSettingsForm(config, allChannels, session);
-    const levelingSettingsForm = renderLevelingSettingsForm(config, session);
+    const welcomeSettingsSection = renderWelcomeSettingsForm(effectiveConfig, allChannels, session);
+    const loggingSettingsSection = renderLoggingSettingsForm(effectiveConfig, allChannels, session);
+    const ticketSettingsSection = renderTicketSettingsForm(effectiveConfig, allChannels, roles, session);
+    const joinToCreateSettingsSection = renderJoinToCreateSettingsForm(effectiveConfig, allChannels, session);
+    const levelingSettingsForm = renderLevelingSettingsForm(effectiveConfig, session);
     const topbar = renderPageHeader({
         eyebrow: dashboardGuild?.name || 'Dashboard',
         title: 'Dashboard',
@@ -830,7 +846,7 @@ ${renderModuleDashboard(grouped, settings, commandStats)}
 </div>
 </section>
 </section>`;
-    const loggingDashboardSection = renderLoggingDashboard(config, dashboardGuild);
+    const loggingDashboardSection = renderLoggingDashboard(effectiveConfig, dashboardGuild);
     const logsSection = `
 <section class="panel side">
 <h2>Logs</h2>
@@ -933,7 +949,20 @@ ${csrfInput(session)}
         ...allState.history.filter(item => item.guildId === activeGuildId).slice(0, 200).map(item => ({ at: item.createdAt, type: item.type, text: `${item.userTag || item.userId}: ${item.summary}` })),
         ...ticketRecords.map(item => ({ at: item.updatedAt, type: 'ticket', text: `${item.status} <#${item.channelId}> ${item.priority}` })),
     ].sort((a, b) => b.at - a.at).slice(0, 250);
+    const configAuditRows = configAudit.map(item => `<tr>
+<td>${escapeHtml(new Date(item.createdAt || Date.now()).toLocaleString())}</td>
+<td>${escapeHtml(resolveUserLabel(client, dashboardGuild, item.actorId))}<br><span class="muted">${escapeHtml(item.actorId || '')}</span></td>
+<td>${escapeHtml(item.section)}</td>
+<td>${escapeHtml(item.key)}</td>
+<td>${escapeHtml(item.previousValue)}</td>
+<td>${escapeHtml(item.newValue)}</td>
+<td>${escapeHtml(item.source)}</td>
+</tr>`).join('');
     const auditSection = `
+<section class="panel">
+<h2>Configuration Changes</h2>
+<div class="table-wrap"><table class="dashboard-table"><thead><tr><th>Time</th><th>Admin</th><th>Section</th><th>Setting</th><th>Previous</th><th>New</th><th>Source</th></tr></thead><tbody>${configAuditRows || '<tr><td colspan="7">No configuration changes recorded yet.</td></tr>'}</tbody></table></div>
+</section>
 <section class="panel">
 <h2>Audit Timeline</h2>
 <div class="toolbar"><input data-audit-filter placeholder="Filter moderation, tickets, honeypot, config, dashboard"></div>
@@ -960,23 +989,19 @@ ${renderConfigSectionEditor('moderation', 'Moderation Settings', 'Configure mute
 <section class="grid"><div class="panel wide"><h2>Recent Cases</h2>${moderationCases.slice(0, 20).map(item => `<div class="row"><span>#${escapeHtml(item.id)} ${escapeHtml(item.type)} ${escapeHtml(item.userTag || item.userId)}<br><span class="muted">${escapeHtml(item.reason)}</span></span><span>${escapeHtml(new Date(item.createdAt).toLocaleString())}</span></div>`).join('') || '<p class="muted">No cases yet.</p>'}</div><div class="panel side"><h2>Recent Notes</h2>${modNotes.slice(0, 10).map(item => `<div class="row"><span>${escapeHtml(item.userTag || item.userId)}<br><span class="muted">${escapeHtml(item.note)}</span></span></div>`).join('') || '<p class="muted">No notes yet.</p>'}</div></section>`;
     const ticketsSection = `
 ${ticketSettingsSection}
-${renderTicketDashboard(ticketRecords, ticketTranscripts)}
-${renderConfigSectionEditor('tickets', 'Advanced Ticket JSON', 'Advanced ticket options that do not yet have dedicated controls.', session, config.tickets || {})}`;
+${renderTicketDashboard(ticketRecords, ticketTranscripts)}`;
     const communitySection = `
 ${welcomeSettingsSection}
-${renderConfigSectionEditor('WelcomeEmbed', 'Advanced Welcome JSON', 'Advanced welcome embed options such as thumbnails and icons.', session, config.WelcomeEmbed || {})}
 ${renderConfigSectionEditor('reactionRoles', 'Reaction Roles', 'Configure reaction-role panels. Use messageId, emoji, and roleId entries for each panel.', session, config.reactionRoles || { enabled: false, panels: [] })}
 ${renderConfigSectionEditor('rulesAgreement', 'Rules Agreement Panel', 'Configure a rules acknowledgement panel and verified role.', session, config.rulesAgreement || { enabled: false, channelId: '', roleId: '' })}
 ${renderConfigSectionEditor('birthdays', 'Birthday Reminders', 'Configure birthday reminder channel and timezone.', session, config.birthdays || { enabled: false, channelId: '', timezone: 'Europe/London' })}
 ${renderConfigSectionEditor('starboard', 'Starboard', 'Configure highlight/starboard emoji, threshold, and destination channel.', session, config.starboard || { enabled: false, channelId: '', emoji: '⭐', threshold: 3 })}
 ${renderConfigSectionEditor('pollTemplates', 'Poll Templates', 'Saved poll presets for staff workflows.', session, config.pollTemplates || [])}`;
     const levelingSection = `
-${levelingSettingsForm}
-${renderConfigSectionEditor('leveling', 'Advanced Leveling JSON', 'Advanced leveling rewards, ignored channels/roles, and multipliers.', session, config.leveling || {})}`;
+${levelingSettingsForm}`;
     const voiceSection = `
 ${joinToCreateSettingsSection}
-${renderVoiceDashboard(tempVoiceChannels, voiceActivity, dashboardGuild)}
-${renderConfigSectionEditor('joinToCreate', 'Advanced Temporary Voice JSON', 'Advanced join-to-create options and future presets.', session, config.joinToCreate || {})}`;
+${renderVoiceDashboard(tempVoiceChannels, voiceActivity, dashboardGuild)}`;
     const mediaSection = `
 ${renderConfigSectionEditor('youtube', 'YouTube Targets', 'Manage channels to announce and their Discord destination channels.', session, config.youtube || {})}
 ${renderConfigSectionEditor('twitch', 'Twitch Targets', 'Manage Twitch channels, auth status, retry/error settings, and announcement templates.', session, config.twitch || {})}
@@ -1166,27 +1191,39 @@ function startDashboard(client) {
         res.redirect('/commands');
     });
 
-    app.post('/dashboard-settings', requireAuth, requireCsrf, (req, res) => {
+    app.post('/dashboard-settings', requireAuth, requireCsrf, async (req, res) => {
         try {
-            let result;
             const channels = getGuildChannels(client);
             const roles = getGuildRoles(client);
             const allowedModules = groupCommands(client).map(([category]) => category);
-
-            updateConfig(config => {
-                result = applyDashboardSettings(config, req.body, {
-                    allowedModules,
-                    channels,
-                    roles,
-                });
-
-                const errors = validateConfig(config);
-                if (errors.length) {
-                    throw new Error(errors.join(' '));
-                }
-
-                return config;
+            const result = parseDashboardSettings(req.body, {
+                allowedModules,
+                channels,
+                roles,
             });
+
+            if (result.section === 'modules') {
+                updateConfig(config => {
+                    applyDashboardSettings(config, req.body, {
+                        allowedModules,
+                        channels,
+                        roles,
+                    });
+
+                    const errors = validateConfig(config);
+                    if (errors.length) {
+                        throw new Error(errors.join(' '));
+                    }
+
+                    return config;
+                });
+            } else {
+                const activeGuildId = getDashboardGuild(client)?.id || getDashboardConfig().guildId || getStoredConfig().guildId;
+                await updateGuildSettings(activeGuildId, result.section, result.values, {
+                    actorId: req.dashboardSession.user.id,
+                    source: 'dashboard',
+                });
+            }
 
             appendDashboardLog('Dashboard settings saved', {
                 section: result.section,
