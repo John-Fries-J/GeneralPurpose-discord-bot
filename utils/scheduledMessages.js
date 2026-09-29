@@ -1,5 +1,6 @@
 const { ChannelType, EmbedBuilder } = require('discord.js');
 const { appendDashboardLog } = require('./dashboardLogs');
+const { safeErrorMessage } = require('./redaction');
 const { listDueScheduledMessages, updateScheduledMessageStatus } = require('./store');
 
 function buildScheduledPayload(record) {
@@ -55,8 +56,9 @@ async function runScheduledMessages(client) {
             appendDashboardLog('Scheduled message sent', { channelId: record.channelId, scheduledMessageId: record.id });
             sent += 1;
         } catch (error) {
-            await updateScheduledMessageStatus(record.id, 'failed', error.message);
-            appendDashboardLog('Scheduled message failed', { channelId: record.channelId, scheduledMessageId: record.id, error: error.message });
+            const message = safeErrorMessage(error, 'Scheduled message failed.');
+            await updateScheduledMessageStatus(record.id, 'failed', message);
+            appendDashboardLog('Scheduled message failed', { channelId: record.channelId, scheduledMessageId: record.id, error: message });
             failed += 1;
         }
     }

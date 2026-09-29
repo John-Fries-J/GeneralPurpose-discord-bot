@@ -12,6 +12,7 @@ const { expireTempBans, expireTempMutes, expireTempRoles } = require('../utils/p
 const { refreshMemberCounters } = require('../utils/memberCounters');
 const { runScheduledMessages } = require('../utils/scheduledMessages');
 const { logger } = require('../utils/logger');
+const { safeErrorMessage } = require('../utils/redaction');
 
 const defaultReminderIntervalMs = 30 * 1000;
 
@@ -74,7 +75,7 @@ class Scheduler {
             await markScheduledJobFinish(name, Date.now() - started, null).catch(() => null);
             return { ok: true, result };
         } catch (error) {
-            await markScheduledJobFinish(name, Date.now() - started, error.message).catch(() => null);
+            await markScheduledJobFinish(name, Date.now() - started, safeErrorMessage(error, 'Scheduler job failed.')).catch(() => null);
             this.logger.error?.('Scheduler job failed', { job: name, error });
             return { ok: false, error };
         } finally {
@@ -138,7 +139,7 @@ async function runReminderJob(client, { limit = 25 } = {}) {
             await updateReminderStatus(reminder.id, 'sent');
             sent += 1;
         } catch (error) {
-            await updateReminderStatus(reminder.id, 'failed', error.message).catch(() => null);
+            await updateReminderStatus(reminder.id, 'failed', safeErrorMessage(error, 'Reminder delivery failed.')).catch(() => null);
             failed += 1;
         }
     }

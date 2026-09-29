@@ -5,7 +5,11 @@ const levelWeights = {
     error: 40,
 };
 
-const sensitiveKeyPattern = /(token|secret|password|cookie|authorization|apikey|api_key|clientsecret|client_secret)/i;
+const {
+    isSensitiveKey,
+    redactText,
+    redactedValue,
+} = require('./redaction');
 
 function getConfiguredLevel() {
     const configured = String(process.env.LOG_LEVEL || 'info').toLowerCase();
@@ -15,27 +19,28 @@ function getConfiguredLevel() {
 function serializeError(error) {
     return {
         name: error.name || 'Error',
-        message: error.message || String(error),
-        stack: error.stack,
+        message: redactText(error.message || String(error)),
+        stack: redactText(error.stack),
     };
 }
 
-function redact(value, depth = 0, seen = new WeakSet()) {
+function redact(value, depth = 0, seen = new WeakSet(), keyPath = []) {
     if (value instanceof Error) return serializeError(value);
     if (value === null || value === undefined) return value;
     if (typeof value === 'bigint') return value.toString();
+    if (typeof value === 'string') return redactText(value);
     if (typeof value !== 'object') return value;
     if (depth > 6) return '[MaxDepth]';
     if (seen.has(value)) return '[Circular]';
     seen.add(value);
 
     if (Array.isArray(value)) {
-        return value.map(item => redact(item, depth + 1, seen));
+        return value.map(item => redact(item, depth + 1, seen, keyPath));
     }
 
     return Object.fromEntries(Object.entries(value).map(([key, item]) => [
         key,
-        sensitiveKeyPattern.test(key) ? '[REDACTED]' : redact(item, depth + 1, seen),
+        isSensitiveKey(key, keyPath) ? redactedValue : redact(item, depth + 1, seen, [...keyPath, key]),
     ]));
 }
 

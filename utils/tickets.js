@@ -18,6 +18,7 @@ const { formatTemplate } = require('./template');
 const { isGuildTextChannel } = require('./discord');
 const { sendLog, formatUser } = require('./logging');
 const { getGuildSettings, updateTicketSettings } = require('./guildConfig');
+const { escapeHtml } = require('./html');
 const { createTicketTranscript, deleteTicketRecord, getTicketRecord, listTicketRecords, upsertTicketRecord } = require('./store');
 
 const customIds = {
@@ -33,15 +34,6 @@ const customIds = {
     transcript: 'ticket:transcript',
 };
 const transcriptMessageLimit = 5000;
-
-function escapeHtml(value) {
-    return String(value ?? '')
-        .replaceAll('&', '&amp;')
-        .replaceAll('<', '&lt;')
-        .replaceAll('>', '&gt;')
-        .replaceAll('"', '&quot;')
-        .replaceAll("'", '&#39;');
-}
 
 function getDashboardPublicUrl(config = getConfig()) {
     return (process.env.DASHBOARD_PUBLIC_URL || config.dashboard?.publicUrl || '').replace(/\/$/, '');

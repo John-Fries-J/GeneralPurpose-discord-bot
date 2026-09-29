@@ -24,8 +24,8 @@ test('logger redacts sensitive fields in structured output', () => {
     assert.equal(payload.message, 'login');
     assert.equal(payload.component, 'test');
     assert.equal(payload.guildId, 'guild');
-    assert.equal(payload.token, '[REDACTED]');
-    assert.equal(payload.nested.clientSecret, '[REDACTED]');
+    assert.equal(payload.token, '[redacted]');
+    assert.equal(payload.nested.clientSecret, '[redacted]');
 });
 
 test('redact serializes errors and circular references safely', () => {

@@ -1,4 +1,5 @@
 const { getConfig } = require('./config');
+const { redactSensitiveConfig } = require('./redaction');
 const {
     getGuildConfigurationOverrides,
     listConfigAudit,
@@ -23,7 +24,6 @@ const logChannelKeys = [
 ];
 
 const allowedSources = new Set(['dashboard', 'discord_setup', 'command', 'system']);
-const sensitivePattern = /(token|secret|password|api[_-]?key|cookie|credential|database|clientSecret|client_secret)/i;
 
 const builtInSections = Object.freeze({
     welcome: Object.freeze({
@@ -351,15 +351,7 @@ function valuesEqual(left, right) {
 }
 
 function redactAuditValue(value, key = '') {
-    if (sensitivePattern.test(key)) return '[redacted]';
-    if (Array.isArray(value)) return value.map(item => redactAuditValue(item, key));
-    if (value && typeof value === 'object') {
-        return Object.fromEntries(Object.entries(value).map(([childKey, childValue]) => [
-            childKey,
-            redactAuditValue(childValue, childKey),
-        ]));
-    }
-    return value;
+    return redactSensitiveConfig(value, key);
 }
 
 function safeAuditValue(value, key = '') {

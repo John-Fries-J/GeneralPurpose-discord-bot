@@ -11,6 +11,12 @@ const language = require('../utils/language');
 const { getQueueSummary } = require('../utils/music');
 const { getCommandAccess, normalizeIdList } = require('../utils/permissions');
 const { buildHealthReport } = require('../services/diagnostics');
+const {
+    assertSafeConfigObject,
+    redactSensitiveConfig,
+    restoreProtectedConfig,
+    safeErrorMessage,
+} = require('../utils/redaction');
 const { applyDashboardSettings, parseDashboardSettings } = require('./services/dashboardConfig');
 const { getGuildSettings, listConfigAudit, updateGuildSettings } = require('../utils/guildConfig');
 const {
@@ -50,8 +56,6 @@ const {
 
 const states = new Map();
 const sessionMaxAgeMs = 30 * 24 * 60 * 60 * 1000;
-const redactedSecret = '[redacted]';
-const sensitiveKeys = new Set(['token', 'apiKey', 'clientSecret', 'client_secret', 'password', 'secret']);
 const dashboardPermission = PermissionFlagsBits.Administrator;
 
 function parseCookies(header = '') {
@@ -151,46 +155,8 @@ function requireCsrf(req, res, next) {
     return next();
 }
 
-function isSensitiveKey(key) {
-    return sensitiveKeys.has(String(key));
-}
-
-function redactSensitiveConfig(value, key = '') {
-    if (Array.isArray(value)) {
-        return value.map(item => redactSensitiveConfig(item));
-    }
-
-    if (value && typeof value === 'object') {
-        return Object.fromEntries(Object.entries(value).map(([childKey, childValue]) => [
-            childKey,
-            redactSensitiveConfig(childValue, childKey),
-        ]));
-    }
-
-    if (isSensitiveKey(key) && typeof value === 'string' && value) {
-        return redactedSecret;
-    }
-
-    return value;
-}
-
 function restoreRedactedSecrets(submitted, current) {
-    if (Array.isArray(submitted)) {
-        return submitted.map((item, index) => restoreRedactedSecrets(item, current?.[index]));
-    }
-
-    if (submitted && typeof submitted === 'object') {
-        return Object.fromEntries(Object.entries(submitted).map(([key, value]) => [
-            key,
-            restoreRedactedSecrets(value, current?.[key]),
-        ]));
-    }
-
-    if (submitted === redactedSecret) {
-        return current ?? '';
-    }
-
-    return submitted;
+    return restoreProtectedConfig(submitted, current);
 }
 
 function csrfInput(session) {
@@ -246,7 +212,7 @@ function wantsJson(req) {
 }
 
 function sendSettingsError(req, res, client, error) {
-    const message = error?.message || 'Settings were not saved.';
+    const message = safeErrorMessage(error, 'Settings were not saved.');
     if (wantsJson(req)) {
         return res.status(400).json({ ok: false, message });
     }
@@ -619,12 +585,12 @@ function renderCountRows(rows, emptyText = 'No data yet.') {
         : `<p class="muted">${escapeHtml(emptyText)}</p>`;
 }
 
-function getConfigBackupDirectory() {
-    return path.resolve(__dirname, '..', 'data', 'config-backups');
+function getConfigBackupDirectory(options = {}) {
+    return path.resolve(options.directory || path.join(__dirname, '..', 'data', 'config-backups'));
 }
 
-function listConfigBackups() {
-    const directory = getConfigBackupDirectory();
+function listConfigBackups(options = {}) {
+    const directory = getConfigBackupDirectory(options);
     if (!fs.existsSync(directory)) return [];
 
     return fs.readdirSync(directory)
@@ -636,24 +602,40 @@ function listConfigBackups() {
         .sort((a, b) => b.createdAt - a.createdAt);
 }
 
-function createConfigBackup(label = 'manual') {
-    const directory = getConfigBackupDirectory();
+function createConfigBackup(label = 'manual', options = {}) {
+    const directory = getConfigBackupDirectory(options);
     fs.mkdirSync(directory, { recursive: true });
     const safeLabel = String(label || 'manual').replace(/[^a-z0-9-]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'manual';
     const file = `config-${new Date().toISOString().replace(/[:.]/g, '-')}-${safeLabel}.json`;
     const fullPath = path.join(directory, file);
-    fs.writeFileSync(fullPath, `${JSON.stringify(getStoredConfig(), null, 4)}\n`);
+    fs.writeFileSync(fullPath, `${JSON.stringify(redactSensitiveConfig(options.config || getStoredConfig()), null, 4)}\n`);
     return file;
 }
 
-function restoreConfigBackup(file) {
-    const backup = listConfigBackups().find(item => item.file === file);
+function buildRestoredConfig(parsed, currentConfig = getStoredConfig()) {
+    assertSafeConfigObject(parsed);
+    const restored = restoreProtectedConfig(parsed, currentConfig);
+    const errors = validateConfig(restored);
+    if (errors.length) throw new Error(errors.join('\n'));
+    return restored;
+}
+
+function parseBackupJson(source) {
+    try {
+        return JSON.parse(source);
+    } catch {
+        throw new Error('Backup JSON is malformed.');
+    }
+}
+
+function restoreConfigBackup(file, options = {}) {
+    const backup = listConfigBackups(options).find(item => item.file === file);
     if (!backup) throw new Error('Backup was not found.');
 
-    const parsed = JSON.parse(fs.readFileSync(backup.fullPath, 'utf8'));
-    const errors = validateConfig(parsed);
-    if (errors.length) throw new Error(errors.join('\n'));
-    saveConfig(parsed);
+    const parsed = parseBackupJson(fs.readFileSync(backup.fullPath, 'utf8'));
+    const restored = buildRestoredConfig(parsed, options.currentConfig || getStoredConfig());
+    const save = options.save || saveConfig;
+    save(restored);
 }
 
 function renderJsonEditorPanel(title, description, action, session, object) {
@@ -850,6 +832,7 @@ async function renderDashboard(client, session, notice = '', page = 'overview') 
     const musicSummary = activeGuildId ? getQueueSummary(activeGuildId) : {};
     const configBackups = listConfigBackups();
     const configAudit = activeGuildId ? await listConfigAudit(activeGuildId, { limit: 75 }) : [];
+    const healthReport = ['overview', 'health'].includes(page) ? await buildHealthReport(client) : null;
 
     const renderCommandSections = includeLanguageEditors => grouped.map(([category, commands]) => `
 <section class="panel module-card" id="module-${escapeHtml(slug(category))}">
@@ -920,6 +903,7 @@ ${includeLanguageEditors ? getLanguageSectionsForCategory(category).map(section 
         commandStats,
         logs,
         voiceActivity,
+        health: healthReport,
     });
     const moduleLinksSection = `
 ${renderModuleDashboard(grouped, settings, commandStats)}
@@ -1055,12 +1039,21 @@ ${csrfInput(session)}
 <div class="toolbar"><input data-audit-filter placeholder="Filter moderation, tickets, honeypot, config, dashboard"></div>
 <div class="log" data-audit-list>${auditItems.length ? auditItems.map(item => `<div class="log-entry" data-audit-type="${escapeHtml(item.type)}"><span class="muted">${escapeHtml(new Date(item.at || Date.now()).toLocaleString())}</span> [${escapeHtml(item.type)}] ${escapeHtml(item.text)}</div>`).join('') : '<div class="muted">No audit entries yet.</div>'}</div>
 </section>`;
+    const databaseState = healthReport?.databaseReadable
+        ? (healthReport.databaseWritable === false ? 'Read-only' : 'Reachable')
+        : 'Unreachable';
+    const schedulerState = healthReport?.schedulerAlive ? 'Running' : 'Stopped';
+    const pingLabel = healthReport?.gatewayPingMs === null || healthReport?.gatewayPingMs === undefined
+        ? 'Unknown'
+        : `${Math.round(healthReport.gatewayPingMs)}ms`;
     const healthSection = `
 <section class="grid">
-<div class="panel metric"><span>Discord</span><strong>${client.isReady?.() ? 'Ready' : 'Offline'}</strong></div>
-<div class="panel metric"><span>Ping</span><strong>${Math.round(client.ws?.ping || 0)}ms</strong></div>
-<div class="panel metric"><span>Guilds</span><strong>${client.guilds?.cache?.size || 0}</strong></div>
-<div class="panel metric"><span>Uptime</span><strong>${Math.floor(process.uptime() / 60)}m</strong></div>
+<div class="panel metric"><span>Discord</span><strong>${healthReport?.discordReady ? 'Ready' : 'Offline'}</strong></div>
+<div class="panel metric"><span>Ping</span><strong>${escapeHtml(pingLabel)}</strong></div>
+<div class="panel metric"><span>Guilds</span><strong>${escapeHtml(healthReport?.guilds ?? 0)}</strong></div>
+<div class="panel metric"><span>Uptime</span><strong>${escapeHtml(Math.floor(Number(healthReport?.uptimeSeconds || 0) / 60))}m</strong></div>
+<div class="panel metric"><span>Database</span><strong>${escapeHtml(databaseState)}</strong><small>${escapeHtml(healthReport?.database?.provider || 'unknown')}</small></div>
+<div class="panel metric"><span>Scheduler</span><strong>${escapeHtml(schedulerState)}</strong></div>
 </section>
 <section class="panel"><h2>Schedulers</h2>
 ${['punishmentScheduler', 'memberCounterScheduler', 'mediaAnnouncementScheduler', 'levelingScheduler', 'scheduledMessageScheduler'].map(key => `<div class="row"><span>${escapeHtml(humanize(key))}</span><strong>${client[key] ? 'Running' : 'Stopped'}</strong></div>`).join('')}
@@ -1342,6 +1335,7 @@ function startDashboard(client) {
         try {
             const section = req.body.section;
             const parsed = JSON.parse(req.body.content || '{}');
+            assertSafeConfigObject(parsed);
             if (!section || !parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
                 throw new Error('Language section must be a JSON object.');
             }
@@ -1352,18 +1346,19 @@ function startDashboard(client) {
             appendDashboardLog('Language section saved', { section, userId: req.dashboardSession.user.id });
             res.redirect('/language');
         } catch (error) {
-            res.status(400).send(renderLayout('Invalid language', `<section class="panel"><h2>Invalid language JSON</h2><p>${escapeHtml(error.message)}</p><p>Use the browser back button and fix the JSON.</p></section>`, req.dashboardSession.user, client));
+            res.status(400).send(renderLayout('Invalid language', `<section class="panel"><h2>Invalid language JSON</h2><p>${escapeHtml(safeErrorMessage(error, 'Language was not saved.'))}</p><p>Use the browser back button and fix the JSON.</p></section>`, req.dashboardSession.user, client));
         }
     });
 
     app.post('/language-json', requireAuth, requireCsrf, (req, res) => {
         try {
             const parsed = JSON.parse(req.body.language);
+            assertSafeConfigObject(parsed);
             language.saveLanguage(parsed);
             appendDashboardLog('language.json saved from dashboard', { userId: req.dashboardSession.user.id });
             res.redirect('/language?message=language.json%20saved');
         } catch (error) {
-            res.status(400).send(renderLayout('Invalid language', `<section class="panel"><h2>Invalid language JSON</h2><p>${escapeHtml(error.message)}</p><p>Use the browser back button and fix the JSON.</p></section>`, req.dashboardSession.user, client));
+            res.status(400).send(renderLayout('Invalid language', `<section class="panel"><h2>Invalid language JSON</h2><p>${escapeHtml(safeErrorMessage(error, 'Language was not saved.'))}</p><p>Use the browser back button and fix the JSON.</p></section>`, req.dashboardSession.user, client));
         }
     });
 
@@ -1437,10 +1432,11 @@ function startDashboard(client) {
             return res.redirect('/sender?message=Message%20sent');
         } catch (error) {
             console.error('Dashboard message send failed:', error);
-            const safeMessage = /channel|template|message content|future date/i.test(error.message)
-                ? error.message
+            const redactedMessage = safeErrorMessage(error);
+            const safeMessage = /channel|template|message content|future date/i.test(redactedMessage)
+                ? redactedMessage
                 : 'Discord rejected the message. Check the bot permissions and message content.';
-            res.status(/channel|template|message content|future date/i.test(error.message) ? 400 : 500)
+            res.status(/channel|template|message content|future date/i.test(redactedMessage) ? 400 : 500)
                 .send(renderLayout('Message failed', `<section class="panel"><h2>Message failed</h2><p>${escapeHtml(safeMessage)}</p></section>`, req.dashboardSession.user, client));
         }
     });
@@ -1464,6 +1460,7 @@ function startDashboard(client) {
             }
 
             const parsed = JSON.parse(req.body.json || '{}');
+            assertSafeConfigObject(parsed);
             updateConfig(config => {
                 config[section] = parsed;
                 return config;
@@ -1488,25 +1485,22 @@ function startDashboard(client) {
             };
             res.redirect(`/${sectionPages[section] || 'config'}?message=Saved`);
         } catch (error) {
-            res.status(400).send(renderLayout('Invalid JSON', `<section class="panel"><h2>Invalid JSON</h2><p>${escapeHtml(error.message)}</p></section>`, req.dashboardSession.user, client));
+            res.status(400).send(renderLayout('Invalid JSON', `<section class="panel"><h2>Invalid JSON</h2><p>${escapeHtml(safeErrorMessage(error, 'Config section was not saved.'))}</p></section>`, req.dashboardSession.user, client));
         }
     });
 
     app.post('/config-json', requireAuth, requireCsrf, (req, res) => {
         try {
             const parsedConfig = JSON.parse(req.body.config);
-            const restoredConfig = restoreRedactedSecrets(parsedConfig, getStoredConfig());
-            const errors = validateConfig(restoredConfig);
-            if (errors.length) {
-                const items = errors.map(error => `<li>${escapeHtml(error)}</li>`).join('');
-                return res.status(400).send(renderLayout('Invalid config', `<section class="panel"><h2>Invalid config</h2><ul>${items}</ul><p>Use the browser back button and fix the JSON.</p></section>`, req.dashboardSession.user, client));
-            }
-
+            const restoredConfig = buildRestoredConfig(parsedConfig, getStoredConfig());
             saveConfig(restoredConfig);
             appendDashboardLog('Config saved from dashboard', { userId: req.dashboardSession.user.id });
             res.redirect('/config');
-        } catch {
-            res.status(400).send(renderLayout('Invalid JSON', '<section class="panel"><h2>Invalid JSON</h2><p>The config was not saved. Use the browser back button and fix the JSON.</p></section>', req.dashboardSession.user, client));
+        } catch (error) {
+            const message = error instanceof SyntaxError
+                ? 'The config was not saved. Use the browser back button and fix the JSON.'
+                : safeErrorMessage(error, 'The config was not saved.');
+            res.status(400).send(renderLayout('Invalid config', `<section class="panel"><h2>Invalid config</h2><p>${escapeHtml(message)}</p></section>`, req.dashboardSession.user, client));
         }
     });
 
@@ -1523,7 +1517,7 @@ function startDashboard(client) {
             appendDashboardLog('Config backup restored', { file: req.body.file, userId: req.dashboardSession.user.id });
             res.redirect('/backups?message=Backup%20restored');
         } catch (error) {
-            res.status(400).send(renderLayout('Restore failed', `<section class="panel"><h2>Restore failed</h2><p>${escapeHtml(error.message)}</p></section>`, req.dashboardSession.user, client));
+            res.status(400).send(renderLayout('Restore failed', `<section class="panel"><h2>Restore failed</h2><p>${escapeHtml(safeErrorMessage(error, 'Backup was not restored.'))}</p></section>`, req.dashboardSession.user, client));
         }
     });
 
@@ -1542,11 +1536,15 @@ function startDashboard(client) {
 }
 
 module.exports = {
+    assertSafeConfigObject,
+    buildRestoredConfig,
     canManageDashboard,
+    createConfigBackup,
     createSessionToken,
     requireCsrf,
     redactSensitiveConfig,
     resolveDashboardChannel,
+    restoreConfigBackup,
     restoreRedactedSecrets,
     startDashboard,
     userCanAdminDashboard,

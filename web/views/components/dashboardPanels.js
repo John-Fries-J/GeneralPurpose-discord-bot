@@ -204,6 +204,7 @@ function renderOverviewDashboard({
     commandStats = [],
     logs = [],
     voiceActivity = [],
+    health = null,
     now = Date.now(),
 } = {}) {
     const tickets = summarizeTickets(ticketRecords, now);
@@ -212,12 +213,15 @@ function renderOverviewDashboard({
     todayStart.setHours(0, 0, 0, 0);
     const activeMusicSessions = musicSummary.current || musicSummary.tracks?.length ? 1 : 0;
     const gatewayPing = Number(client.ws?.ping);
+    const databaseStatus = health
+        ? (health.databaseReadable ? (health.databaseWritable === false ? 'Read-only' : 'Healthy') : 'Unreachable')
+        : 'Unknown';
 
     const status = `<section class="grid status-grid">
 ${renderMetric('Bot', client.isReady?.() ? 'Online' : 'Offline')}
 ${renderMetric('Gateway', Number.isFinite(gatewayPing) && gatewayPing >= 0 ? `${Math.round(gatewayPing)}ms` : 'Unknown')}
 ${renderMetric('Uptime', formatDuration(process.uptime?.() || 0))}
-${renderMetric('Database', 'Healthy')}
+${renderMetric('Database', databaseStatus)}
 ${renderMetric('Scheduler', schedulers.healthy ? 'Healthy' : 'Degraded', `${schedulers.running}/${schedulers.total} running`)}
 </section>`;
 
