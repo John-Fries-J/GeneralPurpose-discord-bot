@@ -7,6 +7,7 @@ const { loadCommands } = require('./utils/commands');
 const { destroyAllMusicVoiceConnections } = require('./services/musicLifecycle');
 const { startDashboard } = require('./web/dashboard');
 const { logger } = require('./utils/logger');
+const { closeDatabase } = require('./database');
 
 const config = getConfig();
 assertValidConfig(config, { requireToken: true });
@@ -70,38 +71,53 @@ async function shutdown(signal, exitCode = 0) {
     shuttingDown = true;
     logger.info('Shutdown requested', { component: 'shutdown', signal });
 
-    if (client.punishmentScheduler) {
-        clearInterval(client.punishmentScheduler);
-    }
-    if (client.memberCounterScheduler) {
-        clearInterval(client.memberCounterScheduler);
-    }
-    if (client.mediaAnnouncementScheduler) {
-        clearInterval(client.mediaAnnouncementScheduler);
-    }
-    if (client.levelingScheduler) {
-        clearInterval(client.levelingScheduler);
-    }
-    if (client.scheduledMessageScheduler) {
-        clearInterval(client.scheduledMessageScheduler);
-    }
-    if (client.ticketScheduler) {
-        clearInterval(client.ticketScheduler);
-    }
-    if (client.namelessMcScheduler) {
-        clearInterval(client.namelessMcScheduler);
-    }
-    if (client.scheduler) {
-        client.scheduler.stop();
-    }
-    destroyAllMusicVoiceConnections(client);
+    let finalExitCode = exitCode;
 
-    if (dashboardServer) {
-        await new Promise(resolve => dashboardServer.close(resolve));
+    try {
+        if (client.punishmentScheduler) {
+            clearInterval(client.punishmentScheduler);
+        }
+        if (client.memberCounterScheduler) {
+            clearInterval(client.memberCounterScheduler);
+        }
+        if (client.mediaAnnouncementScheduler) {
+            clearInterval(client.mediaAnnouncementScheduler);
+        }
+        if (client.levelingScheduler) {
+            clearInterval(client.levelingScheduler);
+        }
+        if (client.scheduledMessageScheduler) {
+            clearInterval(client.scheduledMessageScheduler);
+        }
+        if (client.ticketScheduler) {
+            clearInterval(client.ticketScheduler);
+        }
+        if (client.namelessMcScheduler) {
+            clearInterval(client.namelessMcScheduler);
+        }
+        if (client.scheduler) {
+            client.scheduler.stop();
+        }
+        destroyAllMusicVoiceConnections(client);
+
+        if (dashboardServer) {
+            await new Promise((resolve, reject) => dashboardServer.close(error => (error ? reject(error) : resolve())));
+        }
+
+        client.destroy();
+    } catch (error) {
+        finalExitCode = 1;
+        logger.error('Shutdown cleanup failed', { component: 'shutdown', signal, error });
+    } finally {
+        try {
+            closeDatabase();
+        } catch (error) {
+            finalExitCode = 1;
+            logger.error('Database close failed during shutdown', { component: 'shutdown', signal, error });
+        }
     }
 
-    client.destroy();
-    process.exit(exitCode);
+    process.exit(finalExitCode);
 }
 
 process.on('SIGINT', () => {

@@ -33,8 +33,11 @@ async function openDatabase(filePath = resolveSqlitePath()) {
 }
 
 function closeDatabase() {
-    if (cached?.db) cached.db.close();
+    const db = cached?.db;
     cached = null;
+    if (!db || db.open === false) return false;
+    db.close();
+    return true;
 }
 
 function tableExists(db, name) {
