@@ -75,6 +75,16 @@ function validateConfig(config, options = {}) {
         }
     }
 
+    if (config.retention !== undefined) {
+        if (!isPlainObject(config.retention)) {
+            errors.push('retention must be an object.');
+        } else {
+            validateInteger(errors, config, 'retention.commandUsageMaxEntries', { min: 1, max: 1000000 });
+            validateInteger(errors, config, 'retention.voiceActivityMaxEntries', { min: 1, max: 1000000 });
+            validateInteger(errors, config, 'retention.guildConfigAuditMaxEntries', { min: 1, max: 1000000 });
+        }
+    }
+
     if (config.roles !== undefined) {
         if (!isPlainObject(config.roles)) {
             errors.push('roles must be an object.');

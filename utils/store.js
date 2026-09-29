@@ -2,7 +2,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { getConfig } = require('./config');
 const database = require('../database');
-const repository = require('../database/repositories/storeRepository');
+const repository = require('../database/repositories');
+const { makeId } = require('../database/repositories/ids');
 
 let stateMutationQueue = Promise.resolve();
 
@@ -154,6 +155,20 @@ function getHistorySettings(config = getConfig()) {
         recordMessages: config.history?.recordMessages !== false,
         recordCommands: config.history?.recordCommands !== false,
         maxEntries: Number.isInteger(maxEntries) && maxEntries > 0 ? maxEntries : 50_000,
+    };
+}
+
+function boundedPositiveInteger(value, fallback, { min = 1, max = 1_000_000 } = {}) {
+    const number = Number(value);
+    return Number.isInteger(number) && number >= min && number <= max ? number : fallback;
+}
+
+function getRetentionSettings(config = getConfig()) {
+    const retention = config.retention || {};
+    return {
+        commandUsageMaxEntries: boundedPositiveInteger(retention.commandUsageMaxEntries, 10_000),
+        voiceActivityMaxEntries: boundedPositiveInteger(retention.voiceActivityMaxEntries, 5_000),
+        guildConfigAuditMaxEntries: boundedPositiveInteger(retention.guildConfigAuditMaxEntries, 5_000),
     };
 }
 
@@ -391,7 +406,7 @@ async function addModNote(record) {
     const settings = getStorageSettings();
     if (settings.provider === 'sqlite') return repository.addModNote(await getSqliteDb(), record);
     const note = {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        id: makeId(),
         guildId: record.guildId,
         userId: record.userId,
         userTag: record.userTag,
@@ -453,7 +468,8 @@ async function listGuildHistory(guildId, limit = 200) {
 
 async function recordCommandUsage(record) {
     const settings = getStorageSettings();
-    if (settings.provider === 'sqlite') return repository.recordCommandUsage(await getSqliteDb(), record);
+    const retention = getRetentionSettings();
+    if (settings.provider === 'sqlite') return repository.recordCommandUsage(await getSqliteDb(), record, retention.commandUsageMaxEntries);
     const timestamp = Date.now();
 
     return useLegacyStateMutation(state => {
@@ -467,7 +483,7 @@ async function recordCommandUsage(record) {
             error: record.error || null,
             createdAt: timestamp,
         });
-        state.commandStats = state.commandStats.sort((a, b) => b.createdAt - a.createdAt).slice(0, 10000);
+        state.commandStats = state.commandStats.sort((a, b) => b.createdAt - a.createdAt).slice(0, retention.commandUsageMaxEntries);
         return state;
     });
 }
@@ -551,7 +567,8 @@ async function listExpiredTempMutes(timestamp = Date.now()) {
 
 async function appendVoiceActivity(record) {
     const settings = getStorageSettings();
-    if (settings.provider === 'sqlite') return repository.appendVoiceActivity(await getSqliteDb(), record);
+    const retention = getRetentionSettings();
+    if (settings.provider === 'sqlite') return repository.appendVoiceActivity(await getSqliteDb(), record, retention.voiceActivityMaxEntries);
     const entry = {
         guildId: record.guildId,
         userId: record.userId,
@@ -564,7 +581,7 @@ async function appendVoiceActivity(record) {
 
     await useLegacyStateMutation(state => {
         state.voiceActivity.push(entry);
-        state.voiceActivity = state.voiceActivity.sort((a, b) => b.createdAt - a.createdAt).slice(0, 5000);
+        state.voiceActivity = state.voiceActivity.sort((a, b) => b.createdAt - a.createdAt).slice(0, retention.voiceActivityMaxEntries);
         return state;
     });
 
@@ -677,7 +694,7 @@ async function createScheduledMessage(record) {
     if (settings.provider === 'sqlite') return repository.createScheduledMessage(await getSqliteDb(), record);
     const timestamp = Date.now();
     const entry = {
-        id: `${timestamp}-${Math.random().toString(36).slice(2, 10)}`,
+        id: makeId(),
         guildId: record.guildId,
         channelId: record.channelId,
         content: record.content || '',
@@ -706,7 +723,7 @@ async function upsertEmbedTemplate(record) {
     if (settings.provider === 'sqlite') return repository.upsertEmbedTemplate(await getSqliteDb(), record);
     const timestamp = Date.now();
     const template = {
-        id: record.id || `${timestamp}-${Math.random().toString(36).slice(2, 8)}`,
+        id: record.id || makeId(),
         guildId: record.guildId,
         name: record.name,
         content: record.content || '',
@@ -859,7 +876,7 @@ async function createTicketTranscript(record) {
     if (settings.provider === 'sqlite') return repository.createTicketTranscript(await getSqliteDb(), record);
     const timestamp = Date.now();
     const transcript = {
-        id: record.id || `${timestamp}-${Math.random().toString(36).slice(2, 10)}`,
+        id: record.id || makeId(),
         guildId: record.guildId,
         channelId: record.channelId,
         channelName: record.channelName || record.channelId,
@@ -963,7 +980,7 @@ async function createReminder(record) {
     if (settings.provider === 'sqlite') return repository.createReminder(await getSqliteDb(), record);
     const timestamp = Date.now();
     const reminder = {
-        id: record.id || `${timestamp}-${Math.random().toString(36).slice(2, 10)}`,
+        id: record.id || makeId(),
         guildId: record.guildId || null,
         channelId: record.channelId || null,
         userId: record.userId,
@@ -1060,8 +1077,12 @@ function upsertStateRecord(records, keySelector, record) {
 
 async function saveGuildConfigurationSection(guildId, section, payload = {}, metadata = {}) {
     const settings = getStorageSettings();
+    const retention = getRetentionSettings();
     if (settings.provider === 'sqlite') {
-        return repository.saveGuildConfigurationSection(await getSqliteDb(), guildId, section, payload, metadata);
+        return repository.saveGuildConfigurationSection(await getSqliteDb(), guildId, section, payload, {
+            ...metadata,
+            retention,
+        });
     }
 
     return useLegacyStateMutation(state => {
@@ -1134,7 +1155,7 @@ async function saveGuildConfigurationSection(guildId, section, payload = {}, met
 
         for (const entry of payload.auditEntries || []) {
             state.configAudit.push({
-                id: entry.id || `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+                id: entry.id || makeId(),
                 guildId: entry.guildId,
                 actorId: entry.actorId || null,
                 section: entry.section,
@@ -1147,7 +1168,7 @@ async function saveGuildConfigurationSection(guildId, section, payload = {}, met
         }
         state.configAudit = state.configAudit
             .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))
-            .slice(0, 5000);
+            .slice(0, retention.guildConfigAuditMaxEntries);
 
         return state;
     });
@@ -1185,6 +1206,7 @@ module.exports = {
     getTempMute,
     getModerationCase,
     getGuildConfigurationOverrides,
+    getRetentionSettings,
     getTempVoiceChannel,
     getTicketRecord,
     getTicketTranscript,

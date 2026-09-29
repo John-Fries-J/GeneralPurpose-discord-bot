@@ -29,6 +29,11 @@
         "recordCommands": true,
         "maxEntries": 50000
     },
+    "retention": {
+        "commandUsageMaxEntries": 10000,
+        "voiceActivityMaxEntries": 5000,
+        "guildConfigAuditMaxEntries": 5000
+    },
     "tickets": {
         "channelId": "",
         "messageId": "",

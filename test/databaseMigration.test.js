@@ -168,3 +168,24 @@ test('SQLite initialization imports legacy bot_state SQL once and creates a back
         fs.rmSync(directory, { recursive: true, force: true });
     }
 });
+
+test('SQLite initialization reports the latest schema migration version', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'bot-migration-version-'));
+    const sqlitePath = path.join(directory, 'state.sqlite');
+    const { store, database, restore } = loadStoreWithEnvironment({
+        DATABASE_PROVIDER: 'sqlite',
+        DATABASE_SQLITE_PATH: sqlitePath,
+        DATABASE_JSON_PATH: path.join(directory, 'missing.json'),
+    });
+
+    try {
+        await store.initializeStorage();
+        const initialized = await database.initializeDatabase({ sqlitePath, jsonPath: path.join(directory, 'missing.json') });
+        const latest = initialized.db.prepare('SELECT MAX(version) AS version FROM schema_migrations WHERE version < 9000000').get().version;
+
+        assert.equal(initialized.schemaVersion, latest);
+    } finally {
+        restore();
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});

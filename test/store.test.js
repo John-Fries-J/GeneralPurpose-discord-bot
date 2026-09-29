@@ -210,3 +210,47 @@ test('state updates serialize concurrent writes', async () => {
         fs.rmSync(directory, { recursive: true, force: true });
     }
 });
+
+test('repository retention keeps recent operational append-only records', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'bot-retention-'));
+    const sqlitePath = path.join(directory, 'retention.sqlite');
+    const database = require('../database');
+    const repository = require('../database/repositories/storeRepository');
+
+    try {
+        const { db } = await database.initializeDatabase({ sqlitePath, jsonPath: path.join(directory, 'missing.json') });
+
+        for (let index = 0; index < 4; index += 1) {
+            repository.recordCommandUsage(db, {
+                guildId: 'guild',
+                command: `cmd-${index}`,
+                userId: 'user',
+                ok: true,
+            }, 2);
+            repository.appendVoiceActivity(db, {
+                guildId: 'guild',
+                userId: 'user',
+                type: `move-${index}`,
+            }, 2);
+            repository.saveGuildConfigurationSection(db, 'guild', 'welcome', {
+                auditEntries: [{
+                    guildId: 'guild',
+                    section: 'welcome',
+                    key: `key-${index}`,
+                    previousValue: 'old',
+                    newValue: 'new',
+                    source: 'system',
+                }],
+            }, {
+                retention: { guildConfigAuditMaxEntries: 2 },
+            });
+        }
+
+        assert.equal(repository.listCommandStats(db, 'guild').length, 2);
+        assert.equal(repository.listVoiceActivity(db, 'guild', 10).length, 2);
+        assert.equal(repository.listConfigAudit(db, 'guild', { limit: 10 }).length, 2);
+    } finally {
+        database.closeDatabase();
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});

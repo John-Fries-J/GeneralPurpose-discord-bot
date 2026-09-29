@@ -50,3 +50,23 @@ test('validateConfig requires mysql url for mysql provider', () => {
 
     assert(errors.includes('database.mysql.url is required.'));
 });
+
+test('validateConfig validates retention limits', () => {
+    assert.deepEqual(validateConfig({
+        retention: {
+            commandUsageMaxEntries: 100,
+            voiceActivityMaxEntries: 100,
+            guildConfigAuditMaxEntries: 100,
+        },
+    }), []);
+
+    const errors = validateConfig({
+        retention: {
+            commandUsageMaxEntries: 0,
+            voiceActivityMaxEntries: 'many',
+        },
+    });
+
+    assert(errors.includes('retention.commandUsageMaxEntries must be an integer from 1 to 1000000.'));
+    assert(errors.includes('retention.voiceActivityMaxEntries must be an integer from 1 to 1000000.'));
+});

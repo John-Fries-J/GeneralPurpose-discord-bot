@@ -1,3 +1,5 @@
+const { makeId } = require('./ids');
+
 function now() {
     return Date.now();
 }
@@ -13,10 +15,6 @@ function parseJson(value, fallback) {
     } catch {
         return fallback;
     }
-}
-
-function makeId(prefix = '') {
-    return `${prefix}${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function mapCase(row) {
@@ -346,12 +344,18 @@ function deleteModNote(db, guildId, noteId) {
     return deleted;
 }
 
-function recordCommandUsage(db, record) {
+function pruneTableByNewest(db, table, maxEntries) {
+    const limit = Number(maxEntries);
+    if (!Number.isInteger(limit) || limit <= 0) return 0;
+    return db.prepare(`DELETE FROM ${table} WHERE id NOT IN (SELECT id FROM ${table} ORDER BY created_at DESC LIMIT ?)`).run(limit).changes;
+}
+
+function recordCommandUsage(db, record, maxEntries = 10000) {
     db.prepare(`
         INSERT INTO command_usage (guild_id, channel_id, command, user_id, user_tag, ok, error, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(record.guildId || null, record.channelId || null, record.command, record.userId, record.userTag || null, record.ok === true ? 1 : 0, record.error || null, now());
-    db.prepare('DELETE FROM command_usage WHERE id NOT IN (SELECT id FROM command_usage ORDER BY created_at DESC LIMIT 10000)').run();
+    pruneTableByNewest(db, 'command_usage', maxEntries);
 }
 
 function listCommandStats(db, guildId, since = 0) {
@@ -412,7 +416,7 @@ function listExpiredTempRoles(db, timestamp = now()) {
     return db.prepare('SELECT guild_id guildId, user_id userId, role_id roleId, moderator_id moderatorId, reason, expires_at expiresAt, created_at createdAt, updated_at updatedAt FROM temporary_roles WHERE expires_at <= ? ORDER BY expires_at ASC').all(timestamp);
 }
 
-function appendVoiceActivity(db, record) {
+function appendVoiceActivity(db, record, maxEntries = 5000) {
     const entry = {
         guildId: record.guildId,
         userId: record.userId,
@@ -426,7 +430,7 @@ function appendVoiceActivity(db, record) {
         INSERT INTO voice_activity (guild_id, user_id, user_tag, old_channel_id, new_channel_id, type, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(entry.guildId, entry.userId, entry.userTag || null, entry.oldChannelId, entry.newChannelId, entry.type, entry.createdAt);
-    db.prepare('DELETE FROM voice_activity WHERE id NOT IN (SELECT id FROM voice_activity ORDER BY created_at DESC LIMIT 5000)').run();
+    pruneTableByNewest(db, 'voice_activity', maxEntries);
     return entry;
 }
 
@@ -819,6 +823,10 @@ function addConfigAuditEntries(db, entries = []) {
     return entries.length;
 }
 
+function pruneConfigAuditEntries(db, maxEntries = 5000) {
+    return pruneTableByNewest(db, 'guild_config_audit', maxEntries);
+}
+
 function listConfigAudit(db, guildId, options = {}) {
     const limit = Math.max(1, Math.min(250, Number(options.limit || 50)));
     const offset = Math.max(0, Number(options.offset || 0));
@@ -873,6 +881,7 @@ function saveGuildConfigurationSection(db, guildId, section, payload = {}, metad
         }
 
         addConfigAuditEntries(db, payload.auditEntries || []);
+        pruneConfigAuditEntries(db, metadata.retention?.guildConfigAuditMaxEntries);
     })();
 }
 

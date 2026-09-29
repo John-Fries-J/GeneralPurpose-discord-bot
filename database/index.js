@@ -2,8 +2,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const Database = require('better-sqlite3');
 const { getConfig } = require('../utils/config');
+const externalMigrations = require('./migrations');
 
-const schemaVersion = 2;
+const schemaVersion = 3;
 
 let cached = null;
 
@@ -51,10 +52,23 @@ function migrationApplied(db, version) {
 function applyMigration(db, version, name, sql) {
     if (migrationApplied(db, version)) return false;
     db.transaction(() => {
-        db.exec(sql);
+        if (typeof sql === 'function') {
+            sql(db);
+        } else {
+            db.exec(sql);
+        }
         db.prepare('INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)').run(version, name, Date.now());
     })();
     return true;
+}
+
+function applyExternalMigrations(db) {
+    for (const migration of externalMigrations) {
+        if (!migration?.version || !migration?.name || (!migration.sql && !migration.up)) {
+            throw new Error('Invalid database migration entry.');
+        }
+        applyMigration(db, migration.version, migration.name, migration.up || migration.sql);
+    }
 }
 
 function runMigrations(db) {
@@ -397,6 +411,8 @@ function runMigrations(db) {
         CREATE INDEX IF NOT EXISTS idx_embed_templates_guild_name ON embed_templates(guild_id, name);
         CREATE INDEX IF NOT EXISTS idx_moderation_cases_guild_id ON moderation_cases(guild_id, id);
     `);
+
+    applyExternalMigrations(db);
 }
 
 function backupFile(filePath, label = 'legacy') {
