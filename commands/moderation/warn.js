@@ -1,7 +1,5 @@
-const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
-const language = require('../../utils/language');
-const { createEmbed } = require('../../utils/embeds');
-const { logModerationAction, sendModerationDm, validateTarget } = require('../../utils/moderation');
+const { MessageFlags, PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
+const moderationService = require('../../services/moderation');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -15,33 +13,10 @@ module.exports = {
     async execute(interaction) {
         const user = interaction.options.getUser('user', true);
         const reason = interaction.options.getString('reason', true);
-        const target = await validateTarget(interaction, user);
+        const result = await moderationService.warn(interaction, { user, reason });
 
-        if (!target.ok) {
-            return interaction.reply({ content: target.message, flags: 64 });
-        }
+        if (!result.ok) return interaction.reply({ content: result.message, flags: MessageFlags.Ephemeral });
 
-        const dmSent = await sendModerationDm(user, {
-            title: 'User Warned',
-            description: `You have been warned in **${interaction.guild.name}**.\n**Reason:** ${reason}`,
-            color: 'orange',
-        });
-
-        await logModerationAction(interaction, {
-            caseType: 'warn',
-            title: 'User warned',
-            color: 'orange',
-            user,
-            reason,
-            extraFields: [{ name: 'DM sent', value: dmSent ? 'Yes' : 'No', inline: true }],
-        });
-
-        const embed = createEmbed({
-            title: 'User Warned',
-            description: `**${user.tag}** has been warned.\n**Reason:** ${reason}`,
-            color: 'orange',
-        });
-
-        await interaction.reply({ embeds: [embed], flags: 64 });
+        await interaction.reply({ embeds: [result.embed], flags: MessageFlags.Ephemeral });
     },
 };

@@ -1,8 +1,8 @@
-const { SlashCommandBuilder } = require('discord.js');
+const { MessageFlags, SlashCommandBuilder } = require('discord.js');
 const { parseDuration } = require('../../utils/duration');
-const { createEmbed } = require('../../utils/embeds');
+const { createReminder } = require('../../utils/store');
 
-const maxReminderMs = 24 * 24 * 60 * 60 * 1000;
+const maxReminderMs = 365 * 24 * 60 * 60 * 1000;
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -17,22 +17,26 @@ module.exports = {
         const durationMs = parseDuration(duration);
 
         if (!durationMs) {
-            return interaction.reply({ content: 'Invalid duration. Use something like 10m, 2h, or 3d.', flags: 64 });
+            return interaction.reply({ content: 'Invalid duration. Use something like 10m, 2h, or 3d.', flags: MessageFlags.Ephemeral });
         }
 
         if (durationMs > maxReminderMs) {
-            return interaction.reply({ content: 'Reminders can be up to 24 days while this bot has no database.', flags: 64 });
+            return interaction.reply({ content: 'Reminders can be up to 365 days.', flags: MessageFlags.Ephemeral });
         }
 
-        setTimeout(async () => {
-            const embed = createEmbed({
-                title: 'Reminder',
-                description: message,
-                color: 'blue',
-            });
-            await interaction.user.send({ embeds: [embed] }).catch(() => null);
-        }, durationMs);
+        const remindAt = Date.now() + durationMs;
+        await createReminder({
+            guildId: interaction.guildId,
+            channelId: interaction.channelId,
+            userId: interaction.user.id,
+            userTag: interaction.user.tag,
+            message,
+            remindAt,
+        });
 
-        return interaction.reply({ content: `I will remind you in ${duration}.`, flags: 64 });
+        return interaction.reply({
+            content: `I will remind you <t:${Math.floor(remindAt / 1000)}:R>.`,
+            flags: MessageFlags.Ephemeral,
+        });
     },
 };

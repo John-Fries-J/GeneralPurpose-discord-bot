@@ -55,6 +55,23 @@ function buildAlertEmbed(message, deletedCount, status = 'Pending review') {
     });
 }
 
+function buildHoneypotNoticeEmbed() {
+    return createEmbed({
+        title: 'Honeypot Warning',
+        description: 'This is to catch scam bots/accounts, typing in here may get you perm banned!',
+        color: 'red',
+    });
+}
+
+async function sendHoneypotNotice(channel) {
+    if (!channel?.send) return false;
+    await channel.send({
+        embeds: [buildHoneypotNoticeEmbed()],
+        allowedMentions: { parse: [] },
+    });
+    return true;
+}
+
 function canFetchMessages(channel, botMember) {
     if (!channel?.messages?.fetch || !channel.viewable) return false;
     const permissions = channel.permissionsFor?.(botMember);
@@ -280,6 +297,7 @@ async function handleHoneypotButton(interaction) {
 
 module.exports = {
     buildAlertEmbed,
+    buildHoneypotNoticeEmbed,
     createHoneypotButtons,
     customIds,
     deleteRecentUserMessages,
@@ -287,4 +305,5 @@ module.exports = {
     getHoneypotConfig,
     handleHoneypotButton,
     handleHoneypotMessage,
+    sendHoneypotNotice,
 };

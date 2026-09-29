@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { ChannelType, PermissionFlagsBits } = require('discord.js');
-const { deleteRecentUserMessages } = require('../utils/honeypot');
+const { buildHoneypotNoticeEmbed, deleteRecentUserMessages, sendHoneypotNotice } = require('../utils/honeypot');
 
 function createMessage(id, authorId, createdTimestamp, result = 'resolve') {
     return {
@@ -43,4 +43,18 @@ test('deleteRecentUserMessages counts only successful deletes across guild chann
     });
 
     assert.equal(deleted, 2);
+});
+
+test('sendHoneypotNotice sends the configured warning embed safely', async () => {
+    const sent = [];
+    const channel = {
+        send: async payload => {
+            sent.push(payload);
+        },
+    };
+
+    assert.equal(buildHoneypotNoticeEmbed().data.description, 'This is to catch scam bots/accounts, typing in here may get you perm banned!');
+    assert.equal(await sendHoneypotNotice(channel), true);
+    assert.equal(sent[0].embeds[0].data.description, 'This is to catch scam bots/accounts, typing in here may get you perm banned!');
+    assert.deepEqual(sent[0].allowedMentions, { parse: [] });
 });

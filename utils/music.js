@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { PermissionFlagsBits } = require('discord.js');
 const { getConfig } = require('./config');
+const { createTrackPayload } = require('./musicMessages');
 const {
     AudioPlayerStatus,
     createAudioPlayer,
@@ -80,12 +81,15 @@ function getQueue(guildId) {
             connection: null,
             tracks: [],
             current: null,
+            currentResource: null,
             textChannel: null,
+            volume: 100,
             waitingForReadyPlayback: false,
         };
 
         player.on(AudioPlayerStatus.Idle, () => {
             queue.current = null;
+            queue.currentResource = null;
             playNext(queue).catch(error => {
                 console.error('Music playback failed:', error);
                 queue.textChannel?.send(`Music playback failed: ${error.message}`).catch(() => null);
@@ -290,6 +294,7 @@ function createAttachmentTrack(attachment, requestedBy) {
         url: attachment.url,
         source: 'upload',
         requestedBy,
+        thumbnail: attachment.thumbnail?.url || null,
         streamFactory: async () => {
             const response = await fetch(attachment.url);
             if (!response.ok || !response.body) throw new Error(`Could not fetch uploaded file (${response.status}).`);
@@ -315,6 +320,7 @@ async function resolvePlayableTrack(query, requestedBy) {
     let url = value;
     let source = 'url';
     let title = value;
+    let thumbnail = null;
 
     if (isUrl(value) && isSpotifyUrl(value)) {
         const searchQuery = await spotifyToSearch(value);
@@ -322,11 +328,13 @@ async function resolvePlayableTrack(query, requestedBy) {
         if (info) {
             url = info.webpage_url || info.original_url || info.url;
             title = info.title || searchQuery;
+            thumbnail = info.thumbnail || null;
         } else {
             const results = await play.search(searchQuery, { limit: 1, source: { youtube: 'video' } });
             if (!results.length) throw new Error('No streamable result was found for that Spotify track.');
             url = results[0].url;
             title = results[0].title || searchQuery;
+            thumbnail = results[0].thumbnails?.[0]?.url || null;
         }
         source = 'spotify';
     } else if (!isUrl(value)) {
@@ -334,11 +342,13 @@ async function resolvePlayableTrack(query, requestedBy) {
         if (info) {
             url = info.webpage_url || info.original_url || info.url;
             title = info.title || value;
+            thumbnail = info.thumbnail || null;
         } else {
             const results = await play.search(value, { limit: 1, source: { youtube: 'video' } });
             if (!results.length) throw new Error('No playable result was found.');
             url = results[0].url;
             title = results[0].title || value;
+            thumbnail = results[0].thumbnails?.[0]?.url || null;
         }
         source = 'search';
     } else if (isYoutubeUrl(value) && await hasYtDlp()) {
@@ -346,6 +356,7 @@ async function resolvePlayableTrack(query, requestedBy) {
         if (!info) throw new Error('No playable result was found for that URL.');
         url = info.webpage_url || info.original_url || value;
         title = info.title || value;
+        thumbnail = info.thumbnail || null;
     } else {
         const validated = await play.validate(value);
         if (!validated || validated.includes('playlist') || validated.includes('album')) {
@@ -354,11 +365,13 @@ async function resolvePlayableTrack(query, requestedBy) {
     }
 
     const info = title === value ? await play.video_basic_info(url).catch(() => null) : null;
+    thumbnail = thumbnail || info?.video_details?.thumbnails?.at?.(-1)?.url || info?.video_details?.thumbnails?.[0]?.url || null;
     return {
         title: title || info?.video_details?.title || value,
         url,
         source,
         requestedBy,
+        thumbnail,
         streamFactory: async () => {
             if (await hasYtDlp()) {
                 return { stream: createYtDlpStream(url), inputType: undefined };
@@ -545,7 +558,7 @@ async function joinReadyVoiceChannel(interaction, voiceChannel, attempt = 1, set
                 timeoutMs: settings.readyTimeoutMs,
             });
             destroyVoiceConnection(connection);
-            throw new MusicUserError('Discord voice did not become ready before the join timeout. I reset the connection; try `/music play` again. If this keeps happening, check that the bot container can make outbound UDP/WebSocket connections to Discord voice.');
+            throw new MusicUserError('Discord voice did not become ready before the join timeout. I reset the connection; try `/play` again. If this keeps happening, check that the bot container can make outbound UDP/WebSocket connections to Discord voice.');
         }
 
         destroyVoiceConnection(connection);
@@ -563,7 +576,7 @@ async function connectVoiceChannel(interaction, voiceChannel) {
         observeConnection(existing, guildId, settings);
         if (existing.joinConfig?.channelId && existing.joinConfig.channelId !== voiceChannel.id) {
             if (queue?.current || queue?.tracks?.length) {
-                throw new MusicUserError(`I am already playing in <#${existing.joinConfig.channelId}>. Use \`/music stop\` there before moving me.`);
+                throw new MusicUserError(`I am already playing in <#${existing.joinConfig.channelId}>. Use \`/stop\` there before moving me.`);
             }
             destroyVoiceConnection(existing);
         } else {
@@ -581,7 +594,7 @@ async function connectVoiceChannel(interaction, voiceChannel) {
                         timeoutMs: settings.readyTimeoutMs,
                     });
                     destroyVoiceConnection(existing);
-                    throw new MusicUserError('Discord voice did not become ready before the join timeout. I reset the connection; try `/music play` again. If this keeps happening, check that the bot container can make outbound UDP/WebSocket connections to Discord voice.');
+                    throw new MusicUserError('Discord voice did not become ready before the join timeout. I reset the connection; try `/play` again. If this keeps happening, check that the bot container can make outbound UDP/WebSocket connections to Discord voice.');
                 }
 
                 destroyVoiceConnection(existing);
@@ -597,7 +610,7 @@ function getPendingVoiceConnection(guildId, voiceChannel) {
     if (!pending) return null;
 
     if (pending.channelId !== voiceChannel.id) {
-        throw new MusicUserError('I am already joining another voice channel. Try again once that join finishes, or use `/music stop` first.');
+        throw new MusicUserError('I am already joining another voice channel. Try again once that join finishes, or use `/stop` first.');
     }
 
     return pending.promise;
@@ -631,7 +644,7 @@ async function ensureConnection(interaction) {
     }
 }
 
-async function playNext(queue) {
+async function playNext(queue, { announce = true } = {}) {
     if (queue.current || !queue.tracks.length) return;
 
     const track = queue.tracks.shift();
@@ -645,12 +658,17 @@ async function playNext(queue) {
         }
         const source = await track.streamFactory();
         const resource = source.inputType
-            ? createAudioResource(source.stream, { inputType: source.inputType })
-            : createAudioResource(source.stream);
+            ? createAudioResource(source.stream, { inputType: source.inputType, inlineVolume: true })
+            : createAudioResource(source.stream, { inlineVolume: true });
+        resource.volume?.setVolume(queue.volume / 100);
+        queue.currentResource = resource;
         queue.player.play(resource);
-        queue.textChannel?.send(`Now playing: **${track.title}**`).catch(() => null);
+        if (announce) {
+            queue.textChannel?.send(createTrackPayload(track, queue, { title: 'Now Playing' })).catch(() => null);
+        }
     } catch (error) {
         queue.current = null;
+        queue.currentResource = null;
         if (/FFmpeg|avconv/i.test(error?.message || '')) {
             throw new MusicUserError('Music playback needs FFmpeg. Rebuild the Docker image so the new FFmpeg package is installed, then restart the bot.');
         }
@@ -706,7 +724,7 @@ async function enqueue(interaction, track) {
     if (!subscription) throw new Error('Could not subscribe the audio player to the voice connection.');
     queue.tracks.push(track);
     if (queue.connection.state.status === VoiceConnectionStatus.Ready) {
-        await playNext(queue);
+        await playNext(queue, { announce: false });
     } else {
         schedulePlaybackWhenReady(queue);
     }
@@ -729,6 +747,7 @@ function stop(guildId) {
     if (queue) {
         queue.tracks = [];
         queue.current = null;
+        queue.currentResource = null;
         queue.player.stop(true);
         destroyVoiceConnection(queue.connection);
     }
@@ -743,15 +762,28 @@ function getQueueSummary(guildId) {
     return {
         current: queue.current,
         tracks: queue.tracks,
+        volume: queue.volume,
         connectionState: describeConnectionState(queue.connection),
         connectionReady: queue.connection?.state.status === VoiceConnectionStatus.Ready,
     };
 }
 
+function setVolume(guildId, amount) {
+    const volume = Number(amount);
+    if (!Number.isInteger(volume) || volume < 0 || volume > 200) {
+        throw new MusicUserError('Volume must be an integer from 0 to 200.');
+    }
+
+    const queue = getQueue(guildId);
+    queue.volume = volume;
+    queue.currentResource?.volume?.setVolume(volume / 100);
+    return queue;
+}
+
 function getMusicErrorMessage(error) {
     if (error instanceof MusicUserError) return error.message;
     if (isAbortError(error)) {
-        return 'Discord voice timed out while I was joining. Try `/music play` again. If it keeps happening, restart the bot container and check outbound UDP/networking.';
+        return 'Discord voice timed out while I was joining. Try `/play` again. If it keeps happening, restart the bot container and check outbound UDP/networking.';
     }
     if (/FFmpeg|avconv/i.test(error?.message || '')) {
         return 'Music playback needs FFmpeg. Rebuild the Docker image so the new FFmpeg package is installed, then restart the bot.';
@@ -769,6 +801,7 @@ module.exports = {
     describeConnectionState,
     generateDependencyReport,
     resolvePlayableTrack,
+    setVolume,
     skip,
     stop,
     getMusicSettings,

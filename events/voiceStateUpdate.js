@@ -1,5 +1,6 @@
 const { Events } = require('discord.js');
 const { handleJoinToCreate } = require('../utils/joinToCreate');
+const { handleMusicVoiceStateUpdate } = require('../services/musicLifecycle');
 const { appendVoiceActivity } = require('../utils/store');
 
 module.exports = {
@@ -22,6 +23,10 @@ module.exports = {
 
         await handleJoinToCreate(oldState, newState).catch(error => {
             console.error('Join-to-create handler failed:', error);
+        });
+
+        await handleMusicVoiceStateUpdate(oldState, newState).catch(error => {
+            console.error('Music voice lifecycle handler failed:', error);
         });
     },
 };

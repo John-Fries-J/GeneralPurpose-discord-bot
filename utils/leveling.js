@@ -125,7 +125,8 @@ async function awardTextXp(message) {
 
 async function awardVoiceXp(client) {
     const settings = getLevelingConfig();
-    if (!allowsVoiceXp(settings)) return;
+    if (!allowsVoiceXp(settings)) return { awarded: 0 };
+    let awarded = 0;
 
     for (const guild of client.guilds.cache.values()) {
         for (const channel of guild.channels.cache.values()) {
@@ -138,9 +139,12 @@ async function awardVoiceXp(client) {
                 if (amount <= 0) continue;
                 const record = await addUserXp(guild.id, member.id, member.user.tag, 'voice', amount);
                 await applyLevelRoles(member, record, settings);
+                awarded += 1;
             }
         }
     }
+
+    return { awarded };
 }
 
 function startLevelingScheduler(client) {

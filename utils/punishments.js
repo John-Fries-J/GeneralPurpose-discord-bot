@@ -1,4 +1,4 @@
-const { listExpiredTempRoles, readState, removeTempBan, removeTempMute, removeTempRole } = require('./store');
+const { listExpiredTempBans, listExpiredTempMutes, listExpiredTempRoles, removeTempBan, removeTempMute, removeTempRole } = require('./store');
 const { appendDashboardLog } = require('./dashboardLogs');
 const { getOrCreateMuteRole, restoreMutedMember } = require('./moderation');
 
@@ -6,7 +6,7 @@ const checkIntervalMs = 60 * 1000;
 
 async function expireTempBans(client) {
     const now = Date.now();
-    const expired = (await readState()).tempBans.filter(record => record.expiresAt <= now);
+    const expired = await listExpiredTempBans(now);
 
     for (const record of expired) {
         const guild = client.guilds.cache.get(record.guildId);
@@ -20,11 +20,13 @@ async function expireTempBans(client) {
             console.error(`Automatic unban failed for ${record.userId}:`, error);
         }
     }
+
+    return expired.length;
 }
 
 async function expireTempMutes(client) {
     const now = Date.now();
-    const expired = (await readState()).tempMutes.filter(record => record.expiresAt <= now);
+    const expired = await listExpiredTempMutes(now);
 
     for (const record of expired) {
         const guild = client.guilds.cache.get(record.guildId);
@@ -40,6 +42,8 @@ async function expireTempMutes(client) {
             console.error(`Automatic unmute failed for ${record.userId}:`, error);
         }
     }
+
+    return expired.length;
 }
 
 async function expireTempRoles(client) {
@@ -60,6 +64,8 @@ async function expireTempRoles(client) {
             console.error(`Temporary role expiry failed for ${record.userId}/${record.roleId}:`, error);
         }
     }
+
+    return expired.length;
 }
 
 function startPunishmentScheduler(client) {
@@ -74,6 +80,8 @@ function startPunishmentScheduler(client) {
 }
 
 module.exports = {
+    expireTempBans,
+    expireTempMutes,
     expireTempRoles,
     startPunishmentScheduler,
 };

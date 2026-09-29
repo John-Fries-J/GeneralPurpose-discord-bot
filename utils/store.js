@@ -1,8 +1,9 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { getConfig } = require('./config');
+const database = require('../database');
+const repository = require('../database/repositories/storeRepository');
 
-let sqlitePromise = null;
 let stateMutationQueue = Promise.resolve();
 
 function resolveDataPath(config = getConfig()) {
@@ -23,6 +24,7 @@ function createEmptyState() {
         modNotes: [],
         nextCaseId: 1,
         reactionRoles: [],
+        reminders: [],
         scheduledMessages: [],
         starboardMessages: [],
         tempBans: [],
@@ -37,7 +39,6 @@ function createEmptyState() {
 
 function readJsonState(filePath) {
     if (!fs.existsSync(filePath)) return createEmptyState();
-
     return {
         ...createEmptyState(),
         ...JSON.parse(fs.readFileSync(filePath, 'utf8')),
@@ -47,84 +48,6 @@ function readJsonState(filePath) {
 function writeJsonState(filePath, state) {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, `${JSON.stringify({ ...createEmptyState(), ...state }, null, 4)}\n`);
-}
-
-async function getSqlite() {
-    if (!sqlitePromise) {
-        sqlitePromise = require('sql.js')();
-    }
-
-    return sqlitePromise;
-}
-
-async function openSqliteDatabase(filePath) {
-    const SQL = await getSqlite();
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-
-    const database = fs.existsSync(filePath)
-        ? new SQL.Database(fs.readFileSync(filePath))
-        : new SQL.Database();
-
-    database.run(`
-        CREATE TABLE IF NOT EXISTS bot_state (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL,
-            updated_at INTEGER NOT NULL
-        )
-    `);
-    return database;
-}
-
-function saveSqliteDatabase(database, filePath) {
-    fs.writeFileSync(filePath, Buffer.from(database.export()));
-}
-
-async function readSqliteState(filePath) {
-    const database = await openSqliteDatabase(filePath);
-    try {
-        const statement = database.prepare('SELECT key, value FROM bot_state');
-        const state = createEmptyState();
-
-        while (statement.step()) {
-            const row = statement.getAsObject();
-            if (row.key in state) {
-                state[row.key] = JSON.parse(row.value);
-            }
-        }
-
-        statement.free();
-        return state;
-    } finally {
-        database.close();
-    }
-}
-
-async function writeSqliteState(filePath, state) {
-    const database = await openSqliteDatabase(filePath);
-    try {
-        const preparedState = { ...createEmptyState(), ...state };
-        const upsert = database.prepare(`
-            INSERT INTO bot_state (key, value, updated_at)
-            VALUES ($key, $value, $updatedAt)
-            ON CONFLICT(key) DO UPDATE SET
-                value = excluded.value,
-                updated_at = excluded.updated_at
-        `);
-
-        database.run('BEGIN TRANSACTION');
-        for (const [key, value] of Object.entries(preparedState)) {
-            upsert.run({
-                $key: key,
-                $value: JSON.stringify(value),
-                $updatedAt: Date.now(),
-            });
-        }
-        database.run('COMMIT');
-        upsert.free();
-        saveSqliteDatabase(database, filePath);
-    } finally {
-        database.close();
-    }
 }
 
 function redactConnectionString(value = '') {
@@ -219,27 +142,6 @@ async function writeMysqlState(settings, state) {
     }
 }
 
-async function initializeStorage() {
-    const settings = getStorageSettings();
-
-    if (settings.provider === 'json') {
-        console.log(`[DATABASE] Active provider: json (${settings.jsonPath})`);
-        return;
-    }
-
-    if (settings.provider === 'mysql') {
-        const connection = await openMysqlConnection(settings);
-        await connection.end();
-        console.log(`[DATABASE] Active provider: mysql (${redactConnectionString(settings.mysqlUrl)})`);
-        return;
-    }
-
-    await migrateJsonStateIfNeeded(settings);
-    const database = await openSqliteDatabase(settings.sqlitePath);
-    database.close();
-    console.log(`[DATABASE] Active provider: sqlite (${settings.sqlitePath})`);
-}
-
 function getHistorySettings(config = getConfig()) {
     const maxEntries = Number(config.history?.maxEntries || 50_000);
 
@@ -258,30 +160,73 @@ function shouldRecordHistoryEntry(entry, settings = getHistorySettings()) {
     return true;
 }
 
-async function migrateJsonStateIfNeeded(settings) {
-    if (settings.provider !== 'sqlite' || !fs.existsSync(settings.jsonPath)) return;
+async function getSqliteDb() {
+    const settings = getStorageSettings();
+    const initialized = await database.initializeDatabase({
+        sqlitePath: settings.sqlitePath,
+        jsonPath: settings.jsonPath,
+    });
+    return initialized.db;
+}
 
-    const sqliteExists = fs.existsSync(settings.sqlitePath);
-    if (sqliteExists) return;
+async function initializeStorage() {
+    const settings = getStorageSettings();
 
-    const state = readJsonState(settings.jsonPath);
-    await writeSqliteState(settings.sqlitePath, state);
-    console.log(`[DATABASE] Migrated JSON state from ${settings.jsonPath} to ${settings.sqlitePath}`);
+    if (settings.provider === 'json') {
+        console.log(`[DATABASE] Active provider: json (${settings.jsonPath})`);
+        return;
+    }
+
+    if (settings.provider === 'mysql') {
+        const connection = await openMysqlConnection(settings);
+        await connection.end();
+        console.log(`[DATABASE] Active provider: mysql (${redactConnectionString(settings.mysqlUrl)})`);
+        return;
+    }
+
+    const result = await database.initializeDatabase({
+        sqlitePath: settings.sqlitePath,
+        jsonPath: settings.jsonPath,
+    });
+    if (result.legacy?.source) {
+        console.log(`[DATABASE] Migrated legacy ${result.legacy.source} state into normalized SQLite schema: ${JSON.stringify(result.legacy.counts)}`);
+        for (const backup of result.legacy.backups || []) {
+            console.log(`[DATABASE] Legacy state backup created at ${backup}`);
+        }
+    }
+    console.log(`[DATABASE] Active provider: sqlite (${settings.sqlitePath})`);
 }
 
 async function readState() {
     const settings = getStorageSettings();
 
-    if (settings.provider === 'json') {
-        return readJsonState(settings.jsonPath);
-    }
+    if (settings.provider === 'json') return readJsonState(settings.jsonPath);
+    if (settings.provider === 'mysql') return readMysqlState(settings);
+    return repository.readState(await getSqliteDb());
+}
 
-    await migrateJsonStateIfNeeded(settings);
-    if (settings.provider === 'mysql') {
-        return readMysqlState(settings);
-    }
-
-    return readSqliteState(settings.sqlitePath);
+function clearNormalizedState(db) {
+    db.exec(`
+        DELETE FROM moderation_notes;
+        DELETE FROM moderation_cases;
+        DELETE FROM temporary_bans;
+        DELETE FROM temporary_mutes;
+        DELETE FROM temporary_roles;
+        DELETE FROM reminders;
+        DELETE FROM scheduled_messages;
+        DELETE FROM scheduled_jobs;
+        DELETE FROM levels;
+        DELETE FROM reaction_roles;
+        DELETE FROM ticket_members;
+        DELETE FROM ticket_transcripts;
+        DELETE FROM tickets;
+        DELETE FROM temporary_voice_channels;
+        DELETE FROM voice_activity;
+        DELETE FROM command_usage;
+        DELETE FROM user_history;
+        DELETE FROM embed_templates;
+        DELETE FROM starboard_messages;
+    `);
 }
 
 async function writeState(state) {
@@ -297,9 +242,12 @@ async function writeState(state) {
         return;
     }
 
-    await writeSqliteState(settings.sqlitePath, state);
+    const db = await getSqliteDb();
+    db.transaction(() => {
+        clearNormalizedState(db);
+        repository.importState(db, { ...createEmptyState(), ...state });
+    })();
 }
-
 
 async function updateState(updater) {
     const run = stateMutationQueue.then(async () => {
@@ -313,8 +261,14 @@ async function updateState(updater) {
     return run;
 }
 
+function useLegacyStateMutation(fn) {
+    return updateState(fn);
+}
+
 async function upsertTempBan(record) {
-    return updateState(state => {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.upsertTempBan(await getSqliteDb(), record);
+    return useLegacyStateMutation(state => {
         state.tempBans = state.tempBans.filter(item => !(item.guildId === record.guildId && item.userId === record.userId));
         state.tempBans.push(record);
         return state;
@@ -322,14 +276,18 @@ async function upsertTempBan(record) {
 }
 
 async function removeTempBan(guildId, userId) {
-    return updateState(state => {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.removeTempBan(await getSqliteDb(), guildId, userId);
+    return useLegacyStateMutation(state => {
         state.tempBans = state.tempBans.filter(item => !(item.guildId === guildId && item.userId === userId));
         return state;
     });
 }
 
 async function upsertTempMute(record) {
-    return updateState(state => {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.upsertTempMute(await getSqliteDb(), record);
+    return useLegacyStateMutation(state => {
         state.tempMutes = state.tempMutes.filter(item => !(item.guildId === record.guildId && item.userId === record.userId));
         state.tempMutes.push(record);
         return state;
@@ -337,20 +295,26 @@ async function upsertTempMute(record) {
 }
 
 async function removeTempMute(guildId, userId) {
-    return updateState(state => {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.removeTempMute(await getSqliteDb(), guildId, userId);
+    return useLegacyStateMutation(state => {
         state.tempMutes = state.tempMutes.filter(item => !(item.guildId === guildId && item.userId === userId));
         return state;
     });
 }
 
 async function getTempMute(guildId, userId) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.getTempMute(await getSqliteDb(), guildId, userId);
     return (await readState()).tempMutes.find(item => item.guildId === guildId && item.userId === userId) || null;
 }
 
 async function createModerationCase(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.createModerationCase(await getSqliteDb(), record);
     let createdCase;
 
-    await updateState(state => {
+    await useLegacyStateMutation(state => {
         const id = Number(state.nextCaseId || 1);
         const timestamp = Date.now();
         createdCase = {
@@ -377,6 +341,8 @@ async function createModerationCase(record) {
 }
 
 async function countActiveModerationCases(guildId, userId, type) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.countActiveModerationCases(await getSqliteDb(), guildId, userId, type);
     return (await readState()).cases
         .filter(item => item.guildId === guildId && item.userId === userId && item.type === type && item.active !== false)
         .length;
@@ -399,7 +365,10 @@ async function addUserHistory(record) {
 
     if (!shouldRecordHistoryEntry(entry, settings)) return null;
 
-    await updateState(state => {
+    const storage = getStorageSettings();
+    if (storage.provider === 'sqlite') return repository.addUserHistory(await getSqliteDb(), entry, settings.maxEntries);
+
+    await useLegacyStateMutation(state => {
         state.history.push(entry);
         state.history = state.history
             .sort((a, b) => b.createdAt - a.createdAt)
@@ -411,6 +380,8 @@ async function addUserHistory(record) {
 }
 
 async function addModNote(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.addModNote(await getSqliteDb(), record);
     const note = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         guildId: record.guildId,
@@ -422,7 +393,7 @@ async function addModNote(record) {
         createdAt: Date.now(),
     };
 
-    await updateState(state => {
+    await useLegacyStateMutation(state => {
         state.modNotes.push(note);
         state.modNotes = state.modNotes.sort((a, b) => b.createdAt - a.createdAt).slice(0, 5000);
         return state;
@@ -432,6 +403,8 @@ async function addModNote(record) {
 }
 
 async function listModNotes(guildId, userId, limit = 15) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listModNotes(await getSqliteDb(), guildId, userId, limit);
     return (await readState()).modNotes
         .filter(item => item.guildId === guildId && item.userId === userId)
         .sort((a, b) => b.createdAt - a.createdAt)
@@ -439,9 +412,11 @@ async function listModNotes(guildId, userId, limit = 15) {
 }
 
 async function deleteModNote(guildId, noteId) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.deleteModNote(await getSqliteDb(), guildId, noteId);
     let deleted = null;
 
-    await updateState(state => {
+    await useLegacyStateMutation(state => {
         deleted = state.modNotes.find(item => item.guildId === guildId && item.id === noteId) || null;
         state.modNotes = state.modNotes.filter(item => !(item.guildId === guildId && item.id === noteId));
         return state;
@@ -451,6 +426,8 @@ async function deleteModNote(guildId, noteId) {
 }
 
 async function listUserHistory(guildId, userId, limit = 15) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listUserHistory(await getSqliteDb(), guildId, userId, limit);
     return (await readState()).history
         .filter(item => item.guildId === guildId && item.userId === userId)
         .sort((a, b) => b.createdAt - a.createdAt)
@@ -458,9 +435,11 @@ async function listUserHistory(guildId, userId, limit = 15) {
 }
 
 async function recordCommandUsage(record) {
-    const now = Date.now();
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.recordCommandUsage(await getSqliteDb(), record);
+    const timestamp = Date.now();
 
-    return updateState(state => {
+    return useLegacyStateMutation(state => {
         state.commandStats.push({
             guildId: record.guildId || null,
             channelId: record.channelId || null,
@@ -469,7 +448,7 @@ async function recordCommandUsage(record) {
             userTag: record.userTag,
             ok: record.ok === true,
             error: record.error || null,
-            createdAt: now,
+            createdAt: timestamp,
         });
         state.commandStats = state.commandStats.sort((a, b) => b.createdAt - a.createdAt).slice(0, 10000);
         return state;
@@ -477,6 +456,8 @@ async function recordCommandUsage(record) {
 }
 
 async function listCommandStats(guildId, since = 0) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listCommandStats(await getSqliteDb(), guildId, since);
     return (await readState()).commandStats
         .filter(item => !guildId || item.guildId === guildId)
         .filter(item => !since || item.createdAt >= since)
@@ -484,7 +465,9 @@ async function listCommandStats(guildId, since = 0) {
 }
 
 async function upsertTempVoiceChannel(record) {
-    return updateState(state => {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.upsertTempVoiceChannel(await getSqliteDb(), record);
+    return useLegacyStateMutation(state => {
         state.tempVoiceChannels = state.tempVoiceChannels.filter(item => item.channelId !== record.channelId);
         state.tempVoiceChannels.push(record);
         return state;
@@ -492,22 +475,30 @@ async function upsertTempVoiceChannel(record) {
 }
 
 async function removeTempVoiceChannel(channelId) {
-    return updateState(state => {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.removeTempVoiceChannel(await getSqliteDb(), channelId);
+    return useLegacyStateMutation(state => {
         state.tempVoiceChannels = state.tempVoiceChannels.filter(item => item.channelId !== channelId);
         return state;
     });
 }
 
 async function listTempVoiceChannelsForGuild(guildId) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listTempVoiceChannelsForGuild(await getSqliteDb(), guildId);
     return (await readState()).tempVoiceChannels.filter(item => item.guildId === guildId);
 }
 
 async function getTempVoiceChannel(channelId) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.getTempVoiceChannel(await getSqliteDb(), channelId);
     return (await readState()).tempVoiceChannels.find(item => item.channelId === channelId) || null;
 }
 
 async function upsertTempRole(record) {
-    return updateState(state => {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.upsertTempRole(await getSqliteDb(), record);
+    return useLegacyStateMutation(state => {
         state.tempRoles = state.tempRoles.filter(item => !(item.guildId === record.guildId && item.userId === record.userId && item.roleId === record.roleId));
         state.tempRoles.push(record);
         return state;
@@ -515,17 +506,35 @@ async function upsertTempRole(record) {
 }
 
 async function removeTempRole(guildId, userId, roleId) {
-    return updateState(state => {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.removeTempRole(await getSqliteDb(), guildId, userId, roleId);
+    return useLegacyStateMutation(state => {
         state.tempRoles = state.tempRoles.filter(item => !(item.guildId === guildId && item.userId === userId && item.roleId === roleId));
         return state;
     });
 }
 
-async function listExpiredTempRoles(now = Date.now()) {
-    return (await readState()).tempRoles.filter(record => record.expiresAt <= now);
+async function listExpiredTempRoles(timestamp = Date.now()) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listExpiredTempRoles(await getSqliteDb(), timestamp);
+    return (await readState()).tempRoles.filter(record => record.expiresAt <= timestamp);
+}
+
+async function listExpiredTempBans(timestamp = Date.now()) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listExpiredTempBans(await getSqliteDb(), timestamp);
+    return (await readState()).tempBans.filter(record => record.expiresAt <= timestamp);
+}
+
+async function listExpiredTempMutes(timestamp = Date.now()) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listExpiredTempMutes(await getSqliteDb(), timestamp);
+    return (await readState()).tempMutes.filter(record => record.expiresAt <= timestamp);
 }
 
 async function appendVoiceActivity(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.appendVoiceActivity(await getSqliteDb(), record);
     const entry = {
         guildId: record.guildId,
         userId: record.userId,
@@ -536,7 +545,7 @@ async function appendVoiceActivity(record) {
         createdAt: Date.now(),
     };
 
-    await updateState(state => {
+    await useLegacyStateMutation(state => {
         state.voiceActivity.push(entry);
         state.voiceActivity = state.voiceActivity.sort((a, b) => b.createdAt - a.createdAt).slice(0, 5000);
         return state;
@@ -546,6 +555,8 @@ async function appendVoiceActivity(record) {
 }
 
 async function listVoiceActivity(guildId, limit = 50) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listVoiceActivity(await getSqliteDb(), guildId, limit);
     return (await readState()).voiceActivity
         .filter(item => !guildId || item.guildId === guildId)
         .sort((a, b) => b.createdAt - a.createdAt)
@@ -553,11 +564,15 @@ async function listVoiceActivity(guildId, limit = 50) {
 }
 
 async function getStarboardMessage(guildId, messageId) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.getStarboardMessage(await getSqliteDb(), guildId, messageId);
     return (await readState()).starboardMessages.find(item => item.guildId === guildId && item.messageId === messageId) || null;
 }
 
 async function upsertStarboardMessage(record) {
-    return updateState(state => {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.upsertStarboardMessage(await getSqliteDb(), record);
+    return useLegacyStateMutation(state => {
         const existing = state.starboardMessages.find(item => item.guildId === record.guildId && item.messageId === record.messageId);
         const entry = {
             ...(existing || {}),
@@ -577,10 +592,12 @@ async function upsertStarboardMessage(record) {
 }
 
 async function addUserXp(guildId, userId, userTag, type, amount, cooldownMs = 0) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.addUserXp(await getSqliteDb(), guildId, userId, userTag, type, amount, cooldownMs);
     let updated;
-    const now = Date.now();
+    const timestamp = Date.now();
 
-    await updateState(state => {
+    await useLegacyStateMutation(state => {
         let record = state.levels.find(item => item.guildId === guildId && item.userId === userId);
         if (!record) {
             record = {
@@ -590,25 +607,25 @@ async function addUserXp(guildId, userId, userTag, type, amount, cooldownMs = 0)
                 textXp: 0,
                 voiceXp: 0,
                 lastTextXpAt: 0,
-                updatedAt: now,
+                updatedAt: timestamp,
             };
             state.levels.push(record);
         }
 
-        if (type === 'text' && cooldownMs && now - Number(record.lastTextXpAt || 0) < cooldownMs) {
+        if (type === 'text' && cooldownMs && timestamp - Number(record.lastTextXpAt || 0) < cooldownMs) {
             updated = record;
             return state;
         }
 
         if (type === 'text') {
             record.textXp += amount;
-            record.lastTextXpAt = now;
+            record.lastTextXpAt = timestamp;
         } else {
             record.voiceXp += amount;
         }
 
         record.userTag = userTag;
-        record.updatedAt = now;
+        record.updatedAt = timestamp;
         updated = record;
         return state;
     });
@@ -617,10 +634,14 @@ async function addUserXp(guildId, userId, userTag, type, amount, cooldownMs = 0)
 }
 
 async function getUserLevelRecord(guildId, userId) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.getUserLevelRecord(await getSqliteDb(), guildId, userId);
     return (await readState()).levels.find(item => item.guildId === guildId && item.userId === userId) || null;
 }
 
 async function listLevelLeaderboard(guildId, limit = 10, mode = 'total') {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listLevelLeaderboard(await getSqliteDb(), guildId, limit, mode);
     const score = record => {
         if (mode === 'text') return Number(record.textXp || 0);
         if (mode === 'voice') return Number(record.voiceXp || 0);
@@ -635,22 +656,24 @@ async function listLevelLeaderboard(guildId, limit = 10, mode = 'total') {
 }
 
 async function createScheduledMessage(record) {
-    const now = Date.now();
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.createScheduledMessage(await getSqliteDb(), record);
+    const timestamp = Date.now();
     const entry = {
-        id: `${now}-${Math.random().toString(36).slice(2, 10)}`,
+        id: `${timestamp}-${Math.random().toString(36).slice(2, 10)}`,
         guildId: record.guildId,
         channelId: record.channelId,
         content: record.content || '',
         embed: record.embed || null,
         createdBy: record.createdBy || null,
-        createdAt: now,
+        createdAt: timestamp,
         scheduledFor: Number(record.scheduledFor),
         sentAt: null,
         status: 'pending',
         error: null,
     };
 
-    await updateState(state => {
+    await useLegacyStateMutation(state => {
         state.scheduledMessages.push(entry);
         state.scheduledMessages = state.scheduledMessages
             .sort((a, b) => Number(a.scheduledFor) - Number(b.scheduledFor))
@@ -662,19 +685,21 @@ async function createScheduledMessage(record) {
 }
 
 async function upsertEmbedTemplate(record) {
-    const now = Date.now();
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.upsertEmbedTemplate(await getSqliteDb(), record);
+    const timestamp = Date.now();
     const template = {
-        id: record.id || `${now}-${Math.random().toString(36).slice(2, 8)}`,
+        id: record.id || `${timestamp}-${Math.random().toString(36).slice(2, 8)}`,
         guildId: record.guildId,
         name: record.name,
         content: record.content || '',
         embed: record.embed || null,
         updatedBy: record.updatedBy || null,
-        createdAt: record.createdAt || now,
-        updatedAt: now,
+        createdAt: record.createdAt || timestamp,
+        updatedAt: timestamp,
     };
 
-    await updateState(state => {
+    await useLegacyStateMutation(state => {
         state.embedTemplates = state.embedTemplates.filter(item => !(item.guildId === template.guildId && item.id === template.id));
         state.embedTemplates.push(template);
         state.embedTemplates = state.embedTemplates.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 500);
@@ -685,15 +710,19 @@ async function upsertEmbedTemplate(record) {
 }
 
 async function listEmbedTemplates(guildId) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listEmbedTemplates(await getSqliteDb(), guildId);
     return (await readState()).embedTemplates
         .filter(item => !guildId || item.guildId === guildId)
         .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 async function deleteEmbedTemplate(guildId, id) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.deleteEmbedTemplate(await getSqliteDb(), guildId, id);
     let deleted = null;
 
-    await updateState(state => {
+    await useLegacyStateMutation(state => {
         deleted = state.embedTemplates.find(item => item.guildId === guildId && item.id === id) || null;
         state.embedTemplates = state.embedTemplates.filter(item => !(item.guildId === guildId && item.id === id));
         return state;
@@ -703,23 +732,29 @@ async function deleteEmbedTemplate(guildId, id) {
 }
 
 async function listScheduledMessages(guildId, limit = 50) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listScheduledMessages(await getSqliteDb(), guildId, limit);
     return (await readState()).scheduledMessages
         .filter(item => !guildId || item.guildId === guildId)
         .sort((a, b) => Number(a.scheduledFor) - Number(b.scheduledFor))
         .slice(0, limit);
 }
 
-async function listDueScheduledMessages(now = Date.now(), limit = 25) {
+async function listDueScheduledMessages(timestamp = Date.now(), limit = 25) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listDueScheduledMessages(await getSqliteDb(), timestamp, limit);
     return (await readState()).scheduledMessages
-        .filter(item => item.status === 'pending' && Number(item.scheduledFor) <= now)
+        .filter(item => item.status === 'pending' && Number(item.scheduledFor) <= timestamp)
         .sort((a, b) => Number(a.scheduledFor) - Number(b.scheduledFor))
         .slice(0, limit);
 }
 
 async function updateScheduledMessageStatus(id, status, error = null) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.updateScheduledMessageStatus(await getSqliteDb(), id, status, error);
     let updated = null;
 
-    await updateState(state => {
+    await useLegacyStateMutation(state => {
         const record = state.scheduledMessages.find(item => item.id === id);
         if (!record) return state;
 
@@ -733,11 +768,27 @@ async function updateScheduledMessageStatus(id, status, error = null) {
     return updated;
 }
 
+async function deleteScheduledMessage(id) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.deleteScheduledMessage(await getSqliteDb(), id);
+    let deleted = null;
+
+    await useLegacyStateMutation(state => {
+        deleted = state.scheduledMessages.find(item => item.id === id) || null;
+        state.scheduledMessages = state.scheduledMessages.filter(item => item.id !== id);
+        return state;
+    });
+
+    return deleted;
+}
+
 async function upsertTicketRecord(record) {
-    const now = Date.now();
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.upsertTicketRecord(await getSqliteDb(), record);
+    const timestamp = Date.now();
     let updated = null;
 
-    await updateState(state => {
+    await useLegacyStateMutation(state => {
         const existing = state.ticketRecords.find(item => item.channelId === record.channelId);
         updated = {
             ...(existing || {}),
@@ -750,9 +801,9 @@ async function upsertTicketRecord(record) {
             priority: record.priority || existing?.priority || 'normal',
             tags: record.tags || existing?.tags || [],
             status: record.status || existing?.status || 'open',
-            lastActivityAt: record.lastActivityAt || existing?.lastActivityAt || now,
-            createdAt: existing?.createdAt || record.createdAt || now,
-            updatedAt: now,
+            lastActivityAt: record.lastActivityAt || existing?.lastActivityAt || timestamp,
+            createdAt: existing?.createdAt || record.createdAt || timestamp,
+            updatedAt: timestamp,
         };
         state.ticketRecords = state.ticketRecords.filter(item => item.channelId !== record.channelId);
         state.ticketRecords.push(updated);
@@ -763,10 +814,14 @@ async function upsertTicketRecord(record) {
 }
 
 async function getTicketRecord(channelId) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.getTicketRecord(await getSqliteDb(), channelId);
     return (await readState()).ticketRecords.find(item => item.channelId === channelId) || null;
 }
 
 async function listTicketRecords(guildId, limit = 100) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listTicketRecords(await getSqliteDb(), guildId, limit);
     return (await readState()).ticketRecords
         .filter(item => !guildId || item.guildId === guildId)
         .sort((a, b) => b.updatedAt - a.updatedAt)
@@ -774,30 +829,34 @@ async function listTicketRecords(guildId, limit = 100) {
 }
 
 async function deleteTicketRecord(channelId) {
-    return updateState(state => {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.deleteTicketRecord(await getSqliteDb(), channelId);
+    return useLegacyStateMutation(state => {
         state.ticketRecords = state.ticketRecords.filter(item => item.channelId !== channelId);
         return state;
     });
 }
 
 async function createTicketTranscript(record) {
-    const now = Date.now();
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.createTicketTranscript(await getSqliteDb(), record);
+    const timestamp = Date.now();
     const transcript = {
-        id: record.id || `${now}-${Math.random().toString(36).slice(2, 10)}`,
+        id: record.id || `${timestamp}-${Math.random().toString(36).slice(2, 10)}`,
         guildId: record.guildId,
         channelId: record.channelId,
         channelName: record.channelName || record.channelId,
         ticketName: record.ticketName || record.channelName || record.channelId,
         openerId: record.openerId || null,
         createdBy: record.createdBy || null,
-        createdAt: now,
+        createdAt: timestamp,
         messageCount: Number(record.messageCount || 0),
         allowedUserIds: [...new Set((record.allowedUserIds || []).filter(Boolean))],
         html: record.html || '',
         text: record.text || '',
     };
 
-    await updateState(state => {
+    await useLegacyStateMutation(state => {
         state.ticketTranscripts.push(transcript);
         state.ticketTranscripts = state.ticketTranscripts
             .sort((a, b) => b.createdAt - a.createdAt)
@@ -809,33 +868,29 @@ async function createTicketTranscript(record) {
 }
 
 async function getTicketTranscript(id) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.getTicketTranscript(await getSqliteDb(), id);
     return (await readState()).ticketTranscripts.find(item => item.id === id) || null;
 }
 
 async function listTicketTranscripts(guildId, limit = 50) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listTicketTranscripts(await getSqliteDb(), guildId, limit);
     return (await readState()).ticketTranscripts
         .filter(item => !guildId || item.guildId === guildId)
         .sort((a, b) => b.createdAt - a.createdAt)
         .slice(0, limit);
 }
 
-async function deleteScheduledMessage(id) {
-    let deleted = null;
-
-    await updateState(state => {
-        deleted = state.scheduledMessages.find(item => item.id === id) || null;
-        state.scheduledMessages = state.scheduledMessages.filter(item => item.id !== id);
-        return state;
-    });
-
-    return deleted;
-}
-
 async function getModerationCase(guildId, caseId) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.getModerationCase(await getSqliteDb(), guildId, caseId);
     return (await readState()).cases.find(item => item.guildId === guildId && item.id === Number(caseId)) || null;
 }
 
 async function listModerationCases(guildId, filters = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listModerationCases(await getSqliteDb(), guildId, filters);
     const state = await readState();
     return state.cases
         .filter(item => item.guildId === guildId)
@@ -845,9 +900,11 @@ async function listModerationCases(guildId, filters = {}) {
 }
 
 async function updateModerationCaseReason(guildId, caseId, reason) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.updateModerationCaseReason(await getSqliteDb(), guildId, caseId, reason);
     let updatedCase = null;
 
-    await updateState(state => {
+    await useLegacyStateMutation(state => {
         const record = state.cases.find(item => item.guildId === guildId && item.id === Number(caseId));
         if (!record) return state;
 
@@ -861,10 +918,12 @@ async function updateModerationCaseReason(guildId, caseId, reason) {
 }
 
 async function clearWarningCases(guildId, userId, moderatorId, reason) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.clearWarningCases(await getSqliteDb(), guildId, userId, moderatorId, reason);
     const clearedAt = Date.now();
     let cleared = 0;
 
-    await updateState(state => {
+    await useLegacyStateMutation(state => {
         for (const record of state.cases) {
             if (record.guildId === guildId && record.userId === userId && record.type === 'warn' && record.active !== false) {
                 record.active = false;
@@ -882,6 +941,77 @@ async function clearWarningCases(guildId, userId, moderatorId, reason) {
     return cleared;
 }
 
+async function createReminder(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.createReminder(await getSqliteDb(), record);
+    const timestamp = Date.now();
+    const reminder = {
+        id: record.id || `${timestamp}-${Math.random().toString(36).slice(2, 10)}`,
+        guildId: record.guildId || null,
+        channelId: record.channelId || null,
+        userId: record.userId,
+        userTag: record.userTag || null,
+        message: record.message,
+        remindAt: Number(record.remindAt),
+        deliveredAt: null,
+        status: 'pending',
+        error: null,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+    };
+    await useLegacyStateMutation(state => {
+        state.reminders ||= [];
+        state.reminders.push(reminder);
+        state.reminders = state.reminders.sort((a, b) => Number(a.remindAt) - Number(b.remindAt)).slice(-5000);
+        return state;
+    });
+    return reminder;
+}
+
+async function listDueReminders(timestamp = Date.now(), limit = 25) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listDueReminders(await getSqliteDb(), timestamp, limit);
+    return ((await readState()).reminders || [])
+        .filter(item => item.status === 'pending' && Number(item.remindAt) <= timestamp)
+        .sort((a, b) => Number(a.remindAt) - Number(b.remindAt))
+        .slice(0, limit);
+}
+
+async function updateReminderStatus(id, status, error = null) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.updateReminderStatus(await getSqliteDb(), id, status, error);
+    let updated = null;
+    await useLegacyStateMutation(state => {
+        const record = (state.reminders || []).find(item => item.id === id);
+        if (!record) return state;
+        record.status = status;
+        record.error = error;
+        record.deliveredAt = status === 'sent' ? Date.now() : record.deliveredAt;
+        record.updatedAt = Date.now();
+        updated = record;
+        return state;
+    });
+    return updated;
+}
+
+async function markScheduledJobStart(name) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.markScheduledJobStart(await getSqliteDb(), name);
+    return null;
+}
+
+async function markScheduledJobFinish(name, durationMs, error = null) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.markScheduledJobFinish(await getSqliteDb(), name, durationMs, error);
+    return null;
+}
+
+async function listScheduledJobStatus() {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listScheduledJobStatus(await getSqliteDb());
+    return [];
+}
+
 module.exports = {
     addUserHistory,
     addModNote,
@@ -891,6 +1021,7 @@ module.exports = {
     countActiveModerationCases,
     createModerationCase,
     createEmptyState,
+    createReminder,
     createScheduledMessage,
     createTicketTranscript,
     deleteScheduledMessage,
@@ -906,12 +1037,16 @@ module.exports = {
     getUserLevelRecord,
     initializeStorage,
     listCommandStats,
+    listDueReminders,
     listEmbedTemplates,
+    listExpiredTempBans,
+    listExpiredTempMutes,
     listExpiredTempRoles,
     listLevelLeaderboard,
     listDueScheduledMessages,
     listModNotes,
     listScheduledMessages,
+    listScheduledJobStatus,
     listTicketRecords,
     listTicketTranscripts,
     listTempVoiceChannelsForGuild,
@@ -924,6 +1059,9 @@ module.exports = {
     removeTempRole,
     removeTempVoiceChannel,
     recordCommandUsage,
+    updateReminderStatus,
+    markScheduledJobFinish,
+    markScheduledJobStart,
     updateScheduledMessageStatus,
     updateModerationCaseReason,
     upsertEmbedTemplate,
@@ -933,4 +1071,5 @@ module.exports = {
     upsertTempRole,
     upsertTempVoiceChannel,
     upsertTicketRecord,
+    writeState,
 };

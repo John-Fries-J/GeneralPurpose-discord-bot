@@ -1,6 +1,6 @@
-const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+const { MessageFlags, PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
 const language = require('../../utils/language');
-const { logModerationAction, sendModerationDm, validateTarget } = require('../../utils/moderation');
+const moderationService = require('../../services/moderation');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -14,31 +14,10 @@ module.exports = {
     async execute(interaction) {
         const user = interaction.options.getUser('user', true);
         const reason = interaction.options.getString('reason') || language.general.noReason;
-        const target = await validateTarget(interaction, user, 'kickable');
+        const result = await moderationService.kick(interaction, { user, reason });
 
-        if (!target.ok) {
-            return interaction.reply({ content: target.message === language.moderation.cannotModerateUser ? language.moderation.cannotKick : target.message, flags: 64 });
-        }
+        if (!result.ok) return interaction.reply({ content: result.message, flags: MessageFlags.Ephemeral });
 
-        const dmSent = await sendModerationDm(user, {
-            title: 'User Kicked',
-            description: `You have been kicked from **${interaction.guild.name}**.\n**Reason:** ${reason}`,
-            color: 'red',
-        });
-
-        await target.member.kick(reason);
-        await logModerationAction(interaction, {
-            caseType: 'kick',
-            title: 'User kicked',
-            color: 'red',
-            user,
-            reason,
-            extraFields: [{ name: 'DM sent', value: dmSent ? 'Yes' : 'No', inline: true }],
-        });
-
-        await interaction.reply({
-            content: `User ${user.tag} has been kicked. Reason: ${reason}${dmSent ? '' : `\n${language.moderation.dmFailed}`}`,
-            flags: 64,
-        });
+        await interaction.reply({ content: result.content, flags: MessageFlags.Ephemeral });
     },
 };

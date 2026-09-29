@@ -6,6 +6,7 @@ const assert = require('node:assert/strict');
 
 function loadStoreWithEnvironment(environment) {
     const previous = {};
+    const database = require('../database');
 
     for (const [key, value] of Object.entries(environment)) {
         previous[key] = process.env[key];
@@ -18,6 +19,7 @@ function loadStoreWithEnvironment(environment) {
     return {
         store,
         restore() {
+            database.closeDatabase();
             for (const [key, value] of Object.entries(previous)) {
                 if (value === undefined) {
                     delete process.env[key];
@@ -49,6 +51,30 @@ test('SQLite storage persists temporary mute records', async () => {
         assert.deepEqual((await store.getTempMute('guild', 'user')).removedRoleIds, ['role']);
         await store.removeTempMute('guild', 'user');
         assert.equal(await store.getTempMute('guild', 'user'), null);
+    } finally {
+        restore();
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('SQLite storage lists expired temporary punishments through due-time queries', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'bot-store-'));
+    const sqlitePath = path.join(directory, 'state.sqlite');
+    const { store, restore } = loadStoreWithEnvironment({
+        DATABASE_PROVIDER: 'sqlite',
+        DATABASE_SQLITE_PATH: sqlitePath,
+    });
+    const now = Date.now();
+
+    try {
+        await store.upsertTempBan({ guildId: 'guild', userId: 'expired-ban', expiresAt: now - 1 });
+        await store.upsertTempBan({ guildId: 'guild', userId: 'future-ban', expiresAt: now + 60_000 });
+        await store.upsertTempMute({ guildId: 'guild', userId: 'expired-mute', removedRoleIds: ['role'], expiresAt: now - 1 });
+        await store.upsertTempMute({ guildId: 'guild', userId: 'future-mute', removedRoleIds: [], expiresAt: now + 60_000 });
+
+        assert.deepEqual((await store.listExpiredTempBans(now)).map(record => record.userId), ['expired-ban']);
+        assert.deepEqual((await store.listExpiredTempMutes(now)).map(record => record.userId), ['expired-mute']);
+        assert.deepEqual((await store.listExpiredTempMutes(now))[0].removedRoleIds, ['role']);
     } finally {
         restore();
         fs.rmSync(directory, { recursive: true, force: true });

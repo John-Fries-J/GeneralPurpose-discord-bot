@@ -10,7 +10,7 @@ For support questions, join the Discord: https://discord.gg/dCCksYzPWU
 
 ## Requirements
 
-- Node.js 20 or newer
+- Node.js 22.12 or newer
 - A Discord bot token
 - Server member, message content, and moderation intents enabled in the Discord Developer Portal
 - Bot permissions for moderation features: manage roles, manage channels, ban members, moderate members, and create invites
@@ -166,9 +166,11 @@ Useful dashboard environment variables:
 
 ## Database / State Storage
 
-No external database is required. The bot uses SQLite at `data/bot.sqlite` by default, which keeps moderation state local while avoiding fragile direct JSON writes.
+No external database is required. The bot uses a normalized SQLite database at `data/bot.sqlite` by default, powered by `better-sqlite3`. SQLite runs with foreign keys and WAL enabled, so production backups should include `bot.sqlite` plus any `bot.sqlite-wal` and `bot.sqlite-shm` sidecar files.
 
-Existing small installs can still use JSON storage by setting `database.provider` to `json`; the JSON file lives at `data/bot-state.json`. MySQL is supported by setting `database.provider` to `mysql` and putting a MySQL connection string in `database.mysql.url`. Startup logs show the active provider, with credentials redacted.
+Existing `bot_state` SQLite files and `data/bot-state.json` files are imported into the normalized schema once on startup. The old file is copied to a `.pre-normalized.<timestamp>.bak` backup first and is not deleted automatically.
+
+Existing small installs can still use JSON storage by setting `database.provider` to `json`; the JSON file lives at `data/bot-state.json`. MySQL is supported by setting `database.provider` to `mysql` and putting a MySQL connection string in `database.mysql.url`. Startup logs show the active provider and migration summary, with credentials redacted.
 
 ## Commands
 
@@ -255,7 +257,8 @@ Config:
 
 Music:
 
-- `/music play query` accepts a direct URL or search text. Spotify track links are converted to a searchable track name; full Spotify audio is not streamed directly.
+- `/play query` accepts a direct URL or search text. `/play audio` accepts an uploaded audio file. The legacy `/music play` and `/music file` commands remain available for compatibility. Spotify track links are converted to a searchable track name; full Spotify audio is not streamed directly.
+- `/queue`, `/skip`, `/stop`, and `/volume amount` manage playback.
 - YouTube may require browser cookies on hosted servers. Export YouTube cookies in Netscape format to `data/youtube-cookies.txt`, or set `music.ytDlpCookiesPath` / `YTDLP_COOKIES_PATH` to another mounted path. Rebuild the Docker image after music dependency changes.
 
 Honeypot:

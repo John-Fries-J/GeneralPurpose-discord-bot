@@ -1,4 +1,4 @@
-const { SlashCommandBuilder } = require('discord.js');
+const { MessageFlags, SlashCommandBuilder } = require('discord.js');
 const { createEmbed } = require('../../utils/embeds');
 const { fetchMember } = require('../../utils/discord');
 
@@ -28,23 +28,28 @@ module.exports = {
         const user = await interaction.client.users.fetch(id).catch(() => null);
 
         if (!user) {
-            return interaction.reply({ content: 'I could not find a user with that ID.', flags: 64 });
+            return interaction.reply({ content: 'I could not find a user with that ID.', flags: MessageFlags.Ephemeral });
         }
 
-        const member = await fetchMember(interaction.guild, user.id);
-        const embed = createEmbed({
-            title: 'User Info',
-            thumbnail: user.displayAvatarURL({ dynamic: true }),
-            color: 'blue',
-            fields: [
-                { name: 'User', value: `${user.tag} (${user.id})` },
-                { name: 'Bot', value: user.bot ? 'Yes' : 'No', inline: true },
-                { name: 'Account Created', value: formatDate(user.createdAt), inline: true },
-                { name: 'Joined Server', value: formatDate(member?.joinedAt), inline: true },
-                { name: 'Highest Role', value: member?.roles?.highest ? `<@&${member.roles.highest.id}>` : 'Not in server', inline: true },
-            ],
-        });
+        const embed = await buildUserInfoEmbed(interaction.guild, user);
 
-        return interaction.reply({ embeds: [embed], flags: 64 });
+        return interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
     },
+    buildUserInfoEmbed,
 };
+
+async function buildUserInfoEmbed(guild, user) {
+    const member = await fetchMember(guild, user.id);
+    return createEmbed({
+        title: 'User Info',
+        thumbnail: user.displayAvatarURL({ dynamic: true }),
+        color: 'blue',
+        fields: [
+            { name: 'User', value: `${user.tag} (${user.id})` },
+            { name: 'Bot', value: user.bot ? 'Yes' : 'No', inline: true },
+            { name: 'Account Created', value: formatDate(user.createdAt), inline: true },
+            { name: 'Joined Server', value: formatDate(member?.joinedAt), inline: true },
+            { name: 'Highest Role', value: member?.roles?.highest ? `<@&${member.roles.highest.id}>` : 'Not in server', inline: true },
+        ],
+    });
+}
