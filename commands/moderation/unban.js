@@ -1,11 +1,12 @@
-const { MessageFlags, PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
+const { InteractionContextType, ApplicationIntegrationType, MessageFlags, PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
 const moderationService = require('../../services/moderation');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('unban')
         .setDescription('Unbans a user from the server.')
-        .setDMPermission(false)
+        .setContexts(InteractionContextType.Guild)
+        .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
         .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers)
         .addStringOption(option => option.setName('user_id').setDescription('The Discord user ID to unban.').setRequired(true))
         .addStringOption(option => option.setName('reason').setDescription('The reason for the unban.')),

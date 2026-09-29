@@ -1,4 +1,4 @@
-const { PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
+const { InteractionContextType, ApplicationIntegrationType, PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
 const { createEmbed } = require('../../utils/embeds');
 const { getModerationCase } = require('../../utils/store');
 
@@ -10,7 +10,8 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('case')
         .setDescription('Shows a moderation case.')
-        .setDMPermission(false)
+        .setContexts(InteractionContextType.Guild)
+        .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
         .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
         .addIntegerOption(option => option.setName('id').setDescription('The case ID.').setMinValue(1).setRequired(true)),
 

@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+const { InteractionContextType, ApplicationIntegrationType, SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const language = require('../../utils/language');
 const { formatTemplate } = require('../../utils/template');
 const { sendLog, formatUser } = require('../../utils/logging');
@@ -7,7 +7,8 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('purge')
         .setDescription('Deletes a specified amount of messages.')
-        .setDMPermission(false)
+        .setContexts(InteractionContextType.Guild)
+        .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
         .addIntegerOption(option => option.setName('amount').setDescription('The amount of messages to delete.').setRequired(true).setMinValue(1).setMaxValue(100)),
 

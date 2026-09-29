@@ -1,4 +1,4 @@
-const { ChannelType, PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
+const { InteractionContextType, ApplicationIntegrationType, ChannelType, PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
 const { getConfig } = require('../../utils/config');
 const { createEmbed } = require('../../utils/embeds');
 const { getGuildSettings, updateLoggingSettings } = require('../../utils/guildConfig');
@@ -26,7 +26,8 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('config')
         .setDescription('View and update bot config.')
-        .setDMPermission(false)
+        .setContexts(InteractionContextType.Guild)
+        .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
         .addSubcommand(subcommand =>
             subcommand

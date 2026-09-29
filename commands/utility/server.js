@@ -1,4 +1,4 @@
-const { SlashCommandBuilder } = require('discord.js');
+const { InteractionContextType, ApplicationIntegrationType, SlashCommandBuilder } = require('discord.js');
 const { createEmbed } = require('../../utils/embeds');
 
 function formatDate(date) {
@@ -18,7 +18,8 @@ module.exports = {
     category: 'Utility',
     data: new SlashCommandBuilder()
         .setName('server')
-        .setDMPermission(false)
+        .setContexts(InteractionContextType.Guild)
+        .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
         .setDescription('Provides information about the server.'),
 
     async execute(interaction) {

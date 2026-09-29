@@ -1,4 +1,4 @@
-const { PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
+const { InteractionContextType, ApplicationIntegrationType, PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
 const moderationService = require('../../services/moderation');
 const { createEmbed } = require('../../utils/embeds');
 const { deleteModNote, listModNotes, addUserHistory } = require('../../utils/store');
@@ -16,7 +16,8 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('modnote')
         .setDescription('Manage private staff notes for a user.')
-        .setDMPermission(false)
+        .setContexts(InteractionContextType.Guild)
+        .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
         .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
         .addSubcommand(subcommand =>
             subcommand

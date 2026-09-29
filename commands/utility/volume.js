@@ -1,4 +1,4 @@
-const { SlashCommandBuilder } = require('discord.js');
+const { InteractionContextType, ApplicationIntegrationType, SlashCommandBuilder } = require('discord.js');
 const { getMusicErrorMessage, setVolume } = require('../../utils/music');
 const { createStatusPayload } = require('../../utils/musicMessages');
 
@@ -6,7 +6,8 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('volume')
         .setDescription('Set music playback volume.')
-        .setDMPermission(false)
+        .setContexts(InteractionContextType.Guild)
+        .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
         .addIntegerOption(option =>
             option
                 .setName('amount')

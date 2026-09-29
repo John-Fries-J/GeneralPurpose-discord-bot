@@ -1,11 +1,12 @@
-const { SlashCommandBuilder } = require('discord.js');
+const { InteractionContextType, ApplicationIntegrationType, SlashCommandBuilder } = require('discord.js');
 const { createEmbed } = require('../../utils/embeds');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('serverstats')
         .setDescription('Shows server statistics.')
-        .setDMPermission(false),
+        .setContexts(InteractionContextType.Guild)
+        .setIntegrationTypes(ApplicationIntegrationType.GuildInstall),
 
     async execute(interaction) {
         const guild = interaction.guild;

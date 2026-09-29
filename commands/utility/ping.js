@@ -1,11 +1,13 @@
-const { SlashCommandBuilder } = require('discord.js');
+const { ApplicationIntegrationType, InteractionContextType, SlashCommandBuilder } = require('discord.js');
 const { createEmbed } = require('../../utils/embeds');
 
 module.exports = {
     category: 'Utility',
     data: new SlashCommandBuilder()
         .setName('ping')
-        .setDescription('Replies with the bot ping.'),
+        .setDescription('Replies with the bot ping.')
+        .setContexts(InteractionContextType.Guild, InteractionContextType.BotDM, InteractionContextType.PrivateChannel)
+        .setIntegrationTypes(ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall),
 
     async execute(interaction) {
         const embed = createEmbed({

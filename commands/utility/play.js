@@ -1,4 +1,4 @@
-const { SlashCommandBuilder } = require('discord.js');
+const { InteractionContextType, ApplicationIntegrationType, SlashCommandBuilder } = require('discord.js');
 const {
     createAttachmentTrack,
     enqueue,
@@ -17,7 +17,8 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('play')
         .setDescription('Play a URL, search query, or uploaded audio file.')
-        .setDMPermission(false)
+        .setContexts(InteractionContextType.Guild)
+        .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
         .addStringOption(option =>
             option
                 .setName('query')

@@ -1,4 +1,4 @@
-const { PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
+const { InteractionContextType, ApplicationIntegrationType, PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
 const { getConfig, updateConfig } = require('../../utils/config');
 const { createEmbed } = require('../../utils/embeds');
 const {
@@ -22,7 +22,8 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('namelessmc')
         .setDescription('Configure and use the NamelessMC website integration.')
-        .setDMPermission(false)
+        .setContexts(InteractionContextType.Guild)
+        .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
         .addSubcommand(subcommand =>
             subcommand
                 .setName('link')

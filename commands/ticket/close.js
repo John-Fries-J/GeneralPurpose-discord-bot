@@ -1,10 +1,11 @@
-const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+const { InteractionContextType, ApplicationIntegrationType, SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const { closeTicket } = require('../../utils/tickets');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('close')
-        .setDMPermission(false)
+        .setContexts(InteractionContextType.Guild)
+        .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
         .setDescription('Closes the ticket.'),
 

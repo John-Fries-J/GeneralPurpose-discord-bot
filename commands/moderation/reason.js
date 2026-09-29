@@ -1,11 +1,12 @@
-const { PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
+const { InteractionContextType, ApplicationIntegrationType, PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
 const { updateModerationCaseReason } = require('../../utils/store');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('reason')
         .setDescription('Updates the reason on a moderation case.')
-        .setDMPermission(false)
+        .setContexts(InteractionContextType.Guild)
+        .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
         .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
         .addIntegerOption(option => option.setName('case_id').setDescription('The case ID to update.').setMinValue(1).setRequired(true))
         .addStringOption(option => option.setName('reason').setDescription('The new case reason.').setMinLength(1).setMaxLength(1000).setRequired(true)),

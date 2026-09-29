@@ -1,4 +1,4 @@
-const { ApplicationCommandType, ContextMenuCommandBuilder, PermissionFlagsBits } = require('discord.js');
+const { InteractionContextType, ApplicationIntegrationType, ApplicationCommandType, ContextMenuCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const { showAddModeratorNoteModal } = require('../../utils/moderationContext');
 
 module.exports = {
@@ -6,7 +6,8 @@ module.exports = {
     data: new ContextMenuCommandBuilder()
         .setName('Add Moderator Note')
         .setType(ApplicationCommandType.User)
-        .setDMPermission(false)
+        .setContexts(InteractionContextType.Guild)
+        .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
         .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers),
 
     async execute(interaction) {

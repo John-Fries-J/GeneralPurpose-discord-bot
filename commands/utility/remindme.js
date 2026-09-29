@@ -1,4 +1,4 @@
-const { MessageFlags, SlashCommandBuilder } = require('discord.js');
+const { ApplicationIntegrationType, InteractionContextType, MessageFlags, SlashCommandBuilder } = require('discord.js');
 const { parseDuration } = require('../../utils/duration');
 const { createReminder } = require('../../utils/store');
 
@@ -8,6 +8,8 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('remindme')
         .setDescription('Set a DM reminder.')
+        .setContexts(InteractionContextType.Guild, InteractionContextType.BotDM, InteractionContextType.PrivateChannel)
+        .setIntegrationTypes(ApplicationIntegrationType.GuildInstall, ApplicationIntegrationType.UserInstall)
         .addStringOption(option => option.setName('duration').setDescription('When to remind you, such as 10m, 2h, or 3d.').setRequired(true))
         .addStringOption(option => option.setName('message').setDescription('What to remind you about.').setMaxLength(1500).setRequired(true)),
 

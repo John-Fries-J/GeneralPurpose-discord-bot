@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+const { InteractionContextType, ApplicationIntegrationType, SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const language = require('../../utils/language');
 const { fetchMember } = require('../../utils/discord');
 const { logModerationAction, validateTarget } = require('../../utils/moderation');
@@ -8,7 +8,8 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('softban')
         .setDescription('Bans a user to delete messages, then unbans them with an invite link.')
-        .setDMPermission(false)
+        .setContexts(InteractionContextType.Guild)
+        .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
         .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers)
         .addUserOption(option => option.setName('user').setDescription('The user to softban.').setRequired(true))
         .addStringOption(option => option.setName('reason').setDescription('The reason for the softban.'))

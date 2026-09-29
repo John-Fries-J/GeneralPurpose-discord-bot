@@ -1,4 +1,4 @@
-const { ChannelType, PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
+const { InteractionContextType, ApplicationIntegrationType, ChannelType, PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
 const { getConfig, updateConfig } = require('../../utils/config');
 const { createEmbed } = require('../../utils/embeds');
 
@@ -6,7 +6,8 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('twitch')
         .setDescription('Configure Twitch live announcements.')
-        .setDMPermission(false)
+        .setContexts(InteractionContextType.Guild)
+        .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
         .addSubcommand(subcommand =>
             subcommand

@@ -1,4 +1,4 @@
-const { SlashCommandBuilder } = require('discord.js');
+const { InteractionContextType, ApplicationIntegrationType, SlashCommandBuilder } = require('discord.js');
 const { stop } = require('../../utils/music');
 const { createStatusPayload } = require('../../utils/musicMessages');
 
@@ -6,7 +6,8 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('stop')
         .setDescription('Stop playback and leave voice.')
-        .setDMPermission(false),
+        .setContexts(InteractionContextType.Guild)
+        .setIntegrationTypes(ApplicationIntegrationType.GuildInstall),
 
     async execute(interaction) {
         const stopped = stop(interaction.guild.id);

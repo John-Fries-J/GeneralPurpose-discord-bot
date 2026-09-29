@@ -1,4 +1,4 @@
-const { PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
+const { InteractionContextType, ApplicationIntegrationType, PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
 const { parseDuration } = require('../../utils/duration');
 const { fetchMember } = require('../../utils/discord');
 const { sendLog, formatUser } = require('../../utils/logging');
@@ -15,7 +15,8 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('temprole')
         .setDescription('Give a user a role for a limited time.')
-        .setDMPermission(false)
+        .setContexts(InteractionContextType.Guild)
+        .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
         .addUserOption(option => option.setName('user').setDescription('The user to update.').setRequired(true))
         .addRoleOption(option => option.setName('role').setDescription('The role to add temporarily.').setRequired(true))

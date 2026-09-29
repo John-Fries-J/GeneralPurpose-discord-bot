@@ -1,11 +1,12 @@
-const { MessageFlags, PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
+const { InteractionContextType, ApplicationIntegrationType, MessageFlags, PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
 const { createUserHistoryPayload } = require('../../utils/userHistoryView');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('history')
         .setDescription('Shows database-backed history for a user.')
-        .setDMPermission(false)
+        .setContexts(InteractionContextType.Guild)
+        .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
         .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
         .addUserOption(option => option.setName('user').setDescription('The user to inspect.').setRequired(true)),
 

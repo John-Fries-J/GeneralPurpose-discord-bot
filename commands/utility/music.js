@@ -1,4 +1,4 @@
-const { MessageFlags, SlashCommandBuilder } = require('discord.js');
+const { InteractionContextType, ApplicationIntegrationType, MessageFlags, SlashCommandBuilder } = require('discord.js');
 const {
     createAttachmentTrack,
     enqueue,
@@ -22,7 +22,8 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('music')
         .setDescription('Play music in your voice channel.')
-        .setDMPermission(false)
+        .setContexts(InteractionContextType.Guild)
+        .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
         .addSubcommand(subcommand =>
             subcommand
                 .setName('play')

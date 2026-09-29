@@ -1,4 +1,4 @@
-const { SlashCommandBuilder } = require('discord.js');
+const { InteractionContextType, ApplicationIntegrationType, SlashCommandBuilder } = require('discord.js');
 const language = require('../../utils/language');
 const { getConfig } = require('../../utils/config');
 const { createEmbed } = require('../../utils/embeds');
@@ -9,7 +9,8 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('suggest')
         .setDescription('Suggest a feature for the server.')
-        .setDMPermission(false)
+        .setContexts(InteractionContextType.Guild)
+        .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
         .addStringOption(option =>
             option
                 .setName('suggestion')

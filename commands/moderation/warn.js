@@ -1,11 +1,12 @@
-const { MessageFlags, PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
+const { InteractionContextType, ApplicationIntegrationType, MessageFlags, PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
 const moderationService = require('../../services/moderation');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('warn')
         .setDescription('Warns a user and logs the warning.')
-        .setDMPermission(false)
+        .setContexts(InteractionContextType.Guild)
+        .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
         .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
         .addUserOption(option => option.setName('user').setDescription('The user to warn.').setRequired(true))
         .addStringOption(option => option.setName('reason').setDescription('The reason for the warning.').setRequired(true)),

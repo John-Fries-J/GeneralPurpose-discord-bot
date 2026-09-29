@@ -1,4 +1,4 @@
-const { PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
+const { InteractionContextType, ApplicationIntegrationType, PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
 const { getConfig } = require('../../utils/config');
 const { createEmbed } = require('../../utils/embeds');
 const { sendLog, formatUser } = require('../../utils/logging');
@@ -59,7 +59,8 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('suggestion')
         .setDescription('Review submitted suggestions.')
-        .setDMPermission(false)
+        .setContexts(InteractionContextType.Guild)
+        .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
         .addSubcommand(subcommand =>
             subcommand

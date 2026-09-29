@@ -1,4 +1,4 @@
-const { SlashCommandBuilder } = require('discord.js');
+const { InteractionContextType, ApplicationIntegrationType, SlashCommandBuilder } = require('discord.js');
 const { createEmbed } = require('../../utils/embeds');
 const {
     formatXp,
@@ -13,7 +13,8 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('rank')
         .setDescription('Show your level and XP progress.')
-        .setDMPermission(false)
+        .setContexts(InteractionContextType.Guild)
+        .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
         .addUserOption(option => option.setName('user').setDescription('User to inspect. Defaults to you.')),
 
     async execute(interaction) {

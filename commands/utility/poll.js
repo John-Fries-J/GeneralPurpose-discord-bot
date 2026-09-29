@@ -1,4 +1,4 @@
-const { SlashCommandBuilder } = require('discord.js');
+const { InteractionContextType, ApplicationIntegrationType, SlashCommandBuilder } = require('discord.js');
 const { sendLog, formatUser } = require('../../utils/logging');
 
 function collectAnswers(interaction) {
@@ -16,7 +16,8 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('poll')
         .setDescription('Create a native Discord poll.')
-        .setDMPermission(false)
+        .setContexts(InteractionContextType.Guild)
+        .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
         .addStringOption(option => option.setName('question').setDescription('The poll question.').setMaxLength(300).setRequired(true))
         .addStringOption(option => option.setName('option1').setDescription('Poll option 1.').setMaxLength(55).setRequired(true))
         .addStringOption(option => option.setName('option2').setDescription('Poll option 2.').setMaxLength(55).setRequired(true))

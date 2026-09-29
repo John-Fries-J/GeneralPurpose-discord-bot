@@ -1,4 +1,4 @@
-const { ApplicationCommandType, ContextMenuCommandBuilder, MessageFlags } = require('discord.js');
+const { InteractionContextType, ApplicationIntegrationType, ApplicationCommandType, ContextMenuCommandBuilder, MessageFlags } = require('discord.js');
 const { buildUserInfoEmbed } = require('../utility/userinfo');
 
 module.exports = {
@@ -6,7 +6,8 @@ module.exports = {
     data: new ContextMenuCommandBuilder()
         .setName('User Information')
         .setType(ApplicationCommandType.User)
-        .setDMPermission(false),
+        .setContexts(InteractionContextType.Guild)
+        .setIntegrationTypes(ApplicationIntegrationType.GuildInstall),
 
     async execute(interaction) {
         const user = interaction.targetUser;

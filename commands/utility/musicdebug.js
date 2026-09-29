@@ -1,4 +1,4 @@
-const { MessageFlags, SlashCommandBuilder } = require('discord.js');
+const { InteractionContextType, ApplicationIntegrationType, MessageFlags, SlashCommandBuilder } = require('discord.js');
 const {
     generateDependencyReport,
     getQueueSummary,
@@ -9,7 +9,8 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('musicdebug')
         .setDescription('Show music voice diagnostics.')
-        .setDMPermission(false),
+        .setContexts(InteractionContextType.Guild)
+        .setIntegrationTypes(ApplicationIntegrationType.GuildInstall),
 
     async execute(interaction) {
         const queue = getQueueSummary(interaction.guild.id);

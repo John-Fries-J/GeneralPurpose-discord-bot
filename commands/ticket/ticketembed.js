@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, PermissionFlagsBits, ChannelType } = require('discord.js');
+const { InteractionContextType, ApplicationIntegrationType, SlashCommandBuilder, PermissionFlagsBits, ChannelType } = require('discord.js');
 const {
     addTicketUser,
     claimTicket,
@@ -17,7 +17,8 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('ticket')
         .setDescription('Ticket setup and ticket management.')
-        .setDMPermission(false)
+        .setContexts(InteractionContextType.Guild)
+        .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
         .addSubcommand(subcommand =>
             subcommand

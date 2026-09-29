@@ -1,4 +1,4 @@
-const { PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
+const { InteractionContextType, ApplicationIntegrationType, PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
 const language = require('../../utils/language');
 const { createEmbed } = require('../../utils/embeds');
 const { formatTemplate } = require('../../utils/template');
@@ -36,7 +36,8 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('welcome')
         .setDescription('Sends the welcome embed.')
-        .setDMPermission(false)
+        .setContexts(InteractionContextType.Guild)
+        .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)
         .addUserOption(option => option.setName('user').setDescription('Ping the user with the message.')),
 

@@ -1,4 +1,4 @@
-const { SlashCommandBuilder } = require('discord.js');
+const { InteractionContextType, ApplicationIntegrationType, SlashCommandBuilder } = require('discord.js');
 const { createEmbed } = require('../../utils/embeds');
 
 module.exports = {
@@ -6,7 +6,8 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('member')
         .setDescription('Lists members within a role.')
-        .setDMPermission(false)
+        .setContexts(InteractionContextType.Guild)
+        .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
         .addRoleOption(option => option.setName('role').setDescription('The role to list members from.').setRequired(true)),
 
     async execute(interaction) {

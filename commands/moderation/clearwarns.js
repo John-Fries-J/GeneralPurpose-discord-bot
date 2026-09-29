@@ -1,11 +1,12 @@
-const { PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
+const { InteractionContextType, ApplicationIntegrationType, PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
 const { clearWarningCases } = require('../../utils/store');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('clearwarns')
         .setDescription('Clears active warning cases for a user.')
-        .setDMPermission(false)
+        .setContexts(InteractionContextType.Guild)
+        .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
         .setDefaultMemberPermissions(PermissionFlagsBits.ModerateMembers)
         .addUserOption(option => option.setName('user').setDescription('The user whose warnings should be cleared.').setRequired(true))
         .addStringOption(option => option.setName('reason').setDescription('The reason for clearing warnings.')),

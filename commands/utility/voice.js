@@ -1,4 +1,4 @@
-const { MessageFlags, PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
+const { InteractionContextType, ApplicationIntegrationType, MessageFlags, PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
 const { deleteTemporaryVoiceChannel, getGuildJoinToCreateConfig, getOwnedVoiceChannel, transferOwnership } = require('../../utils/joinToCreate');
 const { getTempVoiceChannel, upsertTempVoiceChannel } = require('../../utils/store');
 const { createVoicePanelPayload } = require('../../utils/voicePanel');
@@ -7,7 +7,8 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('voice')
         .setDescription('Manage your join-to-create voice channel.')
-        .setDMPermission(false)
+        .setContexts(InteractionContextType.Guild)
+        .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
         .addSubcommand(subcommand => subcommand.setName('panel').setDescription('Open the interactive temporary voice control panel.'))
         .addSubcommand(subcommand =>
             subcommand

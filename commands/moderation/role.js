@@ -1,4 +1,4 @@
-const { PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
+const { InteractionContextType, ApplicationIntegrationType, PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
 const language = require('../../utils/language');
 const { fetchMember } = require('../../utils/discord');
 const { sendLog, formatUser } = require('../../utils/logging');
@@ -14,7 +14,8 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('role')
         .setDescription('Add or remove a role from a user.')
-        .setDMPermission(false)
+        .setContexts(InteractionContextType.Guild)
+        .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
         .addSubcommand(subcommand =>
             subcommand

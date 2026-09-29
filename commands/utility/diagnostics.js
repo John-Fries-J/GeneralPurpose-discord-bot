@@ -1,4 +1,4 @@
-const { MessageFlags, PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
+const { InteractionContextType, ApplicationIntegrationType, MessageFlags, PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
 const { buildDiagnostics } = require('../../services/diagnostics');
 const { createEmbed } = require('../../utils/embeds');
 
@@ -28,7 +28,8 @@ module.exports = {
     data: new SlashCommandBuilder()
         .setName('diagnostics')
         .setDescription('Show safe bot health and runtime diagnostics.')
-        .setDMPermission(false)
+        .setContexts(InteractionContextType.Guild)
+        .setIntegrationTypes(ApplicationIntegrationType.GuildInstall)
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 
     async execute(interaction) {
