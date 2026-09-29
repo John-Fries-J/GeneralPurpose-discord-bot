@@ -51,7 +51,7 @@ Copy-Item exampleconfig.json config.json
 - `commandSettings`: module and command enable/disable settings, usually edited by the dashboard
 - `moderation.muteRoleId`: saved automatically the first time `/mute` creates the mute role
 - `tickets`: global ticket defaults; `/ticket setup`, `/setup`, and the dashboard save server-specific overrides
-- `Twitch`: optional Twitch notification settings
+- `twitch`: optional Twitch notification settings
 
 4. Edit bot wording in `language.json`.
 

@@ -100,10 +100,6 @@
         "sqlitePath": "data/bot.sqlite",
         "mysql": {
             "url": ""
-        },
-        "mongo": {
-            "url": "",
-            "database": "generalpurpose_bot"
         }
     },
     "commandSettings": {
@@ -192,12 +188,5 @@
             "removeUnmappedRoles": false,
             "groupRoleMap": []
         }
-    },
-    "Twitch": {
-        "ClientId": "",
-        "AccessToken": "",
-        "streamerId": "",
-        "discordChannelId": "",
-        "streamerName": ""
     }
 }
