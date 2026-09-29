@@ -8,6 +8,7 @@ const { validateConfig } = require('../utils/configValidation');
 const { appendDashboardLog, clearDashboardLogs, readDashboardLogs } = require('../utils/dashboardLogs');
 const { getCommandSettings } = require('../utils/features');
 const language = require('../utils/language');
+const { getQueueSummary } = require('../utils/music');
 const { getCommandAccess, normalizeIdList } = require('../utils/permissions');
 const { buildHealthReport } = require('../services/diagnostics');
 const { applyDashboardSettings } = require('./services/dashboardConfig');
@@ -19,8 +20,15 @@ const {
     renderTextarea,
     renderToggle,
 } = require('./views/components/forms');
+const {
+    renderLoggingDashboard,
+    renderModuleDashboard,
+    renderOverviewDashboard,
+    renderTicketDashboard,
+    renderVoiceDashboard,
+} = require('./views/components/dashboardPanels');
 const { escapeHtml } = require('./views/components/html');
-const { renderMetricCard, renderPageHeader } = require('./views/components/ui');
+const { renderPageHeader } = require('./views/components/ui');
 const { renderLayout } = require('./views/layout');
 const {
     createScheduledMessage,
@@ -737,13 +745,8 @@ async function renderDashboard(client, session, notice = '', page = 'overview') 
     const ticketTranscripts = await listTicketTranscripts(activeGuildId, 50);
     const tempVoiceChannels = await listTempVoiceChannelsForGuild(activeGuildId);
     const voiceActivity = await listVoiceActivity(activeGuildId, 80);
+    const musicSummary = activeGuildId ? getQueueSummary(activeGuildId) : {};
     const configBackups = listConfigBackups();
-
-    const moduleLinks = grouped.map(([category, commands]) => `
-<a class="module-link" href="#module-${escapeHtml(slug(category))}">
-<strong>${escapeHtml(humanize(category))}</strong>
-<span class="muted">${commands.length} command${commands.length === 1 ? '' : 's'} ${settings.modules[category] === false ? 'disabled' : 'enabled'}</span>
-</a>`).join('');
 
     const renderCommandSections = includeLanguageEditors => grouped.map(([category, commands]) => `
 <section class="panel module-card" id="module-${escapeHtml(slug(category))}">
@@ -803,21 +806,22 @@ ${includeLanguageEditors ? getLanguageSectionsForCategory(category).map(section 
         notice,
         actions: '<a class="button secondary" href="/logout">Log out</a>',
     });
-    const metricsSection = `
-<section class="grid">
-${renderMetricCard('Modules', grouped.length)}
-${renderMetricCard('Commands', [...client.commands.values()].length)}
-${renderMetricCard('Sendable channels', channels.length)}
-${renderMetricCard('Roles cached', roles.length)}
-</section>`;
+    const overviewSection = renderOverviewDashboard({
+        client,
+        guild: dashboardGuild,
+        grouped,
+        ticketRecords,
+        tempVoiceChannels,
+        moderationCases,
+        musicSummary,
+        commandStats,
+        logs,
+        voiceActivity,
+    });
     const moduleLinksSection = `
+${renderModuleDashboard(grouped, settings, commandStats)}
 <section class="grid">
-<div class="panel wide" id="modules">
-<h2>Modules</h2>
-<p class="muted">Click a module to jump into command toggles, access rules, and related response text.</p>
-<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr))">${moduleLinks}</div>
-</div>
-<section class="panel side">
+<section class="panel full">
 <h2>Quick Actions</h2>
 <div class="pillrow">
 <a class="button secondary" href="/sender">Open sender</a>
@@ -826,6 +830,7 @@ ${renderMetricCard('Roles cached', roles.length)}
 </div>
 </section>
 </section>`;
+    const loggingDashboardSection = renderLoggingDashboard(config, dashboardGuild);
     const logsSection = `
 <section class="panel side">
 <h2>Logs</h2>
@@ -892,6 +897,7 @@ ${csrfInput(session)}
     const configSection = `
 ${moduleSettingsSection}
 ${loggingSettingsSection}
+${loggingDashboardSection}
 <section class="panel" id="config">
 <h2>Advanced Config JSON</h2>
 <p class="muted">This edits config.json directly. Sensitive values are redacted and preserved if left unchanged. Create a backup before risky edits.</p>
@@ -954,9 +960,8 @@ ${renderConfigSectionEditor('moderation', 'Moderation Settings', 'Configure mute
 <section class="grid"><div class="panel wide"><h2>Recent Cases</h2>${moderationCases.slice(0, 20).map(item => `<div class="row"><span>#${escapeHtml(item.id)} ${escapeHtml(item.type)} ${escapeHtml(item.userTag || item.userId)}<br><span class="muted">${escapeHtml(item.reason)}</span></span><span>${escapeHtml(new Date(item.createdAt).toLocaleString())}</span></div>`).join('') || '<p class="muted">No cases yet.</p>'}</div><div class="panel side"><h2>Recent Notes</h2>${modNotes.slice(0, 10).map(item => `<div class="row"><span>${escapeHtml(item.userTag || item.userId)}<br><span class="muted">${escapeHtml(item.note)}</span></span></div>`).join('') || '<p class="muted">No notes yet.</p>'}</div></section>`;
     const ticketsSection = `
 ${ticketSettingsSection}
-${renderConfigSectionEditor('tickets', 'Advanced Ticket JSON', 'Advanced ticket options that do not yet have dedicated controls.', session, config.tickets || {})}
-<section class="panel"><h2>Tickets</h2>${ticketRecords.length ? ticketRecords.map(item => `<div class="row"><span><strong><#${escapeHtml(item.channelId)}></strong><br><span class="muted">${escapeHtml(item.status)} - ${escapeHtml(item.priority)} - ${escapeHtml(item.tags?.join(', ') || 'no tags')}</span></span><span>${item.claimedById ? `Claimed by ${escapeHtml(item.claimedByTag || item.claimedById)}` : 'Unclaimed'}</span></div>`).join('') : '<p class="muted">No ticket records yet.</p>'}</section>
-<section class="panel"><h2>Transcripts</h2>${ticketTranscripts.length ? ticketTranscripts.map(item => `<div class="row"><span><strong>${escapeHtml(item.ticketName || item.channelName)}</strong><br><span class="muted">${escapeHtml(new Date(item.createdAt).toLocaleString())} - ${escapeHtml(item.messageCount)} messages</span></span><a class="button secondary" href="/transcripts/${encodeURIComponent(item.id)}">Open</a></div>`).join('') : '<p class="muted">No transcripts have been generated yet.</p>'}</section>`;
+${renderTicketDashboard(ticketRecords, ticketTranscripts)}
+${renderConfigSectionEditor('tickets', 'Advanced Ticket JSON', 'Advanced ticket options that do not yet have dedicated controls.', session, config.tickets || {})}`;
     const communitySection = `
 ${welcomeSettingsSection}
 ${renderConfigSectionEditor('WelcomeEmbed', 'Advanced Welcome JSON', 'Advanced welcome embed options such as thumbnails and icons.', session, config.WelcomeEmbed || {})}
@@ -970,8 +975,8 @@ ${levelingSettingsForm}
 ${renderConfigSectionEditor('leveling', 'Advanced Leveling JSON', 'Advanced leveling rewards, ignored channels/roles, and multipliers.', session, config.leveling || {})}`;
     const voiceSection = `
 ${joinToCreateSettingsSection}
-${renderConfigSectionEditor('joinToCreate', 'Advanced Temporary Voice JSON', 'Advanced join-to-create options and future presets.', session, config.joinToCreate || {})}
-<section class="grid"><div class="panel wide"><h2>Active Temporary Channels</h2>${tempVoiceChannels.map(item => `<div class="row"><span><#${escapeHtml(item.channelId)}> owner <@${escapeHtml(item.ownerId)}></span><span>${escapeHtml(new Date(item.createdAt).toLocaleString())}</span></div>`).join('') || '<p class="muted">No active temporary voice channels.</p>'}</div><div class="panel side"><h2>Voice Activity</h2>${voiceActivity.slice(0, 20).map(item => `<div class="row"><span>${escapeHtml(item.userTag)} ${escapeHtml(item.type)}<br><span class="muted">${escapeHtml(item.oldChannelId || '-')} -> ${escapeHtml(item.newChannelId || '-')}</span></span></div>`).join('') || '<p class="muted">No voice activity yet.</p>'}</div></section>`;
+${renderVoiceDashboard(tempVoiceChannels, voiceActivity, dashboardGuild)}
+${renderConfigSectionEditor('joinToCreate', 'Advanced Temporary Voice JSON', 'Advanced join-to-create options and future presets.', session, config.joinToCreate || {})}`;
     const mediaSection = `
 ${renderConfigSectionEditor('youtube', 'YouTube Targets', 'Manage channels to announce and their Discord destination channels.', session, config.youtube || {})}
 ${renderConfigSectionEditor('twitch', 'Twitch Targets', 'Manage Twitch channels, auth status, retry/error settings, and announcement templates.', session, config.twitch || {})}
@@ -983,7 +988,7 @@ ${renderConfigSectionEditor('socialAnnouncements', 'Multi-Platform Targets', 'Co
 ${renderConfigSectionEditor('music', 'Music Settings', 'Configure music feature limits, allowed roles/channels, and provider notes. Spotify playback resolves track metadata to a streamable source.', session, config.music || { enabled: true, maxQueueLength: 50, allowFileUploads: true })}
 <section class="panel"><h2>Playback</h2><p class="muted">Use /music play, /music file, /music queue, /music skip, and /music stop in Discord.</p></section>`;
     const pageBodies = {
-        overview: `${topbar}${metricsSection}${moduleLinksSection}<section class="grid"><div class="panel wide"><h2>Recent Status</h2><p class="muted">Use the sidebar to manage commands, language, sending, config, and logs without scrolling through one large page.</p></div>${logsSection}</section>`,
+        overview: `${topbar}${overviewSection}${moduleLinksSection}<section class="grid">${logsSection}</section>`,
         audit: `${topbar}${auditSection}`,
         analytics: `${topbar}${analyticsSection}`,
         health: `${topbar}${healthSection}`,

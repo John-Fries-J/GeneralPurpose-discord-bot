@@ -309,6 +309,26 @@ p {
     border-color: var(--brand);
 }
 
+.module-list {
+    display: grid;
+    gap: 8px;
+}
+
+.module-row {
+    display: grid;
+    grid-template-columns: minmax(220px, 1fr) 110px 120px 104px auto;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel-2);
+}
+
+.module-row p {
+    margin: 3px 0 0;
+}
+
 .command {
     border: 1px solid var(--line);
     border-radius: 8px;
@@ -385,6 +405,24 @@ p {
     color: var(--muted);
     font-size: 12px;
     margin-top: 4px;
+}
+
+.logging-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 11px 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel-2);
+}
+
+.logging-row small {
+    display: block;
+    margin-top: 4px;
+    color: var(--muted);
+    font-size: 12px;
 }
 
 label {
@@ -540,6 +578,76 @@ input[type="checkbox"] {
     display: flex;
 }
 
+.status-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: max-content;
+    min-height: 24px;
+    padding: 3px 8px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--panel-3);
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.status-pill.good {
+    border-color: rgba(35, 165, 90, .55);
+}
+
+.status-pill.warning {
+    border-color: rgba(240, 178, 50, .65);
+}
+
+.status-pill.muted {
+    color: var(--muted);
+}
+
+.activity-list {
+    display: grid;
+    gap: 8px;
+}
+
+.activity-row {
+    display: grid;
+    grid-template-columns: 110px minmax(0, 1fr) 180px;
+    align-items: center;
+    gap: 12px;
+    padding: 9px 0;
+    border-bottom: 1px solid var(--line);
+}
+
+.activity-row:last-child {
+    border-bottom: 0;
+}
+
+.table-wrap {
+    width: 100%;
+    overflow-x: auto;
+}
+
+.dashboard-table {
+    width: 100%;
+    min-width: 720px;
+    border-collapse: collapse;
+}
+
+.dashboard-table th,
+.dashboard-table td {
+    padding: 10px 8px;
+    border-bottom: 1px solid var(--line);
+    text-align: left;
+    vertical-align: middle;
+}
+
+.dashboard-table th {
+    color: var(--muted);
+    font-size: 12px;
+    text-transform: uppercase;
+}
+
 button,
 .button {
     display: inline-flex;
@@ -675,6 +783,16 @@ button:disabled {
 
     .settings-grid {
         grid-template-columns: 1fr;
+    }
+
+    .module-row,
+    .activity-row {
+        grid-template-columns: 1fr;
+    }
+
+    .logging-row {
+        display: grid;
+        align-items: stretch;
     }
 
     .page-header {
