@@ -1,5 +1,4 @@
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const path = require('node:path');
 const express = require('express');
 const { ChannelType, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
@@ -18,6 +17,12 @@ const {
     safeErrorMessage,
 } = require('../utils/redaction');
 const { applyDashboardSettings, parseDashboardSettings } = require('./services/dashboardConfig');
+const {
+    buildRestoredConfig,
+    createConfigBackup,
+    listConfigBackups,
+    restoreConfigBackup,
+} = require('./services/configBackups');
 const { getGuildSettings, listConfigAudit, updateGuildSettings } = require('../utils/guildConfig');
 const {
     renderSegmented,
@@ -42,6 +47,7 @@ const {
     deleteEmbedTemplate,
     listCommandStats,
     listEmbedTemplates,
+    listGuildHistory,
     listModerationCases,
     listModNotes,
     listScheduledMessages,
@@ -50,7 +56,6 @@ const {
     listTicketTranscripts,
     listVoiceActivity,
     getTicketTranscript,
-    readState,
     upsertEmbedTemplate,
 } = require('../utils/store');
 
@@ -587,59 +592,6 @@ function renderCountRows(rows, emptyText = 'No data yet.') {
         : `<p class="muted">${escapeHtml(emptyText)}</p>`;
 }
 
-function getConfigBackupDirectory(options = {}) {
-    return path.resolve(options.directory || path.join(__dirname, '..', 'data', 'config-backups'));
-}
-
-function listConfigBackups(options = {}) {
-    const directory = getConfigBackupDirectory(options);
-    if (!fs.existsSync(directory)) return [];
-
-    return fs.readdirSync(directory)
-        .filter(file => /^config-\d{4}-\d{2}-\d{2}T/.test(file) && file.endsWith('.json'))
-        .map(file => {
-            const fullPath = path.join(directory, file);
-            return { file, fullPath, createdAt: fs.statSync(fullPath).mtimeMs };
-        })
-        .sort((a, b) => b.createdAt - a.createdAt);
-}
-
-function createConfigBackup(label = 'manual', options = {}) {
-    const directory = getConfigBackupDirectory(options);
-    fs.mkdirSync(directory, { recursive: true });
-    const safeLabel = String(label || 'manual').replace(/[^a-z0-9-]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'manual';
-    const file = `config-${new Date().toISOString().replace(/[:.]/g, '-')}-${safeLabel}.json`;
-    const fullPath = path.join(directory, file);
-    fs.writeFileSync(fullPath, `${JSON.stringify(redactSensitiveConfig(options.config || getStoredConfig()), null, 4)}\n`);
-    return file;
-}
-
-function buildRestoredConfig(parsed, currentConfig = getStoredConfig()) {
-    assertSafeConfigObject(parsed);
-    const restored = restoreProtectedConfig(parsed, currentConfig);
-    const errors = validateConfig(restored);
-    if (errors.length) throw new Error(errors.join('\n'));
-    return restored;
-}
-
-function parseBackupJson(source) {
-    try {
-        return JSON.parse(source);
-    } catch {
-        throw new Error('Backup JSON is malformed.');
-    }
-}
-
-function restoreConfigBackup(file, options = {}) {
-    const backup = listConfigBackups(options).find(item => item.file === file);
-    if (!backup) throw new Error('Backup was not found.');
-
-    const parsed = parseBackupJson(fs.readFileSync(backup.fullPath, 'utf8'));
-    const restored = buildRestoredConfig(parsed, options.currentConfig || getStoredConfig());
-    const save = options.save || saveConfig;
-    save(restored);
-}
-
 function renderJsonEditorPanel(title, description, action, session, object) {
     return `<section class="panel">
 <h2>${escapeHtml(title)}</h2>
@@ -888,28 +840,36 @@ async function renderDashboard(client, session, notice = '', page = 'overview') 
     const languageValues = language.loadLanguage();
     const editableLanguageValues = getEditableLanguageValues(languageValues);
     const lockedWatermark = language.getLockedWatermark();
-    const logs = readDashboardLogs(120);
     const channels = getSendableChannels(client);
     const allChannels = getGuildChannels(client);
     const roles = getGuildRoles(client);
     const dashboardGuild = getDashboardGuild(client);
     const activeGuildId = dashboardGuild?.id || getDashboardConfig().guildId || config.guildId;
     const effectiveConfig = activeGuildId ? await getGuildSettings(activeGuildId) : config;
-    const scheduledMessages = await listScheduledMessages(activeGuildId, 25);
-    const templates = await listEmbedTemplates(activeGuildId);
-    const commandStats = await listCommandStats(activeGuildId, Date.now() - 30 * 24 * 60 * 60 * 1000);
-    const allState = await readState();
-    const moderationCases = await listModerationCases(activeGuildId || '', {});
-    const modNotes = activeGuildId
+    const needsLogs = ['overview', 'logs', 'audit'].includes(page);
+    const needsSender = page === 'sender';
+    const needsCommandStats = ['overview', 'modules', 'analytics'].includes(page);
+    const needsAudit = page === 'audit';
+    const needsModeration = ['overview', 'moderation', 'audit'].includes(page);
+    const needsTickets = ['overview', 'tickets', 'audit'].includes(page);
+    const needsVoice = ['overview', 'voice'].includes(page);
+    const needsBackups = page === 'backups';
+    const logs = needsLogs ? readDashboardLogs(120) : [];
+    const scheduledMessages = needsSender ? await listScheduledMessages(activeGuildId, 25) : [];
+    const templates = needsSender ? await listEmbedTemplates(activeGuildId) : [];
+    const commandStats = needsCommandStats ? await listCommandStats(activeGuildId, Date.now() - 30 * 24 * 60 * 60 * 1000) : [];
+    const historyItems = needsAudit && activeGuildId ? await listGuildHistory(activeGuildId, 200) : [];
+    const moderationCases = needsModeration ? await listModerationCases(activeGuildId || '', {}) : [];
+    const modNotes = page === 'moderation' && activeGuildId
         ? await Promise.all([...new Set(moderationCases.slice(0, 20).map(item => item.userId))].map(userId => listModNotes(activeGuildId, userId, 5))).then(results => results.flat())
         : [];
-    const ticketRecords = await listTicketRecords(activeGuildId, 100);
-    const ticketTranscripts = await listTicketTranscripts(activeGuildId, 50);
-    const tempVoiceChannels = await listTempVoiceChannelsForGuild(activeGuildId);
-    const voiceActivity = await listVoiceActivity(activeGuildId, 80);
-    const musicSummary = activeGuildId ? getQueueSummary(activeGuildId) : {};
-    const configBackups = listConfigBackups();
-    const configAudit = activeGuildId ? await listConfigAudit(activeGuildId, { limit: 75 }) : [];
+    const ticketRecords = needsTickets ? await listTicketRecords(activeGuildId, 100) : [];
+    const ticketTranscripts = page === 'tickets' ? await listTicketTranscripts(activeGuildId, 50) : [];
+    const tempVoiceChannels = needsVoice ? await listTempVoiceChannelsForGuild(activeGuildId) : [];
+    const voiceActivity = needsVoice ? await listVoiceActivity(activeGuildId, 80) : [];
+    const musicSummary = page === 'overview' && activeGuildId ? getQueueSummary(activeGuildId) : {};
+    const configBackups = needsBackups ? listConfigBackups() : [];
+    const configAudit = needsAudit && activeGuildId ? await listConfigAudit(activeGuildId, { limit: 75 }) : [];
     const healthReport = ['overview', 'health'].includes(page) ? await buildHealthReport(client) : null;
 
     const renderCommandSections = includeLanguageEditors => grouped.map(([category, commands]) => `
@@ -1097,7 +1057,7 @@ ${csrfInput(session)}
     const auditItems = [
         ...logs.map(log => ({ at: Date.parse(log.at) || 0, type: log.type || 'dashboard', text: log.message })),
         ...moderationCases.slice(0, 200).map(item => ({ at: item.createdAt, type: 'moderation', text: `#${item.id} ${item.type} ${item.userTag || item.userId}: ${item.reason}` })),
-        ...allState.history.filter(item => item.guildId === activeGuildId).slice(0, 200).map(item => ({ at: item.createdAt, type: item.type, text: `${item.userTag || item.userId}: ${item.summary}` })),
+        ...historyItems.map(item => ({ at: item.createdAt, type: item.type, text: `${item.userTag || item.userId}: ${item.summary}` })),
         ...ticketRecords.map(item => ({ at: item.updatedAt, type: 'ticket', text: `${item.status} <#${item.channelId}> ${item.priority}` })),
     ].sort((a, b) => b.at - a.at).slice(0, 250);
     const configAuditRows = configAudit.map(item => `<tr>

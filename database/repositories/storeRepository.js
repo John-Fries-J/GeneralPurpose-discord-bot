@@ -313,6 +313,10 @@ function listUserHistory(db, guildId, userId, limit = 15) {
     return db.prepare('SELECT * FROM user_history WHERE guild_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT ?').all(guildId, userId, limit).map(mapHistory);
 }
 
+function listGuildHistory(db, guildId, limit = 200) {
+    return db.prepare('SELECT * FROM user_history WHERE guild_id = ? ORDER BY created_at DESC LIMIT ?').all(guildId, limit).map(mapHistory);
+}
+
 function addModNote(db, record) {
     const timestamp = now();
     const note = {
@@ -959,6 +963,7 @@ module.exports = {
     listDueReminders,
     listDueScheduledMessages,
     listEmbedTemplates,
+    listGuildHistory,
     listExpiredTempBans,
     listExpiredTempMutes,
     listExpiredTempRoles,

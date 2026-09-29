@@ -195,8 +195,19 @@ test('setup saves guild-specific values through shared config service', async ()
         draft.voice.triggerChannelId = 'voice-trigger';
         draft.voice.categoryId = 'voice-category';
         draft.voice.userLimitMax = 12;
+        const guild = {
+            id: 'guild-a',
+            channels: {
+                cache: new Map([
+                    ['voice-trigger', { id: 'voice-trigger', guildId: 'guild-a', type: ChannelType.GuildVoice }],
+                    ['voice-category', { id: 'voice-category', guildId: 'guild-a', type: ChannelType.GuildCategory }],
+                ]),
+                fetch: async id => guild.channels.cache.get(id) || null,
+            },
+        };
 
         const message = await saveSetupDraft({
+            guild,
             guildId: 'guild-a',
             user: { id: 'setup-admin' },
         }, 'voice', draft);

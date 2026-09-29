@@ -387,6 +387,16 @@ function runMigrations(db) {
         CREATE INDEX idx_guild_config_audit_guild_created ON guild_config_audit(guild_id, created_at);
         CREATE INDEX idx_guild_config_audit_section ON guild_config_audit(guild_id, section, created_at);
     `);
+
+    applyMigration(db, 3, 'dashboard_query_indexes', `
+        CREATE INDEX IF NOT EXISTS idx_scheduled_messages_guild_scheduled ON scheduled_messages(guild_id, scheduled_for);
+        CREATE INDEX IF NOT EXISTS idx_tickets_guild_updated ON tickets(guild_id, updated_at);
+        CREATE INDEX IF NOT EXISTS idx_ticket_transcripts_guild_created ON ticket_transcripts(guild_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_temp_voice_guild_created ON temporary_voice_channels(guild_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_user_history_guild_created ON user_history(guild_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_embed_templates_guild_name ON embed_templates(guild_id, name);
+        CREATE INDEX IF NOT EXISTS idx_moderation_cases_guild_id ON moderation_cases(guild_id, id);
+    `);
 }
 
 function backupFile(filePath, label = 'legacy') {

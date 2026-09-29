@@ -442,6 +442,15 @@ async function listUserHistory(guildId, userId, limit = 15) {
         .slice(0, limit);
 }
 
+async function listGuildHistory(guildId, limit = 200) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listGuildHistory(await getSqliteDb(), guildId, limit);
+    return (await readState()).history
+        .filter(item => item.guildId === guildId)
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .slice(0, limit);
+}
+
 async function recordCommandUsage(record) {
     const settings = getStorageSettings();
     if (settings.provider === 'sqlite') return repository.recordCommandUsage(await getSqliteDb(), record);
@@ -1197,6 +1206,7 @@ module.exports = {
     listTicketRecords,
     listTicketTranscripts,
     listTempVoiceChannelsForGuild,
+    listGuildHistory,
     listUserHistory,
     listModerationCases,
     listVoiceActivity,
