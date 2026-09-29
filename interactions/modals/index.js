@@ -1,8 +1,10 @@
 const { handleModerationContextModal } = require('../../utils/moderationContext');
+const { handleSetupModal } = require('../../utils/setupWizard');
 const { handleTicketModal } = require('../../utils/tickets');
 const { handleVoicePanelModal } = require('../../utils/voicePanel');
 
 const modalHandlers = [
+    handleSetupModal,
     handleModerationContextModal,
     handleTicketModal,
     handleVoicePanelModal,

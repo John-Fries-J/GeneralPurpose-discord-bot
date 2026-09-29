@@ -2,10 +2,12 @@ const { handleRulesAgreementButton } = require('../../utils/community');
 const { handleHoneypotButton } = require('../../utils/honeypot');
 const { handleModerationContextButton } = require('../../utils/moderationContext');
 const { handleMusicButton } = require('../../utils/musicButtons');
+const { handleSetupButton } = require('../../utils/setupWizard');
 const { handleTicketButton } = require('../../utils/tickets');
 const { handleVoicePanelButton } = require('../../utils/voicePanel');
 
 const buttonHandlers = [
+    handleSetupButton,
     handleModerationContextButton,
     handleHoneypotButton,
     handleRulesAgreementButton,

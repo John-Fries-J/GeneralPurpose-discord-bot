@@ -1,17 +1,25 @@
 const { handleModerationContextStringSelect } = require('../../utils/moderationContext');
+const { handleHelpStringSelect } = require('../../utils/helpSystem');
+const { handleSetupChannelSelect, handleSetupRoleSelect, handleSetupStringSelect } = require('../../utils/setupWizard');
 const { handleTicketUserSelect } = require('../../utils/tickets');
 const { handleVoicePanelUserSelect } = require('../../utils/voicePanel');
 
 const selectHandlers = {
     string: [
+        handleSetupStringSelect,
+        handleHelpStringSelect,
         handleModerationContextStringSelect,
     ],
     user: [
         handleTicketUserSelect,
         handleVoicePanelUserSelect,
     ],
-    role: [],
-    channel: [],
+    role: [
+        handleSetupRoleSelect,
+    ],
+    channel: [
+        handleSetupChannelSelect,
+    ],
     mentionable: [],
 };
 
