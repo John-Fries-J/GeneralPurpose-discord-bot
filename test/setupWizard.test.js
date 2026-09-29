@@ -39,6 +39,7 @@ function fakeInteraction() {
     return {
         guildId: 'guild',
         guild: { id: 'guild' },
+        memberPermissions: { has: () => true },
         user: { id: 'admin' },
     };
 }

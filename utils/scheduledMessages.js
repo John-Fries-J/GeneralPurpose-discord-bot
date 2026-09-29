@@ -1,4 +1,4 @@
-const { EmbedBuilder } = require('discord.js');
+const { ChannelType, EmbedBuilder } = require('discord.js');
 const { appendDashboardLog } = require('./dashboardLogs');
 const { listDueScheduledMessages, updateScheduledMessageStatus } = require('./store');
 
@@ -25,8 +25,17 @@ function buildScheduledPayload(record) {
 }
 
 async function dispatchScheduledMessage(client, record) {
-    const channel = await client.channels.fetch(record.channelId).catch(() => null);
-    if (!channel?.send) {
+    const guild = client.guilds?.cache?.get?.(record.guildId);
+    if (!guild) {
+        throw new Error('Scheduled message guild is unavailable.');
+    }
+
+    const channel = guild.channels?.cache?.get?.(record.channelId)
+        || await guild.channels?.fetch?.(record.channelId).catch(() => null);
+    if (!channel || channel.guildId !== record.guildId) {
+        throw new Error('Scheduled message channel is not part of the expected guild.');
+    }
+    if (![ChannelType.GuildAnnouncement, ChannelType.GuildText].includes(channel.type) || !channel.send) {
         throw new Error('Channel is not sendable or could not be fetched.');
     }
 

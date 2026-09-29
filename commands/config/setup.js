@@ -1,5 +1,5 @@
 const { PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
-const { createSetupPayload } = require('../../utils/setupWizard');
+const { canUseSetup, createSetupPayload } = require('../../utils/setupWizard');
 
 module.exports = {
     category: 'config',
@@ -10,6 +10,9 @@ module.exports = {
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
     async execute(interaction) {
+        if (!canUseSetup(interaction)) {
+            return interaction.reply({ content: 'You need Manage Server permission to use setup controls.', flags: 64 });
+        }
         return interaction.reply(await createSetupPayload(interaction));
     },
 };

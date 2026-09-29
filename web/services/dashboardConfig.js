@@ -44,7 +44,17 @@ function idMap(items = []) {
     return new Map(items.map(item => [String(item.id), item]));
 }
 
-function validateChannel(context, id, label, allowedTypes, { required = false } = {}) {
+function canBotSend(channel, context) {
+    if (!context.enforceSendable) return true;
+    if (!channel) return false;
+    if (channel.permissionsFor && context.botMember) {
+        const permissions = channel.permissionsFor(context.botMember);
+        if (permissions?.has) return permissions.has('ViewChannel') && permissions.has('SendMessages');
+    }
+    return typeof channel.send === 'function' || channel.sendable === true;
+}
+
+function validateChannel(context, id, label, allowedTypes, { required = false, requireSendable = false } = {}) {
     const value = field(id);
     if (!value) {
         if (required) throw new Error(`${label} is required.`);
@@ -55,6 +65,9 @@ function validateChannel(context, id, label, allowedTypes, { required = false } 
     if (!channel) throw new Error(`${label} must be a channel from this server.`);
     if (allowedTypes && !allowedTypes.has(channel.type)) {
         throw new Error(`${label} has the wrong channel type.`);
+    }
+    if (requireSendable && !canBotSend(channel, context)) {
+        throw new Error(`${label} must be sendable by the bot.`);
     }
 
     return value;
@@ -77,7 +90,9 @@ function validateRole(context, id, label, { required = false } = {}) {
 function createValidationContext(options = {}) {
     return {
         allowedModules: new Set(options.allowedModules || []),
+        botMember: options.botMember || null,
         channelMap: idMap(options.channels || []),
+        enforceSendable: options.enforceSendable === true,
         roleMap: idMap(options.roles || []),
     };
 }
@@ -92,7 +107,7 @@ function parseDashboardSettings(body = {}, options = {}) {
     if (section === 'welcome') {
         const enabled = boolField(body, 'welcomeEnabled');
         const channelId = enabled
-            ? validateChannel(context, body.welcomeID, 'Welcome channel', textChannelTypes, { required: true })
+            ? validateChannel(context, body.welcomeID, 'Welcome channel', textChannelTypes, { required: true, requireSendable: true })
             : '';
         return {
             section,
@@ -110,7 +125,7 @@ function parseDashboardSettings(body = {}, options = {}) {
     if (section === 'logging') {
         const channels = {};
         for (const key of ['logChannel', 'moderation', 'ticket', 'suggestion', 'messageDelete', 'editMessage', 'threadCreate', 'threadDelete', 'threadUpdate', 'directMessage']) {
-            channels[key] = validateChannel(context, body[key], `${key} log channel`, textChannelTypes);
+            channels[key] = validateChannel(context, body[key], `${key} log channel`, textChannelTypes, { requireSendable: true });
         }
         return {
             section,
@@ -129,13 +144,21 @@ function parseDashboardSettings(body = {}, options = {}) {
             fallback: 0,
             label: 'Close inactivity days',
         });
+        const channelId = validateChannel(context, body.ticketChannelId, 'Ticket panel channel', textChannelTypes, { requireSendable: true });
+        const categoryId = validateChannel(context, body.ticketCategoryId, 'Ticket category', categoryChannelTypes);
+        const supportRoleId = validateRole(context, body.supportRoleId, 'Support role');
+        if (channelId || categoryId || supportRoleId) {
+            if (!channelId) throw new Error('Ticket panel channel is required when ticket settings are configured.');
+            if (!categoryId) throw new Error('Ticket category is required when ticket settings are configured.');
+            if (!supportRoleId) throw new Error('Support role is required when ticket settings are configured.');
+        }
         return {
             section,
             message: 'Ticket settings saved',
             values: {
-                channelId: validateChannel(context, body.ticketChannelId, 'Ticket panel channel', textChannelTypes),
-                categoryId: validateChannel(context, body.ticketCategoryId, 'Ticket category', categoryChannelTypes),
-                supportRoleId: validateRole(context, body.supportRoleId, 'Support role'),
+                channelId,
+                categoryId,
+                supportRoleId,
                 allowTranscripts: boolField(body, 'allowTranscripts'),
                 allowUserAdding: boolField(body, 'allowUserAdding'),
                 allowClaiming: boolField(body, 'allowClaiming'),

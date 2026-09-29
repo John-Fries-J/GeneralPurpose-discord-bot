@@ -52,6 +52,7 @@ const states = new Map();
 const sessionMaxAgeMs = 30 * 24 * 60 * 60 * 1000;
 const redactedSecret = '[redacted]';
 const sensitiveKeys = new Set(['token', 'apiKey', 'clientSecret', 'client_secret', 'password', 'secret']);
+const dashboardPermission = PermissionFlagsBits.Administrator;
 
 function parseCookies(header = '') {
     return Object.fromEntries(header.split(';')
@@ -196,6 +197,50 @@ function csrfInput(session) {
     return `<input type="hidden" name="_csrf" value="${escapeHtml(session.csrfToken)}">`;
 }
 
+function getConfiguredDashboardAdminUserIds(config = getConfig()) {
+    return new Set([
+        ...normalizeIdList(config.dashboard?.adminUserIds),
+        ...normalizeIdList(config.devs),
+    ]);
+}
+
+function getConfiguredDashboardAdminRoleIds(config = getConfig()) {
+    return new Set(normalizeIdList(config.dashboard?.adminRoleIds));
+}
+
+function memberHasRole(member, roleIds) {
+    for (const roleId of roleIds) {
+        if (member?.roles?.cache?.has?.(roleId)) return true;
+    }
+    return false;
+}
+
+async function userCanAdminDashboard(client, userId, guild) {
+    if (!userId || !guild?.id) return false;
+    const config = getConfig();
+    if (getConfiguredDashboardAdminUserIds(config).has(userId)) return true;
+    if (guild.ownerId === userId) return true;
+
+    const member = await guild.members?.fetch?.(userId).catch(() => null);
+    if (!member) return false;
+    if (member.permissions?.has?.(dashboardPermission)) return true;
+    return memberHasRole(member, getConfiguredDashboardAdminRoleIds(config));
+}
+
+function requireDashboardAdmin(client) {
+    return async (req, res, next) => {
+        const guild = getDashboardGuild(client);
+        const userId = req.dashboardSession?.user?.id;
+        if (!guild || !await userCanAdminDashboard(client, userId, guild)) {
+            appendDashboardLog('Dashboard authorization denied', { guildId: guild?.id, userId });
+            return res.status(403).send('You are not allowed to manage this dashboard.');
+        }
+
+        req.dashboardGuild = guild;
+        return next();
+    };
+}
+
 function wantsJson(req) {
     return req.get('x-dashboard-async') === '1' || req.accepts(['json', 'html']) === 'json';
 }
@@ -269,15 +314,21 @@ async function fetchDiscordUser(accessToken) {
     };
 }
 
-function canManageDashboard(discordUser, guilds, settings) {
+async function canManageDashboard(discordUser, guilds, settings, client) {
     const config = getConfig();
-    if (config.devs?.includes(discordUser.id)) return true;
+    if (getConfiguredDashboardAdminUserIds(config).has(discordUser.id)) return true;
 
     const guild = guilds.find(item => item.id === settings.guildId);
     if (!guild) return false;
+    if (guild.owner === true) return true;
 
     const permissions = BigInt(guild.permissions || 0);
-    return (permissions & PermissionFlagsBits.ManageGuild) === PermissionFlagsBits.ManageGuild;
+    if ((permissions & dashboardPermission) === dashboardPermission) return true;
+
+    const activeGuild = client ? getDashboardGuild(client) : null;
+    return activeGuild?.id === settings.guildId
+        ? userCanAdminDashboard(client, discordUser.id, activeGuild)
+        : false;
 }
 
 async function canViewTranscript(client, session, transcript) {
@@ -378,6 +429,42 @@ function getGuildRoles(client) {
     return [...guild.roles.cache.values()]
         .filter(role => role.id !== guild.id)
         .sort((a, b) => b.position - a.position || a.name.localeCompare(b.name));
+}
+
+function channelBelongsToGuild(channel, guild) {
+    return Boolean(channel && guild?.id && (channel.guildId === guild.id || channel.guild?.id === guild.id));
+}
+
+function botCanSend(channel, guild) {
+    if (!channel?.send) return false;
+    const botMember = guild?.members?.me;
+    if (!channel.permissionsFor || !botMember) return true;
+    const permissions = channel.permissionsFor(botMember);
+    return permissions?.has?.(PermissionFlagsBits.ViewChannel) !== false
+        && permissions?.has?.(PermissionFlagsBits.SendMessages) !== false;
+}
+
+async function resolveDashboardChannel(guild, channelId, {
+    label = 'Channel',
+    types = [],
+    requireSendable = false,
+} = {}) {
+    const id = String(channelId || '').trim();
+    if (!id) throw new Error(`${label} is required.`);
+
+    const channel = guild?.channels?.cache?.get?.(id)
+        || await guild?.channels?.fetch?.(id).catch(() => null);
+    if (!channel || !channelBelongsToGuild(channel, guild)) {
+        throw new Error(`${label} is not part of this server.`);
+    }
+    if (types.length && !types.includes(channel.type)) {
+        throw new Error(`${label} has the wrong channel type.`);
+    }
+    if (requireSendable && !botCanSend(channel, guild)) {
+        throw new Error(`${label} is not sendable by the bot.`);
+    }
+
+    return channel;
 }
 
 function getLanguageSectionsForCategory(category) {
@@ -1084,7 +1171,7 @@ function startDashboard(client) {
             const currentSettings = getDashboardConfig();
             const token = await exchangeDiscordCode(currentSettings, req.query.code);
             const { user, guilds } = await fetchDiscordUser(token.access_token);
-            if (!canManageDashboard(user, guilds, currentSettings)) return res.status(403).send('You are not allowed to manage this dashboard.');
+            if (!await canManageDashboard(user, guilds, currentSettings, client)) return res.status(403).send('You are not allowed to manage this dashboard.');
 
             const session = {
                 user,
@@ -1107,6 +1194,8 @@ function startDashboard(client) {
         res.setHeader('Set-Cookie', 'dashboard_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0');
         res.redirect('/login');
     });
+
+    app.use(requireAuth, requireDashboardAdmin(client));
 
     const renderPage = page => async (req, res) => res.send(await renderDashboard(client, req.dashboardSession, req.query.message || '', page));
 
@@ -1143,6 +1232,8 @@ function startDashboard(client) {
 
     app.post('/toggle-module', requireAuth, requireCsrf, (req, res) => {
         const enabled = req.body.enabled === 'on';
+        const allowedModules = new Set(groupCommands(client).map(([category]) => category));
+        if (!allowedModules.has(req.body.module)) return res.status(400).send('Unknown module.');
         updateConfig(config => {
             config.commandSettings = config.commandSettings || {};
             config.commandSettings.modules = config.commandSettings.modules || {};
@@ -1155,6 +1246,7 @@ function startDashboard(client) {
 
     app.post('/toggle-command', requireAuth, requireCsrf, (req, res) => {
         const enabled = req.body.enabled === 'on';
+        if (!client.commands.has(req.body.command)) return res.status(400).send('Unknown command.');
         updateConfig(config => {
             config.commandSettings = config.commandSettings || {};
             config.commandSettings.commands = config.commandSettings.commands || {};
@@ -1167,6 +1259,7 @@ function startDashboard(client) {
 
     app.post('/command-access', requireAuth, requireCsrf, (req, res) => {
         const commandName = req.body.command;
+        if (!client.commands.has(commandName)) return res.status(400).send('Unknown command.');
         const access = {
             allowRoleIds: normalizeIdList(req.body.allowRoleIds),
             allowUserIds: normalizeIdList(req.body.allowUserIds),
@@ -1198,7 +1291,9 @@ function startDashboard(client) {
             const allowedModules = groupCommands(client).map(([category]) => category);
             const result = parseDashboardSettings(req.body, {
                 allowedModules,
+                botMember: req.dashboardGuild?.members?.me,
                 channels,
+                enforceSendable: true,
                 roles,
             });
 
@@ -1206,7 +1301,9 @@ function startDashboard(client) {
                 updateConfig(config => {
                     applyDashboardSettings(config, req.body, {
                         allowedModules,
+                        botMember: req.dashboardGuild?.members?.me,
                         channels,
+                        enforceSendable: true,
                         roles,
                     });
 
@@ -1272,12 +1369,16 @@ function startDashboard(client) {
 
     app.post('/send-message', requireAuth, requireCsrf, async (req, res) => {
         try {
-            const channel = await client.channels.fetch(req.body.channelId).catch(() => null);
-            if (!channel?.send && req.body.saveTemplate !== '1') {
-                return res.status(400).send(renderLayout('Message not sent', '<section class="panel"><h2>Message not sent</h2><p>I could not find a sendable channel.</p></section>', req.dashboardSession.user, client));
-            }
-
-            const activeGuildId = getDashboardGuild(client)?.id || getDashboardConfig().guildId || getStoredConfig().guildId;
+            const activeGuild = req.dashboardGuild || getDashboardGuild(client);
+            const activeGuildId = activeGuild?.id || getDashboardConfig().guildId || getStoredConfig().guildId;
+            const needsChannel = req.body.saveTemplate !== '1';
+            const channel = needsChannel
+                ? await resolveDashboardChannel(activeGuild, req.body.channelId, {
+                    label: 'Message channel',
+                    types: [ChannelType.GuildAnnouncement, ChannelType.GuildText],
+                    requireSendable: true,
+                })
+                : null;
             const selectedTemplate = req.body.templateId
                 ? (await listEmbedTemplates(activeGuildId)).find(item => item.id === req.body.templateId)
                 : null;
@@ -1317,7 +1418,7 @@ function startDashboard(client) {
                 }
 
                 await createScheduledMessage({
-                    guildId: channel.guildId || getDashboardConfig().guildId,
+                    guildId: activeGuildId,
                     channelId: channel.id,
                     content: payload.content || '',
                     embed: payload.embed || null,
@@ -1336,12 +1437,20 @@ function startDashboard(client) {
             return res.redirect('/sender?message=Message%20sent');
         } catch (error) {
             console.error('Dashboard message send failed:', error);
-            res.status(500).send(renderLayout('Message failed', '<section class="panel"><h2>Message failed</h2><p>Discord rejected the message. Check the bot permissions and message content.</p></section>', req.dashboardSession.user, client));
+            const safeMessage = /channel|template|message content|future date/i.test(error.message)
+                ? error.message
+                : 'Discord rejected the message. Check the bot permissions and message content.';
+            res.status(/channel|template|message content|future date/i.test(error.message) ? 400 : 500)
+                .send(renderLayout('Message failed', `<section class="panel"><h2>Message failed</h2><p>${escapeHtml(safeMessage)}</p></section>`, req.dashboardSession.user, client));
         }
     });
 
     app.post('/embed-template/delete', requireAuth, requireCsrf, async (req, res) => {
-        const activeGuildId = getDashboardGuild(client)?.id || getDashboardConfig().guildId || getStoredConfig().guildId;
+        const activeGuildId = req.dashboardGuild?.id || getDashboardConfig().guildId || getStoredConfig().guildId;
+        const template = (await listEmbedTemplates(activeGuildId)).find(item => item.id === req.body.id);
+        if (!template) {
+            return res.status(404).send(renderLayout('Template not found', '<section class="panel"><h2>Template not found</h2><p>That template is not available for this server.</p></section>', req.dashboardSession.user, client));
+        }
         await deleteEmbedTemplate(activeGuildId, req.body.id);
         appendDashboardLog('Embed template deleted', { id: req.body.id, userId: req.dashboardSession.user.id });
         res.redirect('/sender?message=Template%20deleted');
@@ -1433,9 +1542,13 @@ function startDashboard(client) {
 }
 
 module.exports = {
+    canManageDashboard,
     createSessionToken,
+    requireCsrf,
     redactSensitiveConfig,
+    resolveDashboardChannel,
     restoreRedactedSecrets,
     startDashboard,
+    userCanAdminDashboard,
     verifySessionToken,
 };

@@ -398,9 +398,116 @@ function setupDraftToGuildSettings(section, draft) {
     return null;
 }
 
+async function fetchGuildChannel(guild, channelId) {
+    if (!channelId) return null;
+    return guild.channels?.cache?.get?.(channelId)
+        || await guild.channels?.fetch?.(channelId).catch(() => null);
+}
+
+async function fetchGuildRole(guild, roleId) {
+    if (!roleId) return null;
+    return guild.roles?.cache?.get?.(roleId)
+        || await guild.roles?.fetch?.(roleId).catch(() => null);
+}
+
+function channelBelongsToGuild(channel, guild) {
+    return Boolean(channel && guild?.id && (channel.guildId === guild.id || channel.guild?.id === guild.id));
+}
+
+function canBotSend(channel, guild) {
+    if (!channel?.send) return false;
+    const botMember = guild.members?.me;
+    if (!channel.permissionsFor || !botMember) return true;
+    const permissions = channel.permissionsFor(botMember);
+    return permissions?.has?.(PermissionFlagsBits.ViewChannel) !== false
+        && permissions?.has?.(PermissionFlagsBits.SendMessages) !== false;
+}
+
+async function validateSetupChannel(guild, channelId, label, types, { required = false, sendable = false } = {}) {
+    if (!channelId) {
+        if (required) throw new Error(`${label} is required.`);
+        return null;
+    }
+
+    const channel = await fetchGuildChannel(guild, channelId);
+    if (!channelBelongsToGuild(channel, guild)) throw new Error(`${label} is no longer part of this server.`);
+    if (types?.length && !types.includes(channel.type)) throw new Error(`${label} has the wrong channel type.`);
+    if (sendable && !canBotSend(channel, guild)) throw new Error(`${label} is not sendable by the bot.`);
+    return channel;
+}
+
+async function validateSetupRole(guild, roleId, label, { required = false } = {}) {
+    if (!roleId) {
+        if (required) throw new Error(`${label} is required.`);
+        return null;
+    }
+
+    const role = await fetchGuildRole(guild, roleId);
+    if (!role || role.guild?.id && role.guild.id !== guild.id) throw new Error(`${label} is no longer part of this server.`);
+    if (role.id === guild.id) throw new Error(`${label} must be a normal server role.`);
+    return role;
+}
+
+async function validateSetupDraft(interaction, section, draft) {
+    const guild = interaction.guild;
+    if (!guild?.id) throw new Error('Setup must be used in a server.');
+
+    if (section === 'welcome') {
+        await validateSetupChannel(guild, draft.welcome.channelId, 'Welcome channel', [ChannelType.GuildText, ChannelType.GuildAnnouncement], {
+            required: draft.welcome.enabled === true,
+            sendable: draft.welcome.enabled === true,
+        });
+        return;
+    }
+
+    if (section === 'logging') {
+        for (const [key, channelId] of Object.entries(draft.logging.channels || {})) {
+            await validateSetupChannel(guild, channelId, `${key} log channel`, [ChannelType.GuildText, ChannelType.GuildAnnouncement], { sendable: true });
+        }
+        return;
+    }
+
+    if (section === 'tickets') {
+        await validateSetupChannel(guild, draft.tickets.channelId, 'Ticket panel channel', [ChannelType.GuildText, ChannelType.GuildAnnouncement], { required: true, sendable: true });
+        await validateSetupChannel(guild, draft.tickets.categoryId, 'Ticket category', [ChannelType.GuildCategory], { required: true });
+        await validateSetupRole(guild, draft.tickets.supportRoleId, 'Support role', { required: true });
+        return;
+    }
+
+    if (section === 'voice') {
+        await validateSetupChannel(guild, draft.voice.triggerChannelId, 'Trigger channel', [ChannelType.GuildVoice, ChannelType.GuildStageVoice], { required: draft.voice.enabled === true });
+        await validateSetupChannel(guild, draft.voice.categoryId, 'Temporary channel category', [ChannelType.GuildCategory]);
+        if (!draft.voice.nameFormat || draft.voice.nameFormat.length > 100) throw new Error('Name format must be 1-100 characters.');
+        if (!Number.isInteger(Number(draft.voice.userLimitMax)) || draft.voice.userLimitMax < 1 || draft.voice.userLimitMax > 99) {
+            throw new Error('Maximum users must be between 1 and 99.');
+        }
+        if (!Number.isFinite(Number(draft.voice.emptyGraceMs)) || draft.voice.emptyGraceMs < 0 || draft.voice.emptyGraceMs > 3_600_000) {
+            throw new Error('Empty grace period must be between 0 and 3600 seconds.');
+        }
+        return;
+    }
+
+    if (section === 'leveling') {
+        if (!['text', 'voice', 'both'].includes(draft.leveling.mode)) throw new Error('Leveling mode must be text, voice, or both.');
+        for (const key of ['textXpPerMessage', 'voiceXpPerMinute']) {
+            if (!Number.isFinite(Number(draft.leveling[key])) || draft.leveling[key] < 0 || draft.leveling[key] > 1000) {
+                throw new Error('XP values must be between 0 and 1000.');
+            }
+        }
+        if (!Number.isFinite(Number(draft.leveling.cooldownSeconds)) || draft.leveling.cooldownSeconds < 0 || draft.leveling.cooldownSeconds > 86400) {
+            throw new Error('Text XP cooldown must be between 0 and 86400 seconds.');
+        }
+        for (const reward of draft.leveling.roleRewards || []) {
+            if (!Number.isFinite(Number(reward.xp)) || Number(reward.xp) < 0) throw new Error('Level reward XP must be zero or greater.');
+            await validateSetupRole(guild, reward.roleId, 'Level reward role', { required: true });
+        }
+    }
+}
+
 async function saveSetupDraft(interaction, section, draft) {
     const mapped = setupDraftToGuildSettings(section, draft);
     if (!mapped) return 'Nothing saved.';
+    await validateSetupDraft(interaction, section, draft);
 
     await updateGuildSettings(interaction.guildId || interaction.guild?.id, mapped.section, mapped.values, {
         actorId: interaction.user?.id,
@@ -410,9 +517,13 @@ async function saveSetupDraft(interaction, section, draft) {
 }
 
 function canUseSetup(interaction) {
-    if (!interaction.memberPermissions?.has) return true;
-    return interaction.memberPermissions.has(PermissionFlagsBits.Administrator)
-        || interaction.memberPermissions.has(PermissionFlagsBits.ManageGuild);
+    if (!interaction.memberPermissions?.has) return false;
+    try {
+        return interaction.memberPermissions.has(PermissionFlagsBits.Administrator)
+            || interaction.memberPermissions.has(PermissionFlagsBits.ManageGuild);
+    } catch {
+        return false;
+    }
 }
 
 async function denySetup(interaction) {
@@ -572,6 +683,7 @@ async function handleSetupModal(interaction) {
 
 module.exports = {
     applySetupDraftToConfig,
+    canUseSetup,
     createDraft,
     createSetupPayload,
     handleSetupButton,
@@ -582,4 +694,5 @@ module.exports = {
     resetSetupDrafts,
     saveSetupDraft,
     setupDraftToGuildSettings,
+    validateSetupDraft,
 };
