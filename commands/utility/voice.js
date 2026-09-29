@@ -50,7 +50,7 @@ module.exports = {
         const activeChannel = interaction.member?.voice?.channel;
 
         if (subcommand === 'panel') {
-            return interaction.reply(createVoicePanelPayload());
+            return interaction.reply(await createVoicePanelPayload(interaction));
         }
 
         if (subcommand === 'claim') {

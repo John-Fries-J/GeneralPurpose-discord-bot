@@ -27,16 +27,54 @@ const voicePanelCustomIds = {
     limitModal: 'voice:modal:limit',
 };
 
-function createVoicePanelPayload() {
-    const embed = createEmbed({
+function getHumanMembers(channel) {
+    return [...(channel?.members?.values?.() || [])]
+        .filter(member => !member.user?.bot);
+}
+
+function formatMemberList(channel) {
+    const members = getHumanMembers(channel);
+    if (!members.length) return 'No human members';
+
+    const shown = members.slice(0, 8).map(member => `<@${member.id}>`).join(', ');
+    return members.length > 8 ? `${shown}, +${members.length - 8} more` : shown;
+}
+
+function createVoicePanelEmbed(channel, record) {
+    if (!channel || !record) {
+        return createEmbed({
+            title: 'Temporary Voice Controls',
+            description: 'Join one of your temporary voice channels to manage it here.',
+            color: 'blue',
+            fields: [
+                { name: 'Ownership', value: 'Claim an abandoned channel or transfer ownership to another member.' },
+                { name: 'Access', value: 'Rename, limit, lock, permit, reject, or delete your channel.' },
+            ],
+        });
+    }
+
+    const memberCount = getHumanMembers(channel).length;
+    const userLimit = channel.userLimit || record.userLimit || 0;
+
+    return createEmbed({
         title: 'Temporary Voice Controls',
-        description: 'Manage the temporary voice channel you are currently in.',
-        color: 'blue',
+        description: 'Manage your current temporary voice channel.',
+        color: record.locked ? 'orange' : 'blue',
         fields: [
-            { name: 'Ownership', value: 'Claim an abandoned channel or transfer ownership to another member.' },
-            { name: 'Access', value: 'Rename, limit, lock, permit, reject, or delete your channel.' },
+            { name: 'Channel', value: `<#${channel.id}>\n${channel.name || record.name || 'Unnamed'}`, inline: true },
+            { name: 'Owner', value: `<@${record.ownerId}>`, inline: true },
+            { name: 'Access', value: record.locked ? 'Locked' : 'Public', inline: true },
+            { name: 'Users', value: `${memberCount}${userLimit ? ` / ${userLimit}` : ''}\n${formatMemberList(channel)}` },
+            { name: 'User limit', value: userLimit ? `${userLimit}` : 'Unlimited', inline: true },
+            { name: 'Created', value: record.createdAt ? `<t:${Math.floor(record.createdAt / 1000)}:R>` : 'Unknown', inline: true },
         ],
     });
+}
+
+async function createVoicePanelPayload(interaction = null) {
+    const channel = interaction?.member?.voice?.channel || null;
+    const record = channel ? await getTempVoiceChannel(channel.id).catch(() => null) : null;
+    const embed = createVoicePanelEmbed(channel, record);
 
     return {
         embeds: [embed],
