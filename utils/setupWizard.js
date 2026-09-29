@@ -1,6 +1,7 @@
 const { ChannelType, MessageFlags, PermissionFlagsBits, TextInputStyle } = require('discord.js');
-const { getConfig, updateConfig } = require('./config');
+const { getConfig } = require('./config');
 const { createEmbed } = require('./embeds');
+const { getGuildSettings, updateGuildSettings } = require('./guildConfig');
 const {
     channelSelect,
     modal,
@@ -41,15 +42,17 @@ function createDraft(config = getConfig(), now = Date.now()) {
     const tickets = config.tickets || {};
     const voice = config.joinToCreate || {};
     const leveling = config.leveling || {};
+    const welcome = config.welcome || {};
 
     return {
         expiresAt: now + draftMaxAgeMs,
         section: 'main',
         welcome: {
-            enabled: Boolean(config.welcomeID),
-            channelId: config.welcomeID || '',
+            enabled: welcome.enabled ?? Boolean(config.welcomeID),
+            channelId: welcome.channelId || config.welcomeID || '',
             title: config.WelcomeEmbed?.title || 'Welcome',
             description: config.WelcomeEmbed?.description || 'Welcome {user} to {server}.',
+            footer: config.WelcomeEmbed?.footer || '',
         },
         logging: {
             activeCategory: 'logChannel',
@@ -62,6 +65,7 @@ function createDraft(config = getConfig(), now = Date.now()) {
             allowTranscripts: tickets.allowTranscripts !== false,
             allowUserAdding: tickets.allowUserAdding !== false,
             allowClaiming: tickets.allowClaiming !== false,
+            closeInactivityDays: Number(tickets.closeInactivityDays ?? tickets.autoCloseDays ?? 0),
         },
         voice: {
             enabled: voice.enabled === true,
@@ -69,15 +73,26 @@ function createDraft(config = getConfig(), now = Date.now()) {
             categoryId: voice.categoryId || '',
             nameFormat: voice.nameFormat || "{username}'s Channel",
             userLimitMax: Number(voice.userLimitMax || 25),
+            emptyGraceMs: Number(voice.emptyGraceMs ?? 10_000),
         },
         leveling: {
             enabled: leveling.enabled === true,
             mode: ['text', 'voice', 'both'].includes(leveling.mode) ? leveling.mode : 'both',
+            textXpPerMessage: Number(leveling.textXpPerMessage ?? 1),
+            voiceXpPerMinute: Number(leveling.voiceXpPerMinute ?? 1),
+            cooldownSeconds: Number(leveling.cooldownSeconds ?? 60),
+            roleRewards: Array.isArray(leveling.roleRewards) ? leveling.roleRewards : [],
         },
     };
 }
 
-function getDraft(interaction) {
+async function createDraftForInteraction(interaction) {
+    const guildId = interaction.guildId || interaction.guild?.id;
+    const config = guildId ? await getGuildSettings(guildId) : getConfig();
+    return createDraft(config);
+}
+
+async function getDraft(interaction) {
     cleanupDrafts();
     const key = draftKey(interaction);
     const existing = drafts.get(key);
@@ -86,7 +101,7 @@ function getDraft(interaction) {
         return existing;
     }
 
-    const draft = createDraft();
+    const draft = await createDraftForInteraction(interaction);
     drafts.set(key, draft);
     return draft;
 }
@@ -252,8 +267,8 @@ function levelingPayload(draft, notice = '') {
     };
 }
 
-function createSetupPayload(interaction, section = 'main', notice = '') {
-    const draft = getDraft(interaction);
+async function createSetupPayload(interaction, section = 'main', notice = '') {
+    const draft = await getDraft(interaction);
     if (section === 'welcome') return welcomePayload(draft, notice);
     if (section === 'logging') return loggingPayload(draft, notice);
     if (section === 'tickets') return ticketPayload(draft, notice);
@@ -311,6 +326,89 @@ function applySetupDraftToConfig(config, section, draft) {
     return 'Nothing saved.';
 }
 
+function setupDraftToGuildSettings(section, draft) {
+    if (section === 'welcome') {
+        return {
+            section: 'welcome',
+            values: {
+                enabled: draft.welcome.enabled,
+                channelId: draft.welcome.channelId,
+                title: draft.welcome.title,
+                description: draft.welcome.description,
+                footer: draft.welcome.footer || '',
+            },
+            message: 'Welcome settings saved.',
+        };
+    }
+
+    if (section === 'logging') {
+        return {
+            section: 'logging',
+            values: { channels: draft.logging.channels },
+            message: 'Logging settings saved.',
+        };
+    }
+
+    if (section === 'tickets') {
+        return {
+            section: 'tickets',
+            values: {
+                channelId: draft.tickets.channelId,
+                categoryId: draft.tickets.categoryId,
+                supportRoleId: draft.tickets.supportRoleId,
+                allowTranscripts: draft.tickets.allowTranscripts,
+                allowUserAdding: draft.tickets.allowUserAdding,
+                allowClaiming: draft.tickets.allowClaiming,
+                closeInactivityDays: draft.tickets.closeInactivityDays,
+            },
+            message: 'Ticket settings saved.',
+        };
+    }
+
+    if (section === 'voice') {
+        return {
+            section: 'joinToCreate',
+            values: {
+                enabled: draft.voice.enabled,
+                triggerChannelId: draft.voice.triggerChannelId,
+                categoryId: draft.voice.categoryId,
+                nameFormat: draft.voice.nameFormat,
+                userLimitMax: draft.voice.userLimitMax,
+                emptyGraceMs: draft.voice.emptyGraceMs,
+            },
+            message: 'Temporary voice settings saved.',
+        };
+    }
+
+    if (section === 'leveling') {
+        return {
+            section: 'leveling',
+            values: {
+                enabled: draft.leveling.enabled,
+                mode: draft.leveling.mode,
+                textXpPerMessage: draft.leveling.textXpPerMessage,
+                voiceXpPerMinute: draft.leveling.voiceXpPerMinute,
+                cooldownSeconds: draft.leveling.cooldownSeconds,
+                roleRewards: draft.leveling.roleRewards,
+            },
+            message: 'Leveling settings saved.',
+        };
+    }
+
+    return null;
+}
+
+async function saveSetupDraft(interaction, section, draft) {
+    const mapped = setupDraftToGuildSettings(section, draft);
+    if (!mapped) return 'Nothing saved.';
+
+    await updateGuildSettings(interaction.guildId || interaction.guild?.id, mapped.section, mapped.values, {
+        actorId: interaction.user?.id,
+        source: 'discord_setup',
+    });
+    return mapped.message;
+}
+
 function canUseSetup(interaction) {
     if (!interaction.memberPermissions?.has) return true;
     return interaction.memberPermissions.has(PermissionFlagsBits.Administrator)
@@ -345,15 +443,15 @@ async function handleSetupButton(interaction) {
     }
 
     const [, action, section] = interaction.customId.split(':');
-    const draft = getDraft(interaction);
+    const draft = await getDraft(interaction);
 
     if (action === 'open') {
-        await updateSetupMessage(interaction, createSetupPayload(interaction, section));
+        await updateSetupMessage(interaction, await createSetupPayload(interaction, section));
         return true;
     }
 
     if (action === 'back') {
-        await updateSetupMessage(interaction, createSetupPayload(interaction, 'main'));
+        await updateSetupMessage(interaction, await createSetupPayload(interaction, 'main'));
         return true;
     }
 
@@ -374,12 +472,8 @@ async function handleSetupButton(interaction) {
     }
 
     if (action === 'save') {
-        let message = '';
-        updateConfig(config => {
-            message = applySetupDraftToConfig(config, section, draft);
-            return config;
-        });
-        await updateSetupMessage(interaction, createSetupPayload(interaction, section, message));
+        const message = await saveSetupDraft(interaction, section, draft);
+        await updateSetupMessage(interaction, await createSetupPayload(interaction, section, message));
         return true;
     }
 
@@ -393,7 +487,7 @@ async function handleSetupStringSelect(interaction) {
         return true;
     }
 
-    const draft = getDraft(interaction);
+    const draft = await getDraft(interaction);
     const key = interaction.customId.split(':')[2];
     const value = getSelectedValue(interaction);
 
@@ -409,7 +503,7 @@ async function handleSetupStringSelect(interaction) {
     if (key === 'leveling-enabled') draft.leveling.enabled = value === 'enabled';
     if (key === 'leveling-mode') draft.leveling.mode = value;
 
-    await updateSetupMessage(interaction, createSetupPayload(interaction, draft.section, 'Draft updated.'));
+    await updateSetupMessage(interaction, await createSetupPayload(interaction, draft.section, 'Draft updated.'));
     return true;
 }
 
@@ -420,7 +514,7 @@ async function handleSetupChannelSelect(interaction) {
         return true;
     }
 
-    const draft = getDraft(interaction);
+    const draft = await getDraft(interaction);
     const key = interaction.customId.split(':')[2];
     const value = getSelectedValue(interaction);
 
@@ -431,7 +525,7 @@ async function handleSetupChannelSelect(interaction) {
     if (key === 'voice-trigger') draft.voice.triggerChannelId = value;
     if (key === 'voice-category') draft.voice.categoryId = value;
 
-    await updateSetupMessage(interaction, createSetupPayload(interaction, draft.section, 'Draft updated.'));
+    await updateSetupMessage(interaction, await createSetupPayload(interaction, draft.section, 'Draft updated.'));
     return true;
 }
 
@@ -442,9 +536,9 @@ async function handleSetupRoleSelect(interaction) {
         return true;
     }
 
-    const draft = getDraft(interaction);
+    const draft = await getDraft(interaction);
     draft.tickets.supportRoleId = getSelectedValue(interaction);
-    await updateSetupMessage(interaction, createSetupPayload(interaction, 'tickets', 'Draft updated.'));
+    await updateSetupMessage(interaction, await createSetupPayload(interaction, 'tickets', 'Draft updated.'));
     return true;
 }
 
@@ -455,13 +549,13 @@ async function handleSetupModal(interaction) {
         return true;
     }
 
-    const draft = getDraft(interaction);
+    const draft = await getDraft(interaction);
     const key = interaction.customId.split(':')[2];
 
     if (key === 'welcome-message') {
         draft.welcome.title = interaction.fields.getTextInputValue('title').trim();
         draft.welcome.description = interaction.fields.getTextInputValue('description').trim();
-        await updateSetupMessage(interaction, createSetupPayload(interaction, 'welcome', 'Draft updated.'));
+        await updateSetupMessage(interaction, await createSetupPayload(interaction, 'welcome', 'Draft updated.'));
         return true;
     }
 
@@ -469,7 +563,7 @@ async function handleSetupModal(interaction) {
         const limit = Number(interaction.fields.getTextInputValue('userLimitMax'));
         draft.voice.nameFormat = interaction.fields.getTextInputValue('nameFormat').trim() || "{username}'s Channel";
         draft.voice.userLimitMax = Number.isInteger(limit) && limit >= 1 && limit <= 99 ? limit : 25;
-        await updateSetupMessage(interaction, createSetupPayload(interaction, 'voice', 'Draft updated.'));
+        await updateSetupMessage(interaction, await createSetupPayload(interaction, 'voice', 'Draft updated.'));
         return true;
     }
 
@@ -486,4 +580,6 @@ module.exports = {
     handleSetupRoleSelect,
     handleSetupStringSelect,
     resetSetupDrafts,
+    saveSetupDraft,
+    setupDraftToGuildSettings,
 };

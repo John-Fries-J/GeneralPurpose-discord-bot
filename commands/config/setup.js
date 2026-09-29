@@ -10,6 +10,6 @@ module.exports = {
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
     async execute(interaction) {
-        return interaction.reply(createSetupPayload(interaction));
+        return interaction.reply(await createSetupPayload(interaction));
     },
 };
