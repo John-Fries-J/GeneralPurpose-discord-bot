@@ -1,8 +1,11 @@
+const { handleModerationContextStringSelect } = require('../../utils/moderationContext');
 const { handleTicketUserSelect } = require('../../utils/tickets');
 const { handleVoicePanelUserSelect } = require('../../utils/voicePanel');
 
 const selectHandlers = {
-    string: [],
+    string: [
+        handleModerationContextStringSelect,
+    ],
     user: [
         handleTicketUserSelect,
         handleVoicePanelUserSelect,
