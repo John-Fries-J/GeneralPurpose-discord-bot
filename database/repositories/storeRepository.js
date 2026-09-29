@@ -1,21 +1,6 @@
 const { makeId } = require('./ids');
-
-function now() {
-    return Date.now();
-}
-
-function stringify(value, fallback) {
-    return JSON.stringify(value ?? fallback);
-}
-
-function parseJson(value, fallback) {
-    if (value === null || value === undefined || value === '') return fallback;
-    try {
-        return JSON.parse(value);
-    } catch {
-        return fallback;
-    }
-}
+const historyRepository = require('./historyRepository');
+const { now, parseJson, pruneTableByNewest, stringify } = require('./shared');
 
 function mapCase(row) {
     if (!row) return null;
@@ -35,20 +20,6 @@ function mapCase(row) {
         clearReason: row.clear_reason,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
-    };
-}
-
-function mapHistory(row) {
-    return {
-        guildId: row.guild_id,
-        userId: row.user_id,
-        userTag: row.user_tag,
-        type: row.type,
-        summary: row.summary,
-        channelId: row.channel_id,
-        moderatorId: row.moderator_id,
-        metadata: parseJson(row.metadata_json, {}),
-        createdAt: row.created_at,
     };
 }
 
@@ -181,9 +152,9 @@ function mapConfigAudit(row) {
 function readState(db) {
     return {
         cases: db.prepare('SELECT * FROM moderation_cases ORDER BY id ASC').all().map(mapCase),
-        commandStats: db.prepare('SELECT guild_id guildId, channel_id channelId, command, user_id userId, user_tag userTag, ok, error, created_at createdAt FROM command_usage ORDER BY created_at DESC LIMIT 10000').all().map(row => ({ ...row, ok: row.ok === 1 })),
+        commandStats: historyRepository.listCommandStats(db, null, 0, 10000),
         embedTemplates: listEmbedTemplates(db),
-        history: db.prepare('SELECT * FROM user_history ORDER BY created_at DESC LIMIT 50000').all().map(mapHistory),
+        history: historyRepository.listRecentUserHistory(db, 50000),
         levels: db.prepare('SELECT guild_id guildId, user_id userId, user_tag userTag, text_xp textXp, voice_xp voiceXp, last_text_xp_at lastTextXpAt, updated_at updatedAt FROM levels').all(),
         modNotes: db.prepare('SELECT id, guild_id guildId, user_id userId, user_tag userTag, moderator_id moderatorId, moderator_tag moderatorTag, note, created_at createdAt FROM moderation_notes ORDER BY created_at DESC LIMIT 5000').all(),
         nextCaseId: (db.prepare("SELECT seq + 1 AS next FROM sqlite_sequence WHERE name = 'moderation_cases'").get()?.next) || 1,
@@ -298,22 +269,13 @@ function clearWarningCases(db, guildId, userId, moderatorId, reason) {
     `).run(timestamp, moderatorId, reason, timestamp, guildId, userId).changes;
 }
 
-function addUserHistory(db, record, maxEntries = 50000) {
-    db.prepare(`
-        INSERT INTO user_history (guild_id, user_id, user_tag, type, summary, channel_id, moderator_id, metadata_json, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(record.guildId, record.userId, record.userTag || null, record.type, record.summary, record.channelId || null, record.moderatorId || null, stringify(record.metadata, {}), record.createdAt || now());
-    db.prepare('DELETE FROM user_history WHERE id NOT IN (SELECT id FROM user_history ORDER BY created_at DESC LIMIT ?)').run(maxEntries);
-    return record;
-}
-
-function listUserHistory(db, guildId, userId, limit = 15) {
-    return db.prepare('SELECT * FROM user_history WHERE guild_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT ?').all(guildId, userId, limit).map(mapHistory);
-}
-
-function listGuildHistory(db, guildId, limit = 200) {
-    return db.prepare('SELECT * FROM user_history WHERE guild_id = ? ORDER BY created_at DESC LIMIT ?').all(guildId, limit).map(mapHistory);
-}
+const {
+    addUserHistory,
+    listCommandStats,
+    listGuildHistory,
+    listUserHistory,
+    recordCommandUsage,
+} = historyRepository;
 
 function addModNote(db, record) {
     const timestamp = now();
@@ -342,27 +304,6 @@ function deleteModNote(db, guildId, noteId) {
     const deleted = db.prepare('SELECT id, guild_id guildId, user_id userId, user_tag userTag, moderator_id moderatorId, moderator_tag moderatorTag, note, created_at createdAt FROM moderation_notes WHERE guild_id = ? AND id = ?').get(guildId, noteId) || null;
     db.prepare('DELETE FROM moderation_notes WHERE guild_id = ? AND id = ?').run(guildId, noteId);
     return deleted;
-}
-
-function pruneTableByNewest(db, table, maxEntries) {
-    const limit = Number(maxEntries);
-    if (!Number.isInteger(limit) || limit <= 0) return 0;
-    return db.prepare(`DELETE FROM ${table} WHERE id NOT IN (SELECT id FROM ${table} ORDER BY created_at DESC LIMIT ?)`).run(limit).changes;
-}
-
-function recordCommandUsage(db, record, maxEntries = 10000) {
-    db.prepare(`
-        INSERT INTO command_usage (guild_id, channel_id, command, user_id, user_tag, ok, error, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(record.guildId || null, record.channelId || null, record.command, record.userId, record.userTag || null, record.ok === true ? 1 : 0, record.error || null, now());
-    pruneTableByNewest(db, 'command_usage', maxEntries);
-}
-
-function listCommandStats(db, guildId, since = 0) {
-    const rows = guildId
-        ? db.prepare('SELECT guild_id guildId, channel_id channelId, command, user_id userId, user_tag userTag, ok, error, created_at createdAt FROM command_usage WHERE guild_id = ? AND created_at >= ? ORDER BY created_at DESC').all(guildId, since || 0)
-        : db.prepare('SELECT guild_id guildId, channel_id channelId, command, user_id userId, user_tag userTag, ok, error, created_at createdAt FROM command_usage WHERE created_at >= ? ORDER BY created_at DESC').all(since || 0);
-    return rows.map(row => ({ ...row, ok: row.ok === 1 }));
 }
 
 function upsertTempVoiceChannel(db, record) {
