@@ -4,7 +4,7 @@ const path = require('node:path');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { closeDatabase } = require('../database');
-const { buildDiagnostics, buildHealthReport } = require('../services/diagnostics');
+const { buildDiagnostics, buildHealthReport, buildPublicHealthReport } = require('../services/diagnostics');
 
 function withEnvironment(environment) {
     const previous = {};
@@ -57,6 +57,34 @@ test('buildHealthReport differentiates Discord, database, and scheduler readines
         assert.equal(health.databaseWritable, true);
         assert.equal(health.schedulerAlive, true);
         assert.equal(JSON.stringify(health).includes('should-not-appear'), false);
+    } finally {
+        restore();
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('buildPublicHealthReport keeps unauthenticated probe output minimal', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'bot-public-health-'));
+    const restore = withEnvironment({
+        DATABASE_PROVIDER: 'sqlite',
+        DATABASE_SQLITE_PATH: path.join(directory, 'state.sqlite'),
+        DATABASE_JSON_PATH: path.join(directory, 'missing.json'),
+    });
+
+    try {
+        const health = await buildPublicHealthReport(createClient());
+        assert.deepEqual(Object.keys(health).sort(), [
+            'databaseReadable',
+            'databaseWritable',
+            'discordReady',
+            'ok',
+            'processAlive',
+            'schedulerAlive',
+            'uptimeSeconds',
+        ]);
+        assert.equal('database' in health, false);
+        assert.equal('gatewayPingMs' in health, false);
+        assert.equal('guilds' in health, false);
     } finally {
         restore();
         fs.rmSync(directory, { recursive: true, force: true });

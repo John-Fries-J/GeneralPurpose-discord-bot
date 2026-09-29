@@ -65,6 +65,13 @@ test('secret redaction is recursive, case-insensitive, and URL-context aware', (
         services: [
             { name: 'youtube', ApiKey: 'youtube-secret', apiUrl: 'https://www.googleapis.com/youtube/v3' },
             { name: 'custom', nested: { credentials: { username: 'deploy', password: 'database-password' } } },
+            {
+                name: 'queue',
+                nested: [
+                    { connectionString: 'redis://:redis-secret@localhost:6379/0' },
+                    { databaseUrl: 'postgres://user:postgres-secret@localhost/bot' },
+                ],
+            },
         ],
         database: {
             provider: 'mysql',
@@ -82,6 +89,8 @@ test('secret redaction is recursive, case-insensitive, and URL-context aware', (
     assert.equal(redacted.dashboard.oauth.ClientSecret, '[redacted]');
     assert.equal(redacted.services[0].ApiKey, '[redacted]');
     assert.equal(redacted.services[1].nested.credentials, '[redacted]');
+    assert.equal(redacted.services[2].nested[0].connectionString, '[redacted]');
+    assert.equal(redacted.services[2].nested[1].databaseUrl, '[redacted]');
     assert.equal(redacted.database.mysql.url, '[redacted]');
     assert.equal(redacted.database.mongo.URL, '[redacted]');
     assert.equal(redacted.dashboard.publicUrl, 'https://dashboard.example.com');

@@ -9,7 +9,7 @@ const { getCommandSettings } = require('../utils/features');
 const language = require('../utils/language');
 const { getQueueSummary } = require('../utils/music');
 const { getCommandAccess, normalizeIdList } = require('../utils/permissions');
-const { buildHealthReport } = require('../services/diagnostics');
+const { buildHealthReport, buildPublicHealthReport } = require('../services/diagnostics');
 const {
     assertSafeConfigObject,
     redactSensitiveConfig,
@@ -61,7 +61,16 @@ const {
 
 const states = new Map();
 const sessionMaxAgeMs = 30 * 24 * 60 * 60 * 1000;
+const maxOAuthStates = 500;
 const dashboardPermission = PermissionFlagsBits.Administrator;
+
+function decodeCookieValue(value) {
+    try {
+        return decodeURIComponent(value);
+    } catch {
+        return '';
+    }
+}
 
 function parseCookies(header = '') {
     return Object.fromEntries(header.split(';')
@@ -70,7 +79,7 @@ function parseCookies(header = '') {
         .map(part => {
             const index = part.indexOf('=');
             if (index === -1) return [part, ''];
-            return [part.slice(0, index), decodeURIComponent(part.slice(index + 1))];
+            return [part.slice(0, index), decodeCookieValue(part.slice(index + 1))];
         }));
 }
 
@@ -78,6 +87,11 @@ function cleanupExpiringMaps() {
     const now = Date.now();
     for (const [state, expiresAt] of states.entries()) {
         if (expiresAt <= now) states.delete(state);
+    }
+    while (states.size > maxOAuthStates) {
+        const oldest = states.keys().next().value;
+        if (!oldest) break;
+        states.delete(oldest);
     }
 }
 
@@ -125,7 +139,9 @@ function createSessionToken(session) {
 
 function verifySessionToken(token) {
     if (!token || !token.includes('.')) return null;
-    const [payload, signature] = token.split('.');
+    const parts = token.split('.');
+    if (parts.length !== 2) return null;
+    const [payload, signature] = parts;
     const expectedSignature = signValue(payload);
 
     try {
@@ -169,21 +185,7 @@ function csrfInput(session) {
 }
 
 function getConfiguredDashboardAdminUserIds(config = getConfig()) {
-    return new Set([
-        ...normalizeIdList(config.dashboard?.adminUserIds),
-        ...normalizeIdList(config.devs),
-    ]);
-}
-
-function getConfiguredDashboardAdminRoleIds(config = getConfig()) {
-    return new Set(normalizeIdList(config.dashboard?.adminRoleIds));
-}
-
-function memberHasRole(member, roleIds) {
-    for (const roleId of roleIds) {
-        if (member?.roles?.cache?.has?.(roleId)) return true;
-    }
-    return false;
+    return new Set(normalizeIdList(config.devs));
 }
 
 async function userCanAdminDashboard(client, userId, guild) {
@@ -195,7 +197,7 @@ async function userCanAdminDashboard(client, userId, guild) {
     const member = await guild.members?.fetch?.(userId).catch(() => null);
     if (!member) return false;
     if (member.permissions?.has?.(dashboardPermission)) return true;
-    return memberHasRole(member, getConfiguredDashboardAdminRoleIds(config));
+    return false;
 }
 
 function requireDashboardAdmin(client) {
@@ -242,6 +244,7 @@ function makeDiscordOauthUrl(settings) {
     cleanupExpiringMaps();
     const state = crypto.randomBytes(24).toString('hex');
     states.set(state, Date.now() + 10 * 60 * 1000);
+    cleanupExpiringMaps();
 
     const redirectUri = settings.oauth.redirectUri || `${settings.publicUrl.replace(/\/$/, '')}/auth/discord/callback`;
     const params = new URLSearchParams({
@@ -1177,12 +1180,12 @@ function startDashboard(client) {
     }));
 
     app.get('/health', async (req, res) => {
-        const health = await buildHealthReport(client);
+        const health = await buildPublicHealthReport(client);
         res.status(health.processAlive ? 200 : 500).json(health);
     });
 
     app.get('/ready', async (req, res) => {
-        const health = await buildHealthReport(client);
+        const health = await buildPublicHealthReport(client);
         res.status(health.ok ? 200 : 503).json(health);
     });
 
@@ -1567,6 +1570,12 @@ module.exports = {
     canManageDashboard,
     createConfigBackup,
     createSessionToken,
+    getOAuthStateCount: () => {
+        cleanupExpiringMaps();
+        return states.size;
+    },
+    makeDiscordOauthUrl,
+    parseCookies,
     requireCsrf,
     redactSensitiveConfig,
     resolveDashboardChannel,

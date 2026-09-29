@@ -4,8 +4,13 @@ const { ChannelType, PermissionFlagsBits } = require('discord.js');
 const {
     canManageDashboard,
     requireCsrf,
+    createSessionToken,
+    getOAuthStateCount,
+    makeDiscordOauthUrl,
+    parseCookies,
     resolveDashboardChannel,
     userCanAdminDashboard,
+    verifySessionToken,
 } = require('../web/dashboard');
 const {
     canUseSetup,
@@ -47,6 +52,26 @@ function fakeGuild(member) {
     };
 }
 
+function loadDashboardWithConfig(config) {
+    const dashboardPath = require.resolve('../web/dashboard');
+    const configModule = require('../utils/config');
+    const originalGetConfig = configModule.getConfig;
+    const originalGetStoredConfig = configModule.getStoredConfig;
+    delete require.cache[dashboardPath];
+    configModule.getConfig = () => config;
+    configModule.getStoredConfig = () => config;
+    const dashboard = require('../web/dashboard');
+
+    return {
+        dashboard,
+        restore() {
+            configModule.getConfig = originalGetConfig;
+            configModule.getStoredConfig = originalGetStoredConfig;
+            delete require.cache[dashboardPath];
+        },
+    };
+}
+
 test('dashboard authorization rejects ManageGuild-only users and accepts owners/admins', async () => {
     const manageOnly = {
         id: 'manage-only',
@@ -79,6 +104,58 @@ test('dashboard authorization rejects ManageGuild-only users and accepts owners/
         { guildId: 'guild-a' },
         null,
     ), true);
+});
+
+test('dashboard authorization ignores undocumented dashboard user and role allowlists', async () => {
+    const { dashboard, restore } = loadDashboardWithConfig({
+        devs: [],
+        dashboard: {
+            adminUserIds: ['dashboard-user'],
+            adminRoleIds: ['dashboard-role'],
+        },
+    });
+    const roleOnly = {
+        id: 'role-only',
+        permissions: { has: () => false },
+        roles: { cache: new Map([['dashboard-role', {}]]) },
+    };
+
+    try {
+        assert.equal(await dashboard.userCanAdminDashboard(null, 'dashboard-user', fakeGuild(null)), false);
+        assert.equal(await dashboard.userCanAdminDashboard(null, 'role-only', fakeGuild(roleOnly)), false);
+    } finally {
+        restore();
+    }
+});
+
+test('session helpers reject malformed cookies and signatures without throwing', () => {
+    assert.deepEqual(parseCookies('dashboard_session=%; theme=dark'), {
+        dashboard_session: '',
+        theme: 'dark',
+    });
+
+    const token = createSessionToken({
+        user: { id: '123' },
+        csrfToken: 'csrf',
+        expiresAt: Date.now() + 60_000,
+    });
+
+    assert.equal(verifySessionToken(`${token}.extra`), null);
+    assert.equal(verifySessionToken('not-a-token.x'), null);
+});
+
+test('OAuth state storage expires and is capped', () => {
+    for (let index = 0; index < 550; index += 1) {
+        makeDiscordOauthUrl({
+            publicUrl: 'https://dashboard.example.com',
+            oauth: {
+                clientId: 'client',
+                redirectUri: 'https://dashboard.example.com/auth/discord/callback',
+            },
+        });
+    }
+
+    assert.equal(getOAuthStateCount(), 500);
 });
 
 test('csrf middleware rejects missing or invalid tokens and accepts valid tokens', () => {

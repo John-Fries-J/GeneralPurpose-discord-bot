@@ -145,9 +145,23 @@ async function buildHealthReport(client) {
     };
 }
 
+async function buildPublicHealthReport(client) {
+    const health = await buildHealthReport(client);
+    return {
+        ok: health.ok,
+        processAlive: health.processAlive,
+        discordReady: health.discordReady,
+        databaseReadable: health.databaseReadable,
+        databaseWritable: health.databaseWritable,
+        schedulerAlive: health.schedulerAlive,
+        uptimeSeconds: health.uptimeSeconds,
+    };
+}
+
 module.exports = {
     buildDiagnostics,
     buildHealthReport,
+    buildPublicHealthReport,
     getCommitSha,
     getDatabaseStatus,
     getSchedulerStatus,
