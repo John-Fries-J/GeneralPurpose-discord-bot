@@ -1,6 +1,4 @@
-const path = require('node:path');
-const express = require('express');
-const { ChannelType, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
+const { ChannelType, PermissionFlagsBits } = require('discord.js');
 const { getStoredConfig, saveConfig, updateConfig } = require('../utils/config');
 const { validateConfig } = require('../utils/configValidation');
 const { appendDashboardLog, clearDashboardLogs, readDashboardLogs } = require('../utils/dashboardLogs');
@@ -16,7 +14,12 @@ const {
     safeErrorMessage,
 } = require('../utils/redaction');
 const { applyDashboardSettings, parseDashboardSettings } = require('./services/dashboardConfig');
-const { securityHeaders } = require('./middleware/security');
+const { createDashboardApp } = require('./app');
+const {
+    buildDashboardMessagePayload,
+    buildEmbedFromTemplate,
+    resolveDashboardChannel,
+} = require('./services/dashboardMessages');
 const {
     buildRestoredConfig,
     createConfigBackup,
@@ -189,42 +192,6 @@ function getGuildRoles(client) {
         .sort((a, b) => b.position - a.position || a.name.localeCompare(b.name));
 }
 
-function channelBelongsToGuild(channel, guild) {
-    return Boolean(channel && guild?.id && (channel.guildId === guild.id || channel.guild?.id === guild.id));
-}
-
-function botCanSend(channel, guild) {
-    if (!channel?.send) return false;
-    const botMember = guild?.members?.me;
-    if (!channel.permissionsFor || !botMember) return true;
-    const permissions = channel.permissionsFor(botMember);
-    return permissions?.has?.(PermissionFlagsBits.ViewChannel) !== false
-        && permissions?.has?.(PermissionFlagsBits.SendMessages) !== false;
-}
-
-async function resolveDashboardChannel(guild, channelId, {
-    label = 'Channel',
-    types = [],
-    requireSendable = false,
-} = {}) {
-    const id = String(channelId || '').trim();
-    if (!id) throw new Error(`${label} is required.`);
-
-    const channel = guild?.channels?.cache?.get?.(id)
-        || await guild?.channels?.fetch?.(id).catch(() => null);
-    if (!channel || !channelBelongsToGuild(channel, guild)) {
-        throw new Error(`${label} is not part of this server.`);
-    }
-    if (types.length && !types.includes(channel.type)) {
-        throw new Error(`${label} has the wrong channel type.`);
-    }
-    if (requireSendable && !botCanSend(channel, guild)) {
-        throw new Error(`${label} is not sendable by the bot.`);
-    }
-
-    return channel;
-}
-
 function getLanguageSectionsForCategory(category) {
     const mapping = {
         config: ['general', 'status'],
@@ -239,83 +206,6 @@ function getLanguageSectionsForCategory(category) {
 
 function formatIdList(value) {
     return normalizeIdList(value).join(', ');
-}
-
-function parseEmbedColor(value) {
-    const color = String(value || '').trim();
-    if (!color) return 0x5865f2;
-    if (/^#[0-9a-f]{6}$/i.test(color)) return Number.parseInt(color.slice(1), 16);
-    if (/^[0-9a-f]{6}$/i.test(color)) return Number.parseInt(color, 16);
-    return 0x5865f2;
-}
-
-function parseEmbedFields(value) {
-    return String(value || '')
-        .split(/\r?\n/)
-        .map(line => line.trim())
-        .filter(Boolean)
-        .map(line => {
-            const [name, ...rest] = line.split('|');
-            return {
-                name: (name || 'Field').trim().slice(0, 256),
-                value: (rest.join('|') || 'No value').trim().slice(0, 1024),
-                inline: false,
-            };
-        })
-        .slice(0, 25);
-}
-
-function buildDashboardMessagePayload(body) {
-    const content = String(body.content || '').trim();
-    const embedTitle = String(body.embedTitle || '').trim();
-    const embedDescription = String(body.embedDescription || '').trim();
-    const embedUrl = String(body.embedUrl || '').trim();
-    const embedThumbnail = String(body.embedThumbnail || '').trim();
-    const embedImage = String(body.embedImage || '').trim();
-    const embedFooter = String(body.embedFooter || '').trim();
-    const embedFields = parseEmbedFields(body.embedFields);
-    const hasEmbed = embedTitle || embedDescription || embedUrl || embedThumbnail || embedImage || embedFooter || embedFields.length;
-    const payload = {};
-
-    if (content) payload.content = content;
-    if (hasEmbed) {
-        const embed = {
-            color: parseEmbedColor(body.embedColor),
-            title: embedTitle,
-            description: embedDescription,
-            url: embedUrl,
-            thumbnail: embedThumbnail,
-            image: embedImage,
-            footer: embedFooter,
-            fields: embedFields,
-        };
-        payload.embed = embed;
-        payload.embeds = [new EmbedBuilder().setColor(embed.color)];
-        if (embed.title) payload.embeds[0].setTitle(embed.title);
-        if (embed.description) payload.embeds[0].setDescription(embed.description);
-        if (embed.url) payload.embeds[0].setURL(embed.url);
-        if (embed.thumbnail) payload.embeds[0].setThumbnail(embed.thumbnail);
-        if (embed.image) payload.embeds[0].setImage(embed.image);
-        if (embed.footer) payload.embeds[0].setFooter({ text: embed.footer });
-        if (embed.fields.length) payload.embeds[0].addFields(embed.fields);
-    }
-
-    return payload;
-}
-
-function buildEmbedFromTemplate(embed) {
-    if (!embed) return null;
-
-    const builder = new EmbedBuilder();
-    if (embed.color) builder.setColor(embed.color);
-    if (embed.title) builder.setTitle(embed.title);
-    if (embed.description) builder.setDescription(embed.description);
-    if (embed.url) builder.setURL(embed.url);
-    if (embed.thumbnail) builder.setThumbnail(embed.thumbnail);
-    if (embed.image) builder.setImage(embed.image);
-    if (embed.footer) builder.setFooter({ text: embed.footer });
-    if (Array.isArray(embed.fields) && embed.fields.length) builder.addFields(embed.fields.slice(0, 25));
-    return builder;
 }
 
 function getEditableLanguageValues(source) {
@@ -947,383 +837,58 @@ function startDashboard(client) {
     const settings = getDashboardConfig();
     if (!settings.enabled) return null;
 
-    const app = express();
-    app.use(express.urlencoded({ extended: false, limit: '1mb' }));
-    app.use(securityHeaders);
-    app.use(express.static(path.join(__dirname, 'public'), {
-        extensions: false,
-        fallthrough: true,
-        immutable: false,
-    }));
-
-    app.get('/health', async (req, res) => {
-        const health = await buildPublicHealthReport(client);
-        res.status(health.processAlive ? 200 : 500).json(health);
-    });
-
-    app.get('/ready', async (req, res) => {
-        const health = await buildPublicHealthReport(client);
-        res.status(health.ok ? 200 : 503).json(health);
-    });
-
-    app.get('/login', (req, res) => {
-        const currentSettings = getDashboardConfig();
-        if (!currentSettings.oauth.clientId || !currentSettings.oauth.clientSecret) {
-            return res.send(renderLayout('Dashboard setup required', '<section class="auth-card"><h2>OAuth setup required</h2><p>Add dashboard.oauth.clientId and dashboard.oauth.clientSecret to config.json, or set DISCORD_OAUTH_CLIENT_ID and DISCORD_OAUTH_CLIENT_SECRET.</p></section>', null, client));
-        }
-
-        return res.redirect(makeDiscordOauthUrl(currentSettings));
-    });
-
-    app.get('/auth/discord/callback', async (req, res) => {
-        try {
-            if (!consumeOauthState(req.query.state)) return res.status(403).send('Invalid OAuth state.');
-
-            const currentSettings = getDashboardConfig();
-            const token = await exchangeDiscordCode(currentSettings, req.query.code);
-            const { user, guilds } = await fetchDiscordUser(token.access_token);
-            if (!await canManageDashboard(user, guilds, currentSettings, client)) return res.status(403).send('You are not allowed to manage this dashboard.');
-
-            const session = createDashboardSession(user);
-            const sessionToken = createSessionToken(session);
-            appendDashboardLog('Dashboard login', { userId: user.id });
-            const secureCookie = currentSettings.publicUrl.startsWith('https://') || process.env.NODE_ENV === 'production';
-            res.setHeader('Set-Cookie', `dashboard_session=${encodeURIComponent(sessionToken)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(sessionMaxAgeMs / 1000)}${secureCookie ? '; Secure' : ''}`);
-            return res.redirect('/');
-        } catch (error) {
-            console.error('Dashboard OAuth failed:', error);
-            return res.status(500).send('Discord OAuth failed. Check the dashboard OAuth settings.');
-        }
-    });
-
-    app.get('/logout', (req, res) => {
-        res.setHeader('Set-Cookie', 'dashboard_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0');
-        res.redirect('/login');
-    });
-
-    app.use(requireAuth, requireDashboardAdmin(client));
-
-    const renderPage = page => async (req, res) => res.send(await renderDashboard(client, req.dashboardSession, req.query.message || '', page));
-
-    app.get('/', requireAuth, renderPage('overview'));
-    app.get('/audit', requireAuth, renderPage('audit'));
-    app.get('/analytics', requireAuth, renderPage('analytics'));
-    app.get('/health-page', requireAuth, renderPage('health'));
-    app.get('/modules', requireAuth, renderPage('modules'));
-    app.get('/commands', requireAuth, renderPage('commands'));
-    app.get('/moderation', requireAuth, renderPage('moderation'));
-    app.get('/tickets', requireAuth, renderPage('tickets'));
-    app.get('/transcripts/:id', requireAuth, async (req, res) => {
-        const transcript = await getTicketTranscript(req.params.id);
-        if (!transcript) {
-            return res.status(404).send(renderLayout('Transcript not found', '<section class="panel"><h2>Transcript not found</h2><p>That transcript does not exist.</p></section>', req.dashboardSession.user, client, 'tickets'));
-        }
-
-        if (!await canViewTranscript(client, req.dashboardSession, transcript)) {
-            return res.status(403).send(renderLayout('Transcript unavailable', '<section class="panel"><h2>Transcript unavailable</h2><p>You are not allowed to view this transcript.</p></section>', req.dashboardSession.user, client, 'tickets'));
-        }
-
-        return res.type('html').send(transcript.html);
-    });
-    app.get('/community', requireAuth, renderPage('community'));
-    app.get('/leveling', requireAuth, renderPage('leveling'));
-    app.get('/voice', requireAuth, renderPage('voice'));
-    app.get('/media', requireAuth, renderPage('media'));
-    app.get('/music', requireAuth, renderPage('music'));
-    app.get('/language', requireAuth, renderPage('language'));
-    app.get('/sender', requireAuth, renderPage('sender'));
-    app.get('/config', requireAuth, renderPage('config'));
-    app.get('/backups', requireAuth, renderPage('backups'));
-    app.get('/logs', requireAuth, renderPage('logs'));
-
-    app.post('/toggle-module', requireAuth, requireCsrf, (req, res) => {
-        const enabled = req.body.enabled === 'on';
-        const allowedModules = new Set(groupCommands(client).map(([category]) => category));
-        if (!allowedModules.has(req.body.module)) return res.status(400).send('Unknown module.');
-        updateConfig(config => {
-            config.commandSettings = config.commandSettings || {};
-            config.commandSettings.modules = config.commandSettings.modules || {};
-            config.commandSettings.modules[req.body.module] = enabled;
-            return config;
-        });
-        appendDashboardLog('Module toggle updated', { module: req.body.module, enabled, userId: req.dashboardSession.user.id });
-        res.redirect(`/modules#module-${slug(req.body.module)}`);
-    });
-
-    app.post('/toggle-command', requireAuth, requireCsrf, (req, res) => {
-        const enabled = req.body.enabled === 'on';
-        if (!client.commands.has(req.body.command)) return res.status(400).send('Unknown command.');
-        updateConfig(config => {
-            config.commandSettings = config.commandSettings || {};
-            config.commandSettings.commands = config.commandSettings.commands || {};
-            config.commandSettings.commands[req.body.command] = enabled;
-            return config;
-        });
-        appendDashboardLog('Command toggle updated', { command: req.body.command, enabled, userId: req.dashboardSession.user.id });
-        res.redirect('/commands');
-    });
-
-    app.post('/command-access', requireAuth, requireCsrf, (req, res) => {
-        const commandName = req.body.command;
-        if (!client.commands.has(commandName)) return res.status(400).send('Unknown command.');
-        const access = {
-            allowRoleIds: normalizeIdList(req.body.allowRoleIds),
-            allowUserIds: normalizeIdList(req.body.allowUserIds),
-            denyRoleIds: normalizeIdList(req.body.denyRoleIds),
-            denyUserIds: normalizeIdList(req.body.denyUserIds),
-        };
-
-        updateConfig(config => {
-            config.commandSettings = config.commandSettings || {};
-            config.commandSettings.access = config.commandSettings.access || {};
-
-            if (Object.values(access).every(list => list.length === 0)) {
-                delete config.commandSettings.access[commandName];
-            } else {
-                config.commandSettings.access[commandName] = access;
-            }
-
-            return config;
-        });
-
-        appendDashboardLog('Command access updated', { command: commandName, userId: req.dashboardSession.user.id });
-        res.redirect('/commands');
-    });
-
-    app.post('/dashboard-settings', requireAuth, requireCsrf, async (req, res) => {
-        try {
-            const activeGuildId = getDashboardGuild(client)?.id || getDashboardConfig().guildId || getStoredConfig().guildId;
-            const channels = getGuildChannels(client);
-            const roles = getGuildRoles(client);
-            const allowedModules = groupCommands(client).map(([category]) => category);
-            const result = parseDashboardSettings(req.body, {
-                allowedModules,
-                botMember: req.dashboardGuild?.members?.me,
-                channels,
-                enforceSendable: true,
-                guildId: activeGuildId,
-                roles,
-            });
-
-            if (['moderation', 'modules', 'music'].includes(result.section)) {
-                updateConfig(config => {
-                    applyDashboardSettings(config, req.body, {
-                        allowedModules,
-                        botMember: req.dashboardGuild?.members?.me,
-                        channels,
-                        enforceSendable: true,
-                        guildId: activeGuildId,
-                        roles,
-                    });
-
-                    const errors = validateConfig(config);
-                    if (errors.length) {
-                        throw new Error(errors.join(' '));
-                    }
-
-                    return config;
-                });
-            } else {
-                await updateGuildSettings(activeGuildId, result.section, result.values, {
-                    actorId: req.dashboardSession.user.id,
-                    source: 'dashboard',
-                });
-            }
-
-            appendDashboardLog('Dashboard settings saved', {
-                section: result.section,
-                userId: req.dashboardSession.user.id,
-            });
-
-            if (wantsJson(req)) {
-                return res.json({ ok: true, message: result.message });
-            }
-
-            const page = dashboardSettingsPage(result.section);
-            return res.redirect(`${page}?message=${encodeURIComponent(result.message)}`);
-        } catch (error) {
-            return sendSettingsError(req, res, client, error);
-        }
-    });
-
-    app.post('/language-section', requireAuth, requireCsrf, (req, res) => {
-        try {
-            const section = req.body.section;
-            const parsed = JSON.parse(req.body.content || '{}');
-            assertSafeConfigObject(parsed);
-            if (!section || !parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-                throw new Error('Language section must be a JSON object.');
-            }
-
-            const currentLanguage = language.loadLanguage();
-            currentLanguage[section] = parsed;
-            language.saveLanguage(currentLanguage);
-            appendDashboardLog('Language section saved', { section, userId: req.dashboardSession.user.id });
-            res.redirect('/language');
-        } catch (error) {
-            res.status(400).send(renderLayout('Invalid language', `<section class="panel"><h2>Invalid language JSON</h2><p>${escapeHtml(safeErrorMessage(error, 'Language was not saved.'))}</p><p>Use the browser back button and fix the JSON.</p></section>`, req.dashboardSession.user, client));
-        }
-    });
-
-    app.post('/language-json', requireAuth, requireCsrf, (req, res) => {
-        try {
-            const parsed = JSON.parse(req.body.language);
-            assertSafeConfigObject(parsed);
-            language.saveLanguage(parsed);
-            appendDashboardLog('language.json saved from dashboard', { userId: req.dashboardSession.user.id });
-            res.redirect('/language?message=language.json%20saved');
-        } catch (error) {
-            res.status(400).send(renderLayout('Invalid language', `<section class="panel"><h2>Invalid language JSON</h2><p>${escapeHtml(safeErrorMessage(error, 'Language was not saved.'))}</p><p>Use the browser back button and fix the JSON.</p></section>`, req.dashboardSession.user, client));
-        }
-    });
-
-    app.post('/send-message', requireAuth, requireCsrf, async (req, res) => {
-        try {
-            const activeGuild = req.dashboardGuild || getDashboardGuild(client);
-            const activeGuildId = activeGuild?.id || getDashboardConfig().guildId || getStoredConfig().guildId;
-            const needsChannel = req.body.saveTemplate !== '1';
-            const channel = needsChannel
-                ? await resolveDashboardChannel(activeGuild, req.body.channelId, {
-                    label: 'Message channel',
-                    types: [ChannelType.GuildAnnouncement, ChannelType.GuildText],
-                    requireSendable: true,
-                })
-                : null;
-            const selectedTemplate = req.body.templateId
-                ? (await listEmbedTemplates(activeGuildId)).find(item => item.id === req.body.templateId)
-                : null;
-            const payload = selectedTemplate && !req.body.content && !req.body.embedTitle && !req.body.embedDescription
-                ? {
-                    content: selectedTemplate.content,
-                    embed: selectedTemplate.embed,
-                    embeds: selectedTemplate.embed ? [buildEmbedFromTemplate(selectedTemplate.embed)] : undefined,
-                }
-                : buildDashboardMessagePayload(req.body);
-            if (!payload.content && !payload.embeds) {
-                return res.status(400).send(renderLayout('Message not sent', '<section class="panel"><h2>Message not sent</h2><p>Add message content or embed text before sending.</p></section>', req.dashboardSession.user, client));
-            }
-
-            if (req.body.saveTemplate === '1') {
-                const templateName = String(req.body.templateName || '').trim();
-                if (!templateName) {
-                    return res.status(400).send(renderLayout('Template not saved', '<section class="panel"><h2>Template not saved</h2><p>Add a template name before saving.</p></section>', req.dashboardSession.user, client));
-                }
-
-                await upsertEmbedTemplate({
-                    guildId: activeGuildId,
-                    name: templateName,
-                    content: payload.content || '',
-                    embed: payload.embed || null,
-                    updatedBy: req.dashboardSession.user.id,
-                });
-                appendDashboardLog('Embed template saved', { name: templateName, userId: req.dashboardSession.user.id });
-                return res.redirect('/sender?message=Template%20saved');
-            }
-
-            const scheduleAt = String(req.body.scheduleAt || '').trim();
-            if (scheduleAt) {
-                const scheduledFor = Date.parse(scheduleAt);
-                if (!Number.isFinite(scheduledFor) || scheduledFor <= Date.now()) {
-                    return res.status(400).send(renderLayout('Message not scheduled', '<section class="panel"><h2>Message not scheduled</h2><p>Choose a future date and time.</p></section>', req.dashboardSession.user, client));
-                }
-
-                await createScheduledMessage({
-                    guildId: activeGuildId,
-                    channelId: channel.id,
-                    content: payload.content || '',
-                    embed: payload.embed || null,
-                    createdBy: req.dashboardSession.user.id,
-                    scheduledFor,
-                });
-                appendDashboardLog('Dashboard message scheduled', { channelId: channel.id, userId: req.dashboardSession.user.id, scheduledFor });
-                return res.redirect('/sender?message=Message%20scheduled');
-            }
-
-            const sendPayload = {};
-            if (payload.content) sendPayload.content = payload.content;
-            if (payload.embeds) sendPayload.embeds = payload.embeds;
-            await channel.send(sendPayload);
-            appendDashboardLog('Dashboard message sent', { channelId: channel.id, userId: req.dashboardSession.user.id });
-            return res.redirect('/sender?message=Message%20sent');
-        } catch (error) {
-            console.error('Dashboard message send failed:', error);
-            const redactedMessage = safeErrorMessage(error);
-            const safeMessage = /channel|template|message content|future date/i.test(redactedMessage)
-                ? redactedMessage
-                : 'Discord rejected the message. Check the bot permissions and message content.';
-            res.status(/channel|template|message content|future date/i.test(redactedMessage) ? 400 : 500)
-                .send(renderLayout('Message failed', `<section class="panel"><h2>Message failed</h2><p>${escapeHtml(safeMessage)}</p></section>`, req.dashboardSession.user, client));
-        }
-    });
-
-    app.post('/embed-template/delete', requireAuth, requireCsrf, async (req, res) => {
-        const activeGuildId = req.dashboardGuild?.id || getDashboardConfig().guildId || getStoredConfig().guildId;
-        const template = (await listEmbedTemplates(activeGuildId)).find(item => item.id === req.body.id);
-        if (!template) {
-            return res.status(404).send(renderLayout('Template not found', '<section class="panel"><h2>Template not found</h2><p>That template is not available for this server.</p></section>', req.dashboardSession.user, client));
-        }
-        await deleteEmbedTemplate(activeGuildId, req.body.id);
-        appendDashboardLog('Embed template deleted', { id: req.body.id, userId: req.dashboardSession.user.id });
-        res.redirect('/sender?message=Template%20deleted');
-    });
-
-    app.post('/config-section', requireAuth, requireCsrf, (req, res) => {
-        try {
-            const section = String(req.body.section || '').trim();
-            if (!editableConfigSectionPages[section]) {
-                return res.status(400).send(renderLayout('Invalid section', '<section class="panel"><h2>Invalid config section</h2><p>Use the full config editor for this section.</p></section>', req.dashboardSession.user, client));
-            }
-
-            const parsed = JSON.parse(req.body.json || '{}');
-            assertSafeConfigObject(parsed);
-            updateConfig(config => {
-                validateConfigSectionEdit(section, parsed, config);
-                config[section] = parsed;
-                return config;
-            });
-            appendDashboardLog('Config section saved', { section, userId: req.dashboardSession.user.id });
-            res.redirect(`/${editableConfigSectionPages[section] || 'config'}?message=Saved`);
-        } catch (error) {
-            res.status(400).send(renderLayout('Invalid JSON', `<section class="panel"><h2>Invalid JSON</h2><p>${escapeHtml(safeErrorMessage(error, 'Config section was not saved.'))}</p></section>`, req.dashboardSession.user, client));
-        }
-    });
-
-    app.post('/config-json', requireAuth, requireCsrf, (req, res) => {
-        try {
-            const parsedConfig = JSON.parse(req.body.config);
-            const restoredConfig = buildRestoredConfig(parsedConfig, getStoredConfig());
-            saveConfig(restoredConfig);
-            appendDashboardLog('Config saved from dashboard', { userId: req.dashboardSession.user.id });
-            res.redirect('/config');
-        } catch (error) {
-            const message = error instanceof SyntaxError
-                ? 'The config was not saved. Use the browser back button and fix the JSON.'
-                : safeErrorMessage(error, 'The config was not saved.');
-            res.status(400).send(renderLayout('Invalid config', `<section class="panel"><h2>Invalid config</h2><p>${escapeHtml(message)}</p></section>`, req.dashboardSession.user, client));
-        }
-    });
-
-    app.post('/config/backup', requireAuth, requireCsrf, (req, res) => {
-        const file = createConfigBackup(req.body.label);
-        appendDashboardLog('Config backup created', { file, userId: req.dashboardSession.user.id });
-        res.redirect('/backups?message=Backup%20created');
-    });
-
-    app.post('/config/restore', requireAuth, requireCsrf, (req, res) => {
-        try {
-            createConfigBackup('before-restore');
-            restoreConfigBackup(req.body.file);
-            appendDashboardLog('Config backup restored', { file: req.body.file, userId: req.dashboardSession.user.id });
-            res.redirect('/backups?message=Backup%20restored');
-        } catch (error) {
-            res.status(400).send(renderLayout('Restore failed', `<section class="panel"><h2>Restore failed</h2><p>${escapeHtml(safeErrorMessage(error, 'Backup was not restored.'))}</p></section>`, req.dashboardSession.user, client));
-        }
-    });
-
-    app.post('/logs/clear', requireAuth, requireCsrf, (req, res) => {
-        clearDashboardLogs();
-        appendDashboardLog('Dashboard logs cleared', { userId: req.dashboardSession.user.id });
-        res.redirect('/logs');
+    const app = createDashboardApp(client, {
+        appendDashboardLog,
+        applyDashboardSettings,
+        assertSafeConfigObject,
+        buildDashboardMessagePayload,
+        buildEmbedFromTemplate,
+        buildPublicHealthReport,
+        buildRestoredConfig,
+        canManageDashboard,
+        canViewTranscript,
+        clearDashboardLogs,
+        consumeOauthState,
+        createConfigBackup,
+        createDashboardSession,
+        createScheduledMessage,
+        createSessionToken,
+        dashboardSettingsPage,
+        deleteEmbedTemplate,
+        editableConfigSectionPages,
+        escapeHtml,
+        exchangeDiscordCode,
+        fetchDiscordUser,
+        getDashboardConfig,
+        getDashboardGuild,
+        getGuildChannels,
+        getGuildRoles,
+        getStoredConfig,
+        getTicketTranscript,
+        groupCommands,
+        language,
+        listEmbedTemplates,
+        makeDiscordOauthUrl,
+        normalizeIdList,
+        parseDashboardSettings,
+        renderDashboard,
+        renderLayout,
+        requireAuth,
+        requireCsrf,
+        requireDashboardAdmin,
+        resolveDashboardChannel,
+        restoreConfigBackup,
+        safeErrorMessage,
+        saveConfig,
+        sessionMaxAgeMs,
+        slug,
+        updateConfig,
+        updateGuildSettings,
+        upsertEmbedTemplate,
+        validateConfig,
+        validateConfigSectionEdit,
+        wantsJson,
+        sendSettingsError,
     });
 
     const server = app.listen(settings.port, settings.host, () => {
