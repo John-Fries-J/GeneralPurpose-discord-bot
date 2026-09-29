@@ -47,10 +47,10 @@ Copy-Item exampleconfig.json config.json
 - `logChannels`: channel IDs for general, moderation, ticket, suggestion, direct message, message, and thread logs
 - `roles.autoRoleId` or `roles.autoRoleIds`: role IDs given to new members
 - `dashboard`: optional web panel settings; leave `enabled` as `false` to disable it
-- `database`: optional state storage settings; JSON is plug and play
+- `database`: optional state storage settings; SQLite is the default
 - `commandSettings`: module and command enable/disable settings, usually edited by the dashboard
 - `moderation.muteRoleId`: saved automatically the first time `/mute` creates the mute role
-- `tickets`: saved by `/ticket`; you can leave this blank on first setup
+- `tickets`: global ticket defaults; `/ticket setup`, `/setup`, and the dashboard save server-specific overrides
 - `Twitch`: optional Twitch notification settings
 
 4. Edit bot wording in `language.json`.
@@ -87,7 +87,7 @@ docker run --rm -it \
   generalpurpose-discord-bot
 ```
 
-Mount `config.json` when you need channel IDs, roles, tickets, Twitch, or logging.
+Mount `config.json` when you need global channel IDs, roles, Twitch, or logging defaults.
 
 For the dashboard and longer temporary punishments, also mount `data/` and publish the dashboard port:
 
@@ -146,13 +146,13 @@ The dashboard is disabled by default.
 5. Set `dashboard.oauth.clientId` and `dashboard.oauth.clientSecret`, or use the environment variables shown above.
 6. Start the bot and open `http://localhost:3000`.
 
-Dashboard access requires Discord OAuth. Users can manage it if they are listed in `devs` or have `Manage Server` in the configured `guildId`. The panel is split into focused pages for overview, modules, commands, language, message sending, config, and logs. It can edit `config.json`, toggle modules, toggle individual commands, set per-command user/role access rules, edit `language.json` response text, send messages through the bot, and view recent bot/dashboard logs. Disabled commands are blocked immediately; restart the bot to refresh Discord's visible slash command list.
+Dashboard access requires Discord OAuth. Full dashboard administration is limited to users listed in `devs`, the configured guild owner, or members with `Administrator` in the configured `guildId`; `Manage Server` alone does not grant unrestricted dashboard access. The panel is split into focused pages for overview, modules, commands, community settings, tickets, temporary voice, leveling, music, language, message sending, config, backups, health, audit, and logs. It can edit structured per-guild settings, edit advanced `config.json` sections, toggle modules and commands, set per-command user/role access rules, edit `language.json` response text, send or schedule messages through the bot, manage embed templates, create redacted config backups, restore validated backups, and view recent bot/dashboard logs. Disabled commands are blocked immediately; restart the bot to refresh Discord's visible slash command list.
 
 The dashboard includes a light/dark theme toggle stored in the browser. Login sessions use signed cookies that last 30 days, so users do not need to re-authorize after every dashboard restart. Set `DASHBOARD_SESSION_SECRET` if you want a dedicated signing secret instead of using the configured dashboard OAuth secret or bot token.
 
 The dashboard language editor cannot change the embed footer watermark. The watermark is locked by code in `utils/language.js`, so changing it requires a code edit rather than a dashboard save.
 
-The dashboard exposes `GET /health` for deployment checks. It returns process uptime, Discord readiness, and the number of cached guilds.
+The dashboard exposes unauthenticated `GET /health` and `GET /ready` for deployment probes. They return only minimal readiness booleans and uptime. Detailed health information is available on the authenticated dashboard health page.
 
 Useful dashboard environment variables:
 
@@ -166,11 +166,11 @@ Useful dashboard environment variables:
 
 ## Database / State Storage
 
-No external database is required. The bot uses a normalized SQLite database at `data/bot.sqlite` by default, powered by `better-sqlite3`. SQLite runs with foreign keys and WAL enabled, so production backups should include `bot.sqlite` plus any `bot.sqlite-wal` and `bot.sqlite-shm` sidecar files.
+No external database is required. The bot uses a normalized SQLite database at `data/bot.sqlite` by default, powered by `better-sqlite3`. SQLite runs with foreign keys and WAL enabled, so production backups should include `bot.sqlite` plus any `bot.sqlite-wal` and `bot.sqlite-shm` sidecar files. Runtime state such as temporary punishments, reminders, scheduled dashboard messages, ticket metadata/transcripts, temporary voice metadata, per-guild settings, config audit entries, command usage, and user history is restart-persistent where the feature records it.
 
 Existing `bot_state` SQLite files and `data/bot-state.json` files are imported into the normalized schema once on startup. The old file is copied to a `.pre-normalized.<timestamp>.bak` backup first and is not deleted automatically.
 
-Existing small installs can still use JSON storage by setting `database.provider` to `json`; the JSON file lives at `data/bot-state.json`. MySQL is supported by setting `database.provider` to `mysql` and putting a MySQL connection string in `database.mysql.url`. Startup logs show the active provider and migration summary, with credentials redacted.
+Existing small installs can still use JSON storage by setting `database.provider` to `json`; the JSON file lives at `data/bot-state.json`. MySQL is supported by setting `database.provider` to `mysql` and putting a MySQL connection string in `database.mysql.url`. Startup logs show the active provider and migration summary, with credentials redacted. Dashboard config backups redact deployment secrets; restore only accepts listed backup files, validates JSON/config shape before saving, rejects dangerous prototype keys, and preserves protected deployment values such as tokens and database connection settings.
 
 ## Commands
 
@@ -214,7 +214,7 @@ Utility:
 
 Tickets:
 
-- `/ticket setup channel role category` posts the ticket panel and saves ticket settings to `config.json`.
+- `/ticket setup channel role category` posts the ticket panel and saves server-specific ticket settings.
 - `/ticket add user` adds a user to the current ticket.
 - `/ticket remove user` removes a user from the current ticket.
 - `/ticket rename name` renames the current ticket.
@@ -232,6 +232,7 @@ Config:
 
 - `/config view` shows a safe config summary.
 - `/config set-log-channel type channel` updates a log channel.
+- `/setup` opens an interactive setup wizard for server-specific welcome, logging, ticket, temporary voice, and leveling settings.
 - `/autorole set role` sets the join autorole.
 - `/autorole clear` clears join autoroles.
 - `/honeypot configure channel alert_channel ping` enables the scam honeypot and optionally pings a user or role on alerts.
@@ -281,7 +282,7 @@ Media Announcements:
 Join-to-Create:
 
 - Users join the configured trigger voice channel and the bot creates a temporary channel for them.
-- Empty temporary channels are deleted automatically, and disabling join-to-create deletes active temporary channels.
+- Empty temporary channels are deleted automatically, active temporary channel metadata is reconciled on startup, and disabling join-to-create deletes active temporary channels.
 - Owners can set a limit within the configured maximum, rename, lock, unlock, permit users, and reject users.
 
 Leveling:
