@@ -1,6 +1,7 @@
 const { Events } = require('discord.js');
 const { getConfig } = require('../utils/config');
 const { findSendableChannel } = require('../utils/discord');
+const { getGuildSettings } = require('../utils/guildConfig');
 const { refreshMemberCounters } = require('../utils/memberCounters');
 const { syncMember } = require('../utils/namelessmc');
 const { buildWelcomeEmbed } = require('../commands/utility/welcome');
@@ -8,17 +9,20 @@ const { buildWelcomeEmbed } = require('../commands/utility/welcome');
 module.exports = {
     name: Events.GuildMemberAdd,
     async execute(member) {
-        const config = getConfig();
+        const [config, guildConfig] = await Promise.all([
+            Promise.resolve(getConfig()),
+            getGuildSettings(member.guild.id),
+        ]);
 
-        if (config.welcomeID) {
-            const channel = findSendableChannel(member.guild, config.welcomeID);
+        if (guildConfig.welcome?.enabled && guildConfig.welcome.channelId) {
+            const channel = findSendableChannel(member.guild, guildConfig.welcome.channelId);
             if (channel) {
-                const embed = buildWelcomeEmbed(member.user, member.guild);
+                const embed = buildWelcomeEmbed(member.user, member.guild, guildConfig.WelcomeEmbed);
                 await channel.send({ content: `<@${member.user.id}>`, embeds: [embed] }).catch(error => {
                     console.error('Failed to send welcome message:', error);
                 });
             } else {
-                console.warn(`Welcome channel with ID ${config.welcomeID} was not found.`);
+                console.warn(`Welcome channel with ID ${guildConfig.welcome.channelId} was not found.`);
             }
         }
 

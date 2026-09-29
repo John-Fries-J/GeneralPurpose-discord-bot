@@ -128,6 +128,58 @@ function mapReminder(row) {
     };
 }
 
+function mapGuildSetting(row) {
+    if (!row) return null;
+    return {
+        guildId: row.guild_id,
+        section: row.section,
+        key: row.setting_key,
+        value: parseJson(row.value_json, null),
+        updatedBy: row.updated_by,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+    };
+}
+
+function mapGuildLogChannel(row) {
+    if (!row) return null;
+    return {
+        guildId: row.guild_id,
+        key: row.log_key,
+        channelId: row.channel_id,
+        updatedBy: row.updated_by,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+    };
+}
+
+function mapGuildLevelReward(row) {
+    if (!row) return null;
+    return {
+        guildId: row.guild_id,
+        roleId: row.role_id,
+        xp: row.xp,
+        updatedBy: row.updated_by,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+    };
+}
+
+function mapConfigAudit(row) {
+    if (!row) return null;
+    return {
+        id: row.id,
+        guildId: row.guild_id,
+        actorId: row.actor_id,
+        section: row.section,
+        key: row.setting_key,
+        previousValue: row.previous_value,
+        newValue: row.new_value,
+        source: row.source,
+        createdAt: row.created_at,
+    };
+}
+
 function readState(db) {
     return {
         cases: db.prepare('SELECT * FROM moderation_cases ORDER BY id ASC').all().map(mapCase),
@@ -148,6 +200,10 @@ function readState(db) {
         ticketRecords: listTicketRecords(db, null, 1000),
         voiceActivity: listVoiceActivity(db, null, 5000),
         reminders: listReminders(db, null, 1000),
+        guildSettings: listAllGuildSettings(db),
+        guildLogChannels: listAllGuildLogChannels(db),
+        guildLevelRewards: listAllGuildLevelRewards(db),
+        configAudit: listConfigAudit(db, null, { limit: 1000 }),
     };
 }
 
@@ -255,6 +311,10 @@ function addUserHistory(db, record, maxEntries = 50000) {
 
 function listUserHistory(db, guildId, userId, limit = 15) {
     return db.prepare('SELECT * FROM user_history WHERE guild_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT ?').all(guildId, userId, limit).map(mapHistory);
+}
+
+function listGuildHistory(db, guildId, limit = 200) {
+    return db.prepare('SELECT * FROM user_history WHERE guild_id = ? ORDER BY created_at DESC LIMIT ?').all(guildId, limit).map(mapHistory);
 }
 
 function addModNote(db, record) {
@@ -668,6 +728,154 @@ function listScheduledJobStatus(db) {
     return db.prepare('SELECT name, last_run_at lastRunAt, last_duration_ms lastDurationMs, last_error lastError, running_since runningSince, updated_at updatedAt FROM scheduled_jobs ORDER BY name ASC').all();
 }
 
+function listAllGuildSettings(db) {
+    return db.prepare('SELECT * FROM guild_settings ORDER BY guild_id ASC, section ASC, setting_key ASC').all().map(mapGuildSetting);
+}
+
+function listGuildSettings(db, guildId) {
+    return db.prepare('SELECT * FROM guild_settings WHERE guild_id = ? ORDER BY section ASC, setting_key ASC').all(guildId).map(mapGuildSetting);
+}
+
+function listAllGuildLogChannels(db) {
+    return db.prepare('SELECT * FROM guild_log_channels ORDER BY guild_id ASC, log_key ASC').all().map(mapGuildLogChannel);
+}
+
+function listGuildLogChannels(db, guildId) {
+    return db.prepare('SELECT * FROM guild_log_channels WHERE guild_id = ? ORDER BY log_key ASC').all(guildId).map(mapGuildLogChannel);
+}
+
+function listAllGuildLevelRewards(db) {
+    return db.prepare('SELECT * FROM guild_level_rewards ORDER BY guild_id ASC, xp ASC, role_id ASC').all().map(mapGuildLevelReward);
+}
+
+function listGuildLevelRewards(db, guildId) {
+    return db.prepare('SELECT * FROM guild_level_rewards WHERE guild_id = ? ORDER BY xp ASC, role_id ASC').all(guildId).map(mapGuildLevelReward);
+}
+
+function upsertGuildSetting(db, record) {
+    const timestamp = now();
+    db.prepare(`
+        INSERT INTO guild_settings (guild_id, section, setting_key, value_json, updated_by, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(guild_id, section, setting_key) DO UPDATE SET
+            value_json = excluded.value_json,
+            updated_by = excluded.updated_by,
+            updated_at = excluded.updated_at
+    `).run(record.guildId, record.section, record.key, stringify(record.value, null), record.updatedBy || null, record.createdAt || timestamp, record.updatedAt || timestamp);
+}
+
+function upsertGuildLogChannel(db, record) {
+    const timestamp = now();
+    db.prepare(`
+        INSERT INTO guild_log_channels (guild_id, log_key, channel_id, updated_by, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(guild_id, log_key) DO UPDATE SET
+            channel_id = excluded.channel_id,
+            updated_by = excluded.updated_by,
+            updated_at = excluded.updated_at
+    `).run(record.guildId, record.key, record.channelId ?? '', record.updatedBy || null, record.createdAt || timestamp, record.updatedAt || timestamp);
+}
+
+function replaceGuildLevelRewards(db, guildId, rewards = [], updatedBy = null) {
+    const timestamp = now();
+    db.prepare('DELETE FROM guild_level_rewards WHERE guild_id = ?').run(guildId);
+    const insert = db.prepare(`
+        INSERT INTO guild_level_rewards (guild_id, role_id, xp, updated_by, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    for (const reward of rewards) {
+        if (!reward?.roleId) continue;
+        insert.run(guildId, reward.roleId, Number(reward.xp || 0), updatedBy, reward.createdAt || timestamp, reward.updatedAt || timestamp);
+    }
+    upsertGuildSetting(db, {
+        guildId,
+        section: 'leveling',
+        key: 'roleRewards',
+        value: rewards.map(reward => ({ xp: Number(reward.xp || 0), roleId: reward.roleId })).filter(reward => reward.roleId),
+        updatedBy,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+    });
+}
+
+function addConfigAuditEntries(db, entries = []) {
+    if (!entries.length) return 0;
+    const insert = db.prepare(`
+        INSERT INTO guild_config_audit (guild_id, actor_id, section, setting_key, previous_value, new_value, source, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const entry of entries) {
+        insert.run(
+            entry.guildId,
+            entry.actorId || null,
+            entry.section,
+            entry.key,
+            entry.previousValue,
+            entry.newValue,
+            entry.source,
+            entry.createdAt || now(),
+        );
+    }
+    return entries.length;
+}
+
+function listConfigAudit(db, guildId, options = {}) {
+    const limit = Math.max(1, Math.min(250, Number(options.limit || 50)));
+    const offset = Math.max(0, Number(options.offset || 0));
+
+    if (guildId && options.section) {
+        return db.prepare('SELECT * FROM guild_config_audit WHERE guild_id = ? AND section = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?')
+            .all(guildId, options.section, limit, offset)
+            .map(mapConfigAudit);
+    }
+
+    if (guildId) {
+        return db.prepare('SELECT * FROM guild_config_audit WHERE guild_id = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?')
+            .all(guildId, limit, offset)
+            .map(mapConfigAudit);
+    }
+
+    return db.prepare('SELECT * FROM guild_config_audit ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?')
+        .all(limit, offset)
+        .map(mapConfigAudit);
+}
+
+function saveGuildConfigurationSection(db, guildId, section, payload = {}, metadata = {}) {
+    db.transaction(() => {
+        const timestamp = metadata.updatedAt || now();
+        for (const [key, value] of Object.entries(payload.settings || {})) {
+            upsertGuildSetting(db, {
+                guildId,
+                section,
+                key,
+                value,
+                updatedBy: metadata.actorId || null,
+                createdAt: timestamp,
+                updatedAt: timestamp,
+            });
+        }
+
+        if (payload.logChannels) {
+            for (const [key, channelId] of Object.entries(payload.logChannels)) {
+                upsertGuildLogChannel(db, {
+                    guildId,
+                    key,
+                    channelId: channelId ?? '',
+                    updatedBy: metadata.actorId || null,
+                    createdAt: timestamp,
+                    updatedAt: timestamp,
+                });
+            }
+        }
+
+        if (payload.levelRewards) {
+            replaceGuildLevelRewards(db, guildId, payload.levelRewards, metadata.actorId || null);
+        }
+
+        addConfigAuditEntries(db, payload.auditEntries || []);
+    })();
+}
+
 function importState(db, state = {}) {
     const counts = {};
     const count = (name, records, fn) => {
@@ -710,6 +918,19 @@ function importState(db, state = {}) {
     count('ticketRecords', state.ticketRecords, record => upsertTicketRecord(db, record));
     count('ticketTranscripts', state.ticketTranscripts, record => createTicketTranscript(db, record));
     count('reminders', state.reminders, record => createReminder(db, record));
+    count('guildSettings', state.guildSettings, record => upsertGuildSetting(db, record));
+    count('guildLogChannels', state.guildLogChannels, record => upsertGuildLogChannel(db, record));
+    count('guildLevelRewards', state.guildLevelRewards, record => {
+        db.prepare(`
+            INSERT INTO guild_level_rewards (guild_id, role_id, xp, updated_by, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(guild_id, role_id) DO UPDATE SET
+                xp = excluded.xp,
+                updated_by = excluded.updated_by,
+                updated_at = excluded.updated_at
+        `).run(record.guildId, record.roleId, Number(record.xp || 0), record.updatedBy || null, record.createdAt || now(), record.updatedAt || now());
+    });
+    count('configAudit', state.configAudit, record => addConfigAuditEntries(db, [record]));
 
     return counts;
 }
@@ -737,13 +958,18 @@ module.exports = {
     getTicketTranscript,
     getUserLevelRecord,
     importState,
+    listConfigAudit,
     listCommandStats,
     listDueReminders,
     listDueScheduledMessages,
     listEmbedTemplates,
+    listGuildHistory,
     listExpiredTempBans,
     listExpiredTempMutes,
     listExpiredTempRoles,
+    listGuildLevelRewards,
+    listGuildLogChannels,
+    listGuildSettings,
     listLevelLeaderboard,
     listModNotes,
     listReminders,
@@ -765,6 +991,7 @@ module.exports = {
     updateReminderStatus,
     markScheduledJobFinish,
     markScheduledJobStart,
+    saveGuildConfigurationSection,
     updateScheduledMessageStatus,
     upsertEmbedTemplate,
     upsertStarboardMessage,

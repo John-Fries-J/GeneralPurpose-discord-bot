@@ -165,10 +165,21 @@ test('user history helpers keep recent user events', async () => {
             summary: 'warned',
             createdAt: 2,
         });
+        await store.addUserHistory({
+            guildId: 'other-guild',
+            userId: 'user',
+            type: 'message',
+            summary: 'elsewhere',
+            createdAt: 3,
+        });
 
         const history = await store.listUserHistory('guild', 'user');
         assert.equal(history.length, 2);
         assert.equal(history[0].summary, 'warned');
+
+        const guildHistory = await store.listGuildHistory('guild', 1);
+        assert.equal(guildHistory.length, 1);
+        assert.equal(guildHistory[0].summary, 'warned');
     } finally {
         restore();
         fs.rmSync(directory, { recursive: true, force: true });

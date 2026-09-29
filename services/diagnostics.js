@@ -4,6 +4,7 @@ const { version: discordJsVersion } = require('discord.js');
 const { version: voiceVersion } = require('@discordjs/voice');
 const packageJson = require('../package.json');
 const { getConfig } = require('../utils/config');
+const { redactText, safeErrorMessage } = require('../utils/redaction');
 const database = require('../database');
 
 let cachedCommitSha;
@@ -50,13 +51,13 @@ async function getDatabaseStatus() {
             provider: health.provider || provider,
             latencyMs: health.latencyMs,
         };
-    } catch (error) {
+    } catch {
         return {
             ok: false,
             readable: false,
             writable: false,
             provider,
-            error: error.message,
+            error: 'Database healthcheck failed.',
         };
     }
 }
@@ -71,10 +72,18 @@ async function getSchedulerStatus(client) {
         return {
             ok: status.stopped !== true,
             stopped: status.stopped,
-            jobs: status.jobs,
+            jobs: (status.jobs || []).map(job => ({
+                name: job.name,
+                intervalMs: job.intervalMs,
+                running: job.running === true,
+                lastRunAt: job.lastRunAt || null,
+                lastDurationMs: job.lastDurationMs || null,
+                lastError: job.lastError ? redactText(String(job.lastError)).slice(0, 200) : null,
+                runningSince: job.runningSince || null,
+            })),
         };
     } catch (error) {
-        return { ok: false, jobs: [], error: error.message };
+        return { ok: false, jobs: [], error: safeErrorMessage(error, 'Scheduler status unavailable.') };
     }
 }
 
@@ -136,9 +145,23 @@ async function buildHealthReport(client) {
     };
 }
 
+async function buildPublicHealthReport(client) {
+    const health = await buildHealthReport(client);
+    return {
+        ok: health.ok,
+        processAlive: health.processAlive,
+        discordReady: health.discordReady,
+        databaseReadable: health.databaseReadable,
+        databaseWritable: health.databaseWritable,
+        schedulerAlive: health.schedulerAlive,
+        uptimeSeconds: health.uptimeSeconds,
+    };
+}
+
 module.exports = {
     buildDiagnostics,
     buildHealthReport,
+    buildPublicHealthReport,
     getCommitSha,
     getDatabaseStatus,
     getSchedulerStatus,

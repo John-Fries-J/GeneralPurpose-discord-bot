@@ -9,7 +9,7 @@ const {
     sendModerationDm,
     validateTarget,
 } = require('../utils/moderation');
-const { upsertTempBan, upsertTempMute } = require('../utils/store');
+const { addModNote, addUserHistory, removeTempBan, upsertTempBan, upsertTempMute } = require('../utils/store');
 
 function failed(message) {
     return { ok: false, message };
@@ -206,9 +206,69 @@ async function mute(interaction, { user, duration, reason }) {
     };
 }
 
+async function unban(interaction, { userId, reason }) {
+    const finalUserId = String(userId || '').trim();
+    const finalReason = withNoReason(reason || 'Unbanned');
+    if (!/^\d{5,32}$/.test(finalUserId)) return failed('Enter a valid Discord user ID.');
+
+    try {
+        const user = await interaction.guild.members.unban(finalUserId, finalReason);
+        await removeTempBan(interaction.guild.id, finalUserId);
+        await logModerationAction(interaction, {
+            caseType: 'unban',
+            title: 'User unbanned',
+            color: 'green',
+            user,
+            reason: finalReason,
+        });
+
+        return {
+            ok: true,
+            content: `${user.tag || user.id} has been unbanned. ${language.moderation.caseLogged}`,
+            reason: finalReason,
+            user,
+        };
+    } catch (error) {
+        return failed('I could not unban that user. Make sure the ID is correct and the user is banned.');
+    }
+}
+
+async function addNote(interaction, { user, note, source = 'command' }) {
+    const noteText = String(note || '').trim();
+    if (!noteText) return failed('Moderator note cannot be empty.');
+
+    const saved = await addModNote({
+        guildId: interaction.guild.id,
+        userId: user.id,
+        userTag: user.tag,
+        moderatorId: interaction.user.id,
+        moderatorTag: interaction.user.tag,
+        note: noteText,
+    });
+
+    await addUserHistory({
+        guildId: interaction.guild.id,
+        userId: user.id,
+        userTag: user.tag,
+        type: 'modnote',
+        summary: saved.note,
+        channelId: interaction.channelId,
+        moderatorId: interaction.user.id,
+        metadata: { noteId: saved.id, source },
+    });
+
+    return {
+        ok: true,
+        note: saved,
+        content: `Saved mod note ${saved.id} for ${user.tag || user.id}.`,
+    };
+}
+
 module.exports = {
+    addNote,
     ban,
     kick,
     mute,
+    unban,
     warn,
 };

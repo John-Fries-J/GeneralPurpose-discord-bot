@@ -1,6 +1,7 @@
 const { PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
+const moderationService = require('../../services/moderation');
 const { createEmbed } = require('../../utils/embeds');
-const { addModNote, addUserHistory, deleteModNote, listModNotes } = require('../../utils/store');
+const { deleteModNote, listModNotes, addUserHistory } = require('../../utils/store');
 
 function formatNote(note) {
     return [
@@ -39,27 +40,13 @@ module.exports = {
 
         if (subcommand === 'add') {
             const user = interaction.options.getUser('user', true);
-            const note = await addModNote({
-                guildId: interaction.guild.id,
-                userId: user.id,
-                userTag: user.tag,
-                moderatorId: interaction.user.id,
-                moderatorTag: interaction.user.tag,
+            const result = await moderationService.addNote(interaction, {
+                user,
                 note: interaction.options.getString('note', true),
+                source: 'command',
             });
 
-            await addUserHistory({
-                guildId: interaction.guild.id,
-                userId: user.id,
-                userTag: user.tag,
-                type: 'modnote',
-                summary: note.note,
-                channelId: interaction.channelId,
-                moderatorId: interaction.user.id,
-                metadata: { noteId: note.id },
-            });
-
-            return interaction.reply({ content: `Saved mod note ${note.id} for ${user.tag}.`, flags: 64 });
+            return interaction.reply({ content: result.ok ? result.content : result.message, flags: 64 });
         }
 
         if (subcommand === 'delete') {

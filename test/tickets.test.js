@@ -7,6 +7,7 @@ const database = require('../database');
 const store = require('../utils/store');
 const {
     closeTicket,
+    createTicketHeaderEmbed,
     createTicketControls,
     customIds,
     formatTranscriptLine,
@@ -68,6 +69,28 @@ test('ticket controls expose persistent management actions', () => {
     ]);
     assert.deepEqual(closedIds, [customIds.transcript, customIds.delete]);
 });
+
+test('createTicketHeaderEmbed shows persisted ticket identity and state', () => {
+    const embed = createTicketHeaderEmbed({
+        channelId: 'ticket-channel',
+        openerId: 'opener',
+        claimedById: 'mod',
+        status: 'open',
+        priority: 'high',
+        tags: ['billing'],
+        createdAt: 1_700_000_000_000,
+    }, { title: 'Ticket Status' }).toJSON();
+    const fields = Object.fromEntries(embed.fields.map(field => [field.name, field.value]));
+
+    assert.equal(embed.title, 'Ticket Status');
+    assert.equal(fields['Ticket #'], '<#ticket-channel>');
+    assert.equal(fields['Opened by'], '<@opener>');
+    assert.equal(fields['Claimed by'], '<@mod>');
+    assert.equal(fields.Priority, 'high');
+    assert.equal(fields.Created, '<t:1700000000:R>');
+    assert.equal(fields.Tags, 'billing');
+});
+
 
 test('ticket close button opens a persistent close reason modal', async () => {
     const shown = [];

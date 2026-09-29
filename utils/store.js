@@ -34,6 +34,10 @@ function createEmptyState() {
         ticketTranscripts: [],
         ticketRecords: [],
         voiceActivity: [],
+        guildSettings: [],
+        guildLogChannels: [],
+        guildLevelRewards: [],
+        configAudit: [],
     };
 }
 
@@ -226,6 +230,10 @@ function clearNormalizedState(db) {
         DELETE FROM user_history;
         DELETE FROM embed_templates;
         DELETE FROM starboard_messages;
+        DELETE FROM guild_config_audit;
+        DELETE FROM guild_level_rewards;
+        DELETE FROM guild_log_channels;
+        DELETE FROM guild_settings;
     `);
 }
 
@@ -430,6 +438,15 @@ async function listUserHistory(guildId, userId, limit = 15) {
     if (settings.provider === 'sqlite') return repository.listUserHistory(await getSqliteDb(), guildId, userId, limit);
     return (await readState()).history
         .filter(item => item.guildId === guildId && item.userId === userId)
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .slice(0, limit);
+}
+
+async function listGuildHistory(guildId, limit = 200) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listGuildHistory(await getSqliteDb(), guildId, limit);
+    return (await readState()).history
+        .filter(item => item.guildId === guildId)
         .sort((a, b) => b.createdAt - a.createdAt)
         .slice(0, limit);
 }
@@ -1012,6 +1029,143 @@ async function listScheduledJobStatus() {
     return [];
 }
 
+async function getGuildConfigurationOverrides(guildId) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') {
+        const db = await getSqliteDb();
+        return {
+            settings: repository.listGuildSettings(db, guildId),
+            logChannels: repository.listGuildLogChannels(db, guildId),
+            levelRewards: repository.listGuildLevelRewards(db, guildId),
+        };
+    }
+
+    const state = await readState();
+    return {
+        settings: (state.guildSettings || []).filter(item => item.guildId === guildId),
+        logChannels: (state.guildLogChannels || []).filter(item => item.guildId === guildId),
+        levelRewards: (state.guildLevelRewards || []).filter(item => item.guildId === guildId),
+    };
+}
+
+function upsertStateRecord(records, keySelector, record) {
+    const key = keySelector(record);
+    const index = records.findIndex(item => keySelector(item) === key);
+    if (index === -1) {
+        records.push(record);
+    } else {
+        records[index] = { ...records[index], ...record };
+    }
+}
+
+async function saveGuildConfigurationSection(guildId, section, payload = {}, metadata = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') {
+        return repository.saveGuildConfigurationSection(await getSqliteDb(), guildId, section, payload, metadata);
+    }
+
+    return useLegacyStateMutation(state => {
+        const timestamp = metadata.updatedAt || Date.now();
+        state.guildSettings ||= [];
+        state.guildLogChannels ||= [];
+        state.guildLevelRewards ||= [];
+        state.configAudit ||= [];
+
+        for (const [key, value] of Object.entries(payload.settings || {})) {
+            upsertStateRecord(
+                state.guildSettings,
+                item => `${item.guildId}:${item.section}:${item.key}`,
+                {
+                    guildId,
+                    section,
+                    key,
+                    value,
+                    updatedBy: metadata.actorId || null,
+                    createdAt: timestamp,
+                    updatedAt: timestamp,
+                },
+            );
+        }
+
+        for (const [key, channelId] of Object.entries(payload.logChannels || {})) {
+            upsertStateRecord(
+                state.guildLogChannels,
+                item => `${item.guildId}:${item.key}`,
+                {
+                    guildId,
+                    key,
+                    channelId: channelId ?? '',
+                    updatedBy: metadata.actorId || null,
+                    createdAt: timestamp,
+                    updatedAt: timestamp,
+                },
+            );
+        }
+
+        if (payload.levelRewards) {
+            const rewards = payload.levelRewards
+                .map(reward => ({ xp: Number(reward.xp || 0), roleId: reward.roleId }))
+                .filter(reward => reward.roleId);
+            state.guildLevelRewards = state.guildLevelRewards.filter(item => item.guildId !== guildId);
+            for (const reward of rewards) {
+                state.guildLevelRewards.push({
+                    guildId,
+                    roleId: reward.roleId,
+                    xp: reward.xp,
+                    updatedBy: metadata.actorId || null,
+                    createdAt: timestamp,
+                    updatedAt: timestamp,
+                });
+            }
+            upsertStateRecord(
+                state.guildSettings,
+                item => `${item.guildId}:${item.section}:${item.key}`,
+                {
+                    guildId,
+                    section: 'leveling',
+                    key: 'roleRewards',
+                    value: rewards,
+                    updatedBy: metadata.actorId || null,
+                    createdAt: timestamp,
+                    updatedAt: timestamp,
+                },
+            );
+        }
+
+        for (const entry of payload.auditEntries || []) {
+            state.configAudit.push({
+                id: entry.id || `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+                guildId: entry.guildId,
+                actorId: entry.actorId || null,
+                section: entry.section,
+                key: entry.key,
+                previousValue: entry.previousValue,
+                newValue: entry.newValue,
+                source: entry.source,
+                createdAt: entry.createdAt || timestamp,
+            });
+        }
+        state.configAudit = state.configAudit
+            .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))
+            .slice(0, 5000);
+
+        return state;
+    });
+}
+
+async function listConfigAudit(guildId, options = {}) {
+    const limit = Math.max(1, Math.min(250, Number(options.limit || 50)));
+    const offset = Math.max(0, Number(options.offset || 0));
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listConfigAudit(await getSqliteDb(), guildId, { ...options, limit, offset });
+
+    return (await readState()).configAudit
+        .filter(item => !guildId || item.guildId === guildId)
+        .filter(item => !options.section || item.section === options.section)
+        .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))
+        .slice(offset, offset + limit);
+}
+
 module.exports = {
     addUserHistory,
     addModNote,
@@ -1030,6 +1184,7 @@ module.exports = {
     deleteTicketRecord,
     getTempMute,
     getModerationCase,
+    getGuildConfigurationOverrides,
     getTempVoiceChannel,
     getTicketRecord,
     getTicketTranscript,
@@ -1044,12 +1199,14 @@ module.exports = {
     listExpiredTempRoles,
     listLevelLeaderboard,
     listDueScheduledMessages,
+    listConfigAudit,
     listModNotes,
     listScheduledMessages,
     listScheduledJobStatus,
     listTicketRecords,
     listTicketTranscripts,
     listTempVoiceChannelsForGuild,
+    listGuildHistory,
     listUserHistory,
     listModerationCases,
     listVoiceActivity,
@@ -1059,6 +1216,7 @@ module.exports = {
     removeTempRole,
     removeTempVoiceChannel,
     recordCommandUsage,
+    saveGuildConfigurationSection,
     updateReminderStatus,
     markScheduledJobFinish,
     markScheduledJobStart,

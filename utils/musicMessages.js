@@ -3,9 +3,12 @@ const { createEmbed } = require('./embeds');
 const { truncate } = require('./discord');
 
 const musicButtonIds = {
+    pause: 'music:pause',
     queue: 'music:queue',
     skip: 'music:skip',
     stop: 'music:stop',
+    volumeDown: 'music:volume-down',
+    volumeUp: 'music:volume-up',
 };
 
 function isHttpUrl(value) {
@@ -17,12 +20,17 @@ function trackLabel(track) {
     return isHttpUrl(track?.url) ? `[${title}](${track.url})` : title;
 }
 
-function createMusicButtons({ disabled = false } = {}) {
+function createMusicButtons({ disabled = false, paused = false } = {}) {
     return [
         new ActionRowBuilder().addComponents(
             new ButtonBuilder()
                 .setCustomId(musicButtonIds.queue)
                 .setLabel('Queue')
+                .setStyle(ButtonStyle.Secondary)
+                .setDisabled(disabled),
+            new ButtonBuilder()
+                .setCustomId(musicButtonIds.pause)
+                .setLabel(paused ? 'Resume' : 'Pause')
                 .setStyle(ButtonStyle.Secondary)
                 .setDisabled(disabled),
             new ButtonBuilder()
@@ -34,6 +42,18 @@ function createMusicButtons({ disabled = false } = {}) {
                 .setCustomId(musicButtonIds.stop)
                 .setLabel('Stop')
                 .setStyle(ButtonStyle.Danger)
+                .setDisabled(disabled),
+        ),
+        new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId(musicButtonIds.volumeDown)
+                .setLabel('Volume -')
+                .setStyle(ButtonStyle.Secondary)
+                .setDisabled(disabled),
+            new ButtonBuilder()
+                .setCustomId(musicButtonIds.volumeUp)
+                .setLabel('Volume +')
+                .setStyle(ButtonStyle.Secondary)
                 .setDisabled(disabled),
         ),
     ];
@@ -85,6 +105,7 @@ function createQueueEmbed(summary) {
     fields.push(
         { name: 'Voice', value: summary.connectionState || 'Not connected', inline: true },
         { name: 'Volume', value: `${summary.volume ?? 100}%`, inline: true },
+        { name: 'Playback', value: summary.paused ? 'Paused' : 'Playing', inline: true },
     );
 
     return createEmbed({
@@ -108,14 +129,14 @@ function createStatusEmbed(title, description, options = {}) {
 function createTrackPayload(track, queue, options = {}) {
     return {
         embeds: [createTrackEmbed(track, queue, options)],
-        components: createMusicButtons(options),
+        components: createMusicButtons({ ...options, paused: queue?.player?.state?.status === 'paused' }),
     };
 }
 
 function createQueuePayload(summary, options = {}) {
     return {
         embeds: [createQueueEmbed(summary)],
-        components: createMusicButtons(options),
+        components: createMusicButtons({ ...options, paused: summary.paused }),
     };
 }
 

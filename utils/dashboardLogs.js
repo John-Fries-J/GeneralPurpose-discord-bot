@@ -1,49 +1,58 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const { redactSensitiveConfig, redactText } = require('./redaction');
 
 const dataDirectory = path.join(__dirname, '..', 'data');
 const logPath = path.join(dataDirectory, 'dashboard.log');
 
-function ensureDataDirectory() {
-    fs.mkdirSync(dataDirectory, { recursive: true });
+function getDashboardLogPath(options = {}) {
+    return options.logPath || logPath;
 }
 
-function appendDashboardLog(message, meta = {}) {
-    ensureDataDirectory();
+function ensureLogDirectory(targetPath = logPath) {
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+}
+
+function appendDashboardLog(message, meta = {}, options = {}) {
+    const targetPath = getDashboardLogPath(options);
+    ensureLogDirectory(targetPath);
 
     const line = JSON.stringify({
         at: new Date().toISOString(),
-        message,
-        ...meta,
+        message: redactText(String(message || '')),
+        ...redactSensitiveConfig(meta),
     });
 
-    fs.appendFileSync(logPath, `${line}\n`);
+    fs.appendFileSync(targetPath, `${line}\n`);
 }
 
-function readDashboardLogs(limit = 100) {
-    if (!fs.existsSync(logPath)) return [];
+function readDashboardLogs(limit = 100, options = {}) {
+    const targetPath = getDashboardLogPath(options);
+    if (!fs.existsSync(targetPath)) return [];
 
-    return fs.readFileSync(logPath, 'utf8')
+    return fs.readFileSync(targetPath, 'utf8')
         .split(/\r?\n/)
         .filter(Boolean)
         .slice(-limit)
         .map(line => {
             try {
-                return JSON.parse(line);
+                return redactSensitiveConfig(JSON.parse(line));
             } catch {
-                return { at: '', message: line };
+                return { at: '', message: redactText(line) };
             }
         })
         .reverse();
 }
 
-function clearDashboardLogs() {
-    ensureDataDirectory();
-    fs.writeFileSync(logPath, '');
+function clearDashboardLogs(options = {}) {
+    const targetPath = getDashboardLogPath(options);
+    ensureLogDirectory(targetPath);
+    fs.writeFileSync(targetPath, '');
 }
 
 module.exports = {
     appendDashboardLog,
     clearDashboardLogs,
+    getDashboardLogPath,
     readDashboardLogs,
 };

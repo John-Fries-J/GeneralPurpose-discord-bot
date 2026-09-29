@@ -738,6 +738,17 @@ function skip(guildId) {
     return true;
 }
 
+function togglePause(guildId) {
+    const queue = queues.get(guildId);
+    if (!queue?.current) return null;
+
+    if (queue.player.state.status === AudioPlayerStatus.Paused) {
+        return { ok: queue.player.unpause(), paused: false };
+    }
+
+    return { ok: queue.player.pause(true), paused: true };
+}
+
 function stop(guildId) {
     const queue = queues.get(guildId);
     const connection = getVoiceConnection(guildId);
@@ -765,6 +776,8 @@ function getQueueSummary(guildId) {
         volume: queue.volume,
         connectionState: describeConnectionState(queue.connection),
         connectionReady: queue.connection?.state.status === VoiceConnectionStatus.Ready,
+        paused: queue.player.state.status === AudioPlayerStatus.Paused,
+        voiceChannelId: queue.connection?.joinConfig?.channelId || null,
     };
 }
 
@@ -780,6 +793,14 @@ function setVolume(guildId, amount) {
     return queue;
 }
 
+function adjustVolume(guildId, delta) {
+    const queue = queues.get(guildId);
+    if (!queue) return null;
+
+    const nextVolume = Math.max(0, Math.min(200, Number(queue.volume || 100) + Number(delta || 0)));
+    return setVolume(guildId, nextVolume);
+}
+
 function getMusicErrorMessage(error) {
     if (error instanceof MusicUserError) return error.message;
     if (isAbortError(error)) {
@@ -792,6 +813,7 @@ function getMusicErrorMessage(error) {
 }
 
 module.exports = {
+    adjustVolume,
     createAttachmentTrack,
     enqueue,
     getMusicErrorMessage,
@@ -804,5 +826,6 @@ module.exports = {
     setVolume,
     skip,
     stop,
+    togglePause,
     getMusicSettings,
 };

@@ -8,9 +8,8 @@ const {
     TextInputStyle,
     UserSelectMenuBuilder,
 } = require('discord.js');
-const { getConfig } = require('./config');
 const { createEmbed } = require('./embeds');
-const { deleteTemporaryVoiceChannel, getOwnedVoiceChannel, transferOwnership } = require('./joinToCreate');
+const { deleteTemporaryVoiceChannel, getGuildJoinToCreateConfig, getOwnedVoiceChannel, transferOwnership } = require('./joinToCreate');
 const { getTempVoiceChannel, upsertTempVoiceChannel } = require('./store');
 
 const voicePanelCustomIds = {
@@ -20,6 +19,8 @@ const voicePanelCustomIds = {
     lock: 'voice:panel:lock',
     unlock: 'voice:panel:unlock',
     delete: 'voice:panel:delete',
+    confirmDelete: 'voice:panel:delete-confirm',
+    cancelDelete: 'voice:panel:delete-cancel',
     transfer: 'voice:panel:transfer',
     permit: 'voice:panel:permit',
     reject: 'voice:panel:reject',
@@ -176,7 +177,8 @@ async function handleVoicePanelButton(interaction) {
         return true;
     }
     if (interaction.customId === voicePanelCustomIds.limit) {
-        await interaction.showModal(createLimitModal(Number(getConfig().joinToCreate?.userLimitMax || 25)));
+        const settings = await getGuildJoinToCreateConfig(interaction.guild.id);
+        await interaction.showModal(createLimitModal(Number(settings.userLimitMax || 25)));
         return true;
     }
     if (interaction.customId === voicePanelCustomIds.lock) {
@@ -192,6 +194,21 @@ async function handleVoicePanelButton(interaction) {
         return true;
     }
     if (interaction.customId === voicePanelCustomIds.delete) {
+        await interaction.reply({
+            content: `Delete <#${owned.channel.id}>? This disconnects members and removes the temporary channel.`,
+            components: [new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId(voicePanelCustomIds.confirmDelete).setLabel('Delete Channel').setStyle(ButtonStyle.Danger),
+                new ButtonBuilder().setCustomId(voicePanelCustomIds.cancelDelete).setLabel('Cancel').setStyle(ButtonStyle.Secondary),
+            )],
+            flags: MessageFlags.Ephemeral,
+        });
+        return true;
+    }
+    if (interaction.customId === voicePanelCustomIds.cancelDelete) {
+        await interaction.reply({ content: 'Delete cancelled.', flags: MessageFlags.Ephemeral });
+        return true;
+    }
+    if (interaction.customId === voicePanelCustomIds.confirmDelete) {
         await interaction.reply({ content: 'Deleting your temporary voice channel.', flags: MessageFlags.Ephemeral });
         await deleteTemporaryVoiceChannel(interaction.guild, owned.channel.id, 'Voice owner deleted temporary channel from panel', { force: true });
         return true;
@@ -220,7 +237,7 @@ async function handleVoicePanelModal(interaction) {
     if (interaction.customId === voicePanelCustomIds.limitModal) {
         const rawLimit = interaction.fields.getTextInputValue('limit').trim();
         const amount = Number(rawLimit);
-        const max = Number(getConfig().joinToCreate?.userLimitMax || 25);
+        const max = Number((await getGuildJoinToCreateConfig(interaction.guild.id)).userLimitMax || 25);
         if (!Number.isInteger(amount) || amount < 0 || amount > max) {
             await interaction.reply({ content: `Enter a whole number from 0 to ${max}.`, flags: MessageFlags.Ephemeral });
             return true;

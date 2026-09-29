@@ -13,10 +13,12 @@ const {
 } = require('discord.js');
 const language = require('./language');
 const { createEmbed } = require('./embeds');
-const { getConfig, updateConfig } = require('./config');
+const { getConfig } = require('./config');
 const { formatTemplate } = require('./template');
 const { isGuildTextChannel } = require('./discord');
 const { sendLog, formatUser } = require('./logging');
+const { getGuildSettings, updateTicketSettings } = require('./guildConfig');
+const { escapeHtml } = require('./html');
 const { createTicketTranscript, deleteTicketRecord, getTicketRecord, listTicketRecords, upsertTicketRecord } = require('./store');
 
 const customIds = {
@@ -33,15 +35,6 @@ const customIds = {
 };
 const transcriptMessageLimit = 5000;
 
-function escapeHtml(value) {
-    return String(value ?? '')
-        .replaceAll('&', '&amp;')
-        .replaceAll('<', '&lt;')
-        .replaceAll('>', '&gt;')
-        .replaceAll('"', '&quot;')
-        .replaceAll("'", '&#39;');
-}
-
 function getDashboardPublicUrl(config = getConfig()) {
     return (process.env.DASHBOARD_PUBLIC_URL || config.dashboard?.publicUrl || '').replace(/\/$/, '');
 }
@@ -52,7 +45,16 @@ function getTicketConfig(config = getConfig()) {
         messageId: config.tickets?.messageId || config.ticketMessageID,
         categoryId: config.tickets?.categoryId || config.ticketCategoryId,
         supportRoleId: config.tickets?.supportRoleId || config.ticketRole,
+        allowTranscripts: config.tickets?.allowTranscripts !== false,
+        allowUserAdding: config.tickets?.allowUserAdding !== false,
+        allowClaiming: config.tickets?.allowClaiming !== false,
+        closeInactivityDays: Number(config.tickets?.closeInactivityDays ?? config.tickets?.autoCloseDays ?? 0),
+        autoCloseDays: Number(config.tickets?.autoCloseDays ?? config.tickets?.closeInactivityDays ?? 0),
     };
+}
+
+async function getGuildTicketConfig(guildId) {
+    return getTicketConfig(await getGuildSettings(guildId));
 }
 
 function createTicketControls(state = 'open') {
@@ -129,6 +131,31 @@ function createSafeTicketName(user) {
     return `ticket-${safeName || user.id}`;
 }
 
+function formatTicketRelative(timestamp) {
+    return timestamp ? `<t:${Math.floor(Number(timestamp) / 1000)}:R>` : 'Unknown';
+}
+
+function createTicketHeaderEmbed(record = {}, options = {}) {
+    const status = record.status || options.status || 'open';
+    const fields = [
+        { name: 'Ticket #', value: record.channelId ? `<#${record.channelId}>` : options.channelName || 'Pending', inline: true },
+        { name: 'Opened by', value: record.openerId ? `<@${record.openerId}>` : 'Unknown', inline: true },
+        { name: 'Claimed by', value: record.claimedById ? `<@${record.claimedById}>` : 'Unclaimed', inline: true },
+        { name: 'Status', value: status, inline: true },
+        { name: 'Priority', value: record.priority || 'normal', inline: true },
+        { name: 'Created', value: formatTicketRelative(record.createdAt), inline: true },
+        record.tags?.length ? { name: 'Tags', value: record.tags.join(', ') } : null,
+        record.closeReason ? { name: 'Close reason', value: record.closeReason } : null,
+    ].filter(Boolean);
+
+    return createEmbed({
+        title: options.title || `Ticket ${status}`,
+        description: options.description || 'Ticket metadata and controls are persisted for restart-safe management.',
+        color: options.color || (status === 'closed' ? 'red' : 'green'),
+        fields,
+    });
+}
+
 function createCloseTicketModal() {
     return new ModalBuilder()
         .setCustomId(customIds.closeModal)
@@ -201,19 +228,14 @@ async function createTicketPanel(interaction, ticketChannel, ticketRole, ticketC
         components: createPanelControls(),
     });
 
-    updateConfig(config => {
-        config.tickets = {
-            channelId: ticketChannel.id,
-            messageId: message.id,
-            categoryId: ticketCategory.id,
-            supportRoleId: ticketRole.id,
-        };
-
-        delete config.ticketMessageID;
-        delete config.ticketChannelId;
-        delete config.ticketCategoryId;
-        delete config.ticketRole;
-        return config;
+    await updateTicketSettings(interaction.guild.id, {
+        channelId: ticketChannel.id,
+        messageId: message.id,
+        categoryId: ticketCategory.id,
+        supportRoleId: ticketRole.id,
+    }, {
+        actorId: interaction.user.id,
+        source: 'command',
     });
 
     await sendLog(interaction.guild, {
@@ -236,7 +258,7 @@ async function createTicketPanel(interaction, ticketChannel, ticketRole, ticketC
 }
 
 async function openTicket(interaction) {
-    const ticketConfig = getTicketConfig();
+    const ticketConfig = await getGuildTicketConfig(interaction.guild.id);
     if (!ticketConfig.categoryId || !ticketConfig.supportRoleId) {
         return interaction.reply({ content: language.tickets.missingSetup, flags: 64 });
     }
@@ -274,23 +296,7 @@ async function openTicket(interaction) {
         ],
     });
 
-    const ticketEmbed = createEmbed({
-        title: language.tickets.createdTitle,
-        description: language.tickets.createdDescription,
-        color: 'green',
-        fields: [
-            { name: 'Opened by', value: `<@${interaction.user.id}>`, inline: true },
-            { name: 'Support role', value: `<@&${ticketConfig.supportRoleId}>`, inline: true },
-        ],
-    });
-
-    await newChannel.send({
-        content: `<@${interaction.user.id}> <@&${ticketConfig.supportRoleId}>`,
-        embeds: [ticketEmbed],
-        components: createTicketControls('open'),
-    });
-
-    await upsertTicketRecord({
+    const record = await upsertTicketRecord({
         guildId: interaction.guild.id,
         channelId: newChannel.id,
         openerId: interaction.user.id,
@@ -299,6 +305,16 @@ async function openTicket(interaction) {
         priority: 'normal',
         tags: [],
         lastActivityAt: Date.now(),
+    });
+
+    await newChannel.send({
+        content: `<@${interaction.user.id}> <@&${ticketConfig.supportRoleId}>`,
+        embeds: [createTicketHeaderEmbed(record, {
+            title: language.tickets.createdTitle,
+            description: language.tickets.createdDescription,
+            color: 'green',
+        })],
+        components: createTicketControls('open'),
     });
 
     await sendLog(interaction.guild, {
@@ -441,7 +457,7 @@ function getTranscriptUrl(transcript) {
 }
 
 async function sendTicketTranscript(interaction) {
-    const ticketConfig = getTicketConfig();
+    const ticketConfig = await getGuildTicketConfig(interaction.guild.id);
     const channel = interaction.channel;
 
     if (!channel?.name?.startsWith('ticket-') && !channel?.name?.startsWith('closed-')) {
@@ -461,7 +477,7 @@ async function sendTicketTranscript(interaction) {
 }
 
 async function addTicketUser(interaction, user) {
-    const ticketConfig = getTicketConfig();
+    const ticketConfig = await getGuildTicketConfig(interaction.guild.id);
     const channel = interaction.channel;
 
     if (!channel?.name?.startsWith('ticket-') && !channel?.name?.startsWith('closed-')) {
@@ -494,7 +510,7 @@ async function addTicketUser(interaction, user) {
 }
 
 async function claimTicket(interaction) {
-    const ticketConfig = getTicketConfig();
+    const ticketConfig = await getGuildTicketConfig(interaction.guild.id);
     const channel = interaction.channel;
 
     if (!channel?.name?.startsWith('ticket-') && !channel?.name?.startsWith('closed-')) {
@@ -528,7 +544,7 @@ async function claimTicket(interaction) {
 }
 
 async function unclaimTicket(interaction) {
-    const ticketConfig = getTicketConfig();
+    const ticketConfig = await getGuildTicketConfig(interaction.guild.id);
     const channel = interaction.channel;
 
     if (!channel?.name?.startsWith('ticket-') && !channel?.name?.startsWith('closed-')) {
@@ -551,7 +567,7 @@ async function unclaimTicket(interaction) {
 }
 
 async function setTicketPriority(interaction, priority) {
-    const ticketConfig = getTicketConfig();
+    const ticketConfig = await getGuildTicketConfig(interaction.guild.id);
     const channel = interaction.channel;
 
     if (!channel?.name?.startsWith('ticket-') && !channel?.name?.startsWith('closed-')) {
@@ -573,7 +589,7 @@ async function setTicketPriority(interaction, priority) {
 }
 
 async function setTicketTags(interaction, tags) {
-    const ticketConfig = getTicketConfig();
+    const ticketConfig = await getGuildTicketConfig(interaction.guild.id);
     const channel = interaction.channel;
 
     if (!channel?.name?.startsWith('ticket-') && !channel?.name?.startsWith('closed-')) {
@@ -607,18 +623,13 @@ async function showTicketStatus(interaction) {
     if (!record) return interaction.reply({ content: 'No ticket metadata was found for this channel.', flags: 64 });
 
     return interaction.reply({
-        content: [
-            `Status: ${record.status}`,
-            `Priority: ${record.priority}`,
-            `Claimed by: ${record.claimedById ? `<@${record.claimedById}>` : 'Unclaimed'}`,
-            `Tags: ${record.tags?.length ? record.tags.join(', ') : 'None'}`,
-        ].join('\n'),
+        embeds: [createTicketHeaderEmbed(record, { title: 'Ticket Status', color: 'blue' })],
         flags: 64,
     });
 }
 
 async function listTickets(interaction) {
-    const ticketConfig = getTicketConfig();
+    const ticketConfig = await getGuildTicketConfig(interaction.guild.id);
     if (!userCanManageTicket(interaction, ticketConfig)) {
         return interaction.reply({ content: language.tickets.noPermission, flags: 64 });
     }
@@ -629,6 +640,7 @@ async function listTickets(interaction) {
         record.status,
         record.priority,
         record.claimedById ? `claimed by <@${record.claimedById}>` : 'unclaimed',
+        record.createdAt ? `opened <t:${Math.floor(record.createdAt / 1000)}:R>` : '',
         record.tags?.length ? `[${record.tags.join(', ')}]` : '',
     ].filter(Boolean).join(' - '));
 
@@ -646,7 +658,7 @@ async function touchTicketActivity(message) {
 }
 
 async function removeTicketUser(interaction, user) {
-    const ticketConfig = getTicketConfig();
+    const ticketConfig = await getGuildTicketConfig(interaction.guild.id);
     const channel = interaction.channel;
 
     if (!channel?.name?.startsWith('ticket-') && !channel?.name?.startsWith('closed-')) {
@@ -677,7 +689,7 @@ async function removeTicketUser(interaction, user) {
 }
 
 async function renameTicket(interaction, name) {
-    const ticketConfig = getTicketConfig();
+    const ticketConfig = await getGuildTicketConfig(interaction.guild.id);
     const channel = interaction.channel;
 
     if (!channel?.name?.startsWith('ticket-') && !channel?.name?.startsWith('closed-')) {
@@ -719,7 +731,7 @@ async function renameTicket(interaction, name) {
 }
 
 async function closeTicket(interaction, options = {}) {
-    const ticketConfig = getTicketConfig();
+    const ticketConfig = await getGuildTicketConfig(interaction.guild.id);
     const channel = interaction.channel;
 
     if (!channel?.name?.startsWith('ticket-')) {
@@ -756,7 +768,7 @@ async function closeTicket(interaction, options = {}) {
     await channel.setName(channel.name.replace('ticket-', 'closed-'));
     const closedAt = Date.now();
     const closeReason = options.reason?.trim() || null;
-    await upsertTicketRecord({
+    const record = await upsertTicketRecord({
         guildId: interaction.guild.id,
         channelId: channel.id,
         status: 'closed',
@@ -765,14 +777,10 @@ async function closeTicket(interaction, options = {}) {
         lastActivityAt: closedAt,
     });
 
-    const closedEmbed = createEmbed({
+    const closedEmbed = createTicketHeaderEmbed(record, {
         title: language.tickets.closedTitle,
-        description: language.tickets.closedDescription,
+        description: `${language.tickets.closedDescription}\n\nClosed by <@${interaction.user.id}>.`,
         color: 'red',
-        fields: [
-            { name: 'Closed by', value: `<@${interaction.user.id}>` },
-            closeReason ? { name: 'Reason', value: closeReason } : null,
-        ].filter(Boolean),
     });
 
     await sendLog(interaction.guild, {
@@ -873,7 +881,7 @@ async function handleTicketModal(interaction) {
 }
 
 async function deleteTicket(interaction) {
-    const ticketConfig = getTicketConfig();
+    const ticketConfig = await getGuildTicketConfig(interaction.guild.id);
     const channel = interaction.channel;
 
     if (!channel?.name?.startsWith('closed-')) {
@@ -904,44 +912,43 @@ async function deleteTicket(interaction) {
 }
 
 async function autoCloseInactiveTickets(client) {
-    const config = getConfig();
-    const days = Number(config.tickets?.autoCloseDays || 0);
-    if (!days) return { closed: 0 };
-
-    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
-    const records = await listTicketRecords(config.guildId, 500);
-    const ticketConfig = getTicketConfig(config);
-
     let closed = 0;
-    for (const record of records.filter(item => item.status === 'open' && Number(item.lastActivityAt || item.createdAt || 0) <= cutoff)) {
-        const guild = client.guilds.cache.get(record.guildId);
-        if (!guild) continue;
-        const channel = await guild.channels.fetch(record.channelId).catch(() => null);
-        if (!channel?.name?.startsWith('ticket-')) continue;
+    for (const guild of client.guilds.cache.values()) {
+        const ticketConfig = await getGuildTicketConfig(guild.id);
+        const days = Number(ticketConfig.autoCloseDays || ticketConfig.closeInactivityDays || 0);
+        if (!days) continue;
 
-        const overwrites = [
-            {
-                id: guild.roles.everyone,
-                deny: [PermissionsBitField.Flags.ViewChannel],
-            },
-        ];
+        const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+        const records = await listTicketRecords(guild.id, 500);
 
-        if (record.openerId) {
-            overwrites.push({ id: record.openerId, deny: [PermissionsBitField.Flags.ViewChannel] });
+        for (const record of records.filter(item => item.status === 'open' && Number(item.lastActivityAt || item.createdAt || 0) <= cutoff)) {
+            const channel = await guild.channels.fetch(record.channelId).catch(() => null);
+            if (!channel?.name?.startsWith('ticket-')) continue;
+
+            const overwrites = [
+                {
+                    id: guild.roles.everyone,
+                    deny: [PermissionsBitField.Flags.ViewChannel],
+                },
+            ];
+
+            if (record.openerId) {
+                overwrites.push({ id: record.openerId, deny: [PermissionsBitField.Flags.ViewChannel] });
+            }
+
+            if (ticketConfig.supportRoleId) {
+                overwrites.push({
+                    id: ticketConfig.supportRoleId,
+                    allow: [PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.ReadMessageHistory],
+                });
+            }
+
+            await channel.permissionOverwrites.set(overwrites).catch(() => null);
+            await channel.setName(channel.name.replace('ticket-', 'closed-')).catch(() => null);
+            await upsertTicketRecord({ ...record, status: 'closed', lastActivityAt: Date.now() });
+            await channel.send(`Ticket auto-closed after ${days} day(s) of inactivity.`).catch(() => null);
+            closed += 1;
         }
-
-        if (ticketConfig.supportRoleId) {
-            overwrites.push({
-                id: ticketConfig.supportRoleId,
-                allow: [PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.ReadMessageHistory],
-            });
-        }
-
-        await channel.permissionOverwrites.set(overwrites).catch(() => null);
-        await channel.setName(channel.name.replace('ticket-', 'closed-')).catch(() => null);
-        await upsertTicketRecord({ ...record, status: 'closed', lastActivityAt: Date.now() });
-        await channel.send(`Ticket auto-closed after ${days} day(s) of inactivity.`).catch(() => null);
-        closed += 1;
     }
 
     return { closed };
@@ -962,12 +969,14 @@ module.exports = {
     closeTicket,
     createCloseTicketModal,
     createRenameTicketModal,
+    createTicketHeaderEmbed,
     createTicketPanel,
     createTicketControls,
     customIds,
     deleteTicket,
     fetchTranscriptMessages,
     formatTranscriptLine,
+    getGuildTicketConfig,
     getTicketConfig,
     handleTicketButton,
     handleTicketModal,

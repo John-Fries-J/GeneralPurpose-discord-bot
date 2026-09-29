@@ -3,7 +3,7 @@ const path = require('node:path');
 const Database = require('better-sqlite3');
 const { getConfig } = require('../utils/config');
 
-const schemaVersion = 1;
+const schemaVersion = 2;
 
 let cached = null;
 
@@ -337,6 +337,65 @@ function runMigrations(db) {
             updated_at INTEGER NOT NULL,
             PRIMARY KEY (guild_id, message_id)
         );
+    `);
+
+    applyMigration(db, 2, 'guild_configuration_schema', `
+        CREATE TABLE guild_settings (
+            guild_id TEXT NOT NULL,
+            section TEXT NOT NULL,
+            setting_key TEXT NOT NULL,
+            value_json TEXT NOT NULL,
+            updated_by TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (guild_id, section, setting_key)
+        );
+        CREATE INDEX idx_guild_settings_section ON guild_settings(guild_id, section);
+
+        CREATE TABLE guild_log_channels (
+            guild_id TEXT NOT NULL,
+            log_key TEXT NOT NULL,
+            channel_id TEXT NOT NULL DEFAULT '',
+            updated_by TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (guild_id, log_key)
+        );
+
+        CREATE TABLE guild_level_rewards (
+            guild_id TEXT NOT NULL,
+            role_id TEXT NOT NULL,
+            xp INTEGER NOT NULL,
+            updated_by TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (guild_id, role_id)
+        );
+        CREATE INDEX idx_guild_level_rewards_guild_xp ON guild_level_rewards(guild_id, xp);
+
+        CREATE TABLE guild_config_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            guild_id TEXT NOT NULL,
+            actor_id TEXT,
+            section TEXT NOT NULL,
+            setting_key TEXT NOT NULL,
+            previous_value TEXT NOT NULL,
+            new_value TEXT NOT NULL,
+            source TEXT NOT NULL,
+            created_at INTEGER NOT NULL
+        );
+        CREATE INDEX idx_guild_config_audit_guild_created ON guild_config_audit(guild_id, created_at);
+        CREATE INDEX idx_guild_config_audit_section ON guild_config_audit(guild_id, section, created_at);
+    `);
+
+    applyMigration(db, 3, 'dashboard_query_indexes', `
+        CREATE INDEX IF NOT EXISTS idx_scheduled_messages_guild_scheduled ON scheduled_messages(guild_id, scheduled_for);
+        CREATE INDEX IF NOT EXISTS idx_tickets_guild_updated ON tickets(guild_id, updated_at);
+        CREATE INDEX IF NOT EXISTS idx_ticket_transcripts_guild_created ON ticket_transcripts(guild_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_temp_voice_guild_created ON temporary_voice_channels(guild_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_user_history_guild_created ON user_history(guild_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_embed_templates_guild_name ON embed_templates(guild_id, name);
+        CREATE INDEX IF NOT EXISTS idx_moderation_cases_guild_id ON moderation_cases(guild_id, id);
     `);
 }
 

@@ -1,5 +1,6 @@
-const { EmbedBuilder } = require('discord.js');
+const { ChannelType, EmbedBuilder } = require('discord.js');
 const { appendDashboardLog } = require('./dashboardLogs');
+const { safeErrorMessage } = require('./redaction');
 const { listDueScheduledMessages, updateScheduledMessageStatus } = require('./store');
 
 function buildScheduledPayload(record) {
@@ -25,8 +26,17 @@ function buildScheduledPayload(record) {
 }
 
 async function dispatchScheduledMessage(client, record) {
-    const channel = await client.channels.fetch(record.channelId).catch(() => null);
-    if (!channel?.send) {
+    const guild = client.guilds?.cache?.get?.(record.guildId);
+    if (!guild) {
+        throw new Error('Scheduled message guild is unavailable.');
+    }
+
+    const channel = guild.channels?.cache?.get?.(record.channelId)
+        || await guild.channels?.fetch?.(record.channelId).catch(() => null);
+    if (!channel || channel.guildId !== record.guildId) {
+        throw new Error('Scheduled message channel is not part of the expected guild.');
+    }
+    if (![ChannelType.GuildAnnouncement, ChannelType.GuildText].includes(channel.type) || !channel.send) {
         throw new Error('Channel is not sendable or could not be fetched.');
     }
 
@@ -46,8 +56,9 @@ async function runScheduledMessages(client) {
             appendDashboardLog('Scheduled message sent', { channelId: record.channelId, scheduledMessageId: record.id });
             sent += 1;
         } catch (error) {
-            await updateScheduledMessageStatus(record.id, 'failed', error.message);
-            appendDashboardLog('Scheduled message failed', { channelId: record.channelId, scheduledMessageId: record.id, error: error.message });
+            const message = safeErrorMessage(error, 'Scheduled message failed.');
+            await updateScheduledMessageStatus(record.id, 'failed', message);
+            appendDashboardLog('Scheduled message failed', { channelId: record.channelId, scheduledMessageId: record.id, error: message });
             failed += 1;
         }
     }

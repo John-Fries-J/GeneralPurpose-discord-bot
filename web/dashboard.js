@@ -1,5 +1,4 @@
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const path = require('node:path');
 const express = require('express');
 const { ChannelType, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
@@ -8,13 +7,47 @@ const { validateConfig } = require('../utils/configValidation');
 const { appendDashboardLog, clearDashboardLogs, readDashboardLogs } = require('../utils/dashboardLogs');
 const { getCommandSettings } = require('../utils/features');
 const language = require('../utils/language');
+const { getQueueSummary } = require('../utils/music');
 const { getCommandAccess, normalizeIdList } = require('../utils/permissions');
-const { buildHealthReport } = require('../services/diagnostics');
+const { buildHealthReport, buildPublicHealthReport } = require('../services/diagnostics');
+const {
+    assertSafeConfigObject,
+    redactSensitiveConfig,
+    restoreProtectedConfig,
+    safeErrorMessage,
+} = require('../utils/redaction');
+const { applyDashboardSettings, parseDashboardSettings } = require('./services/dashboardConfig');
+const {
+    buildRestoredConfig,
+    createConfigBackup,
+    listConfigBackups,
+    restoreConfigBackup,
+} = require('./services/configBackups');
+const { getGuildSettings, listConfigAudit, updateGuildSettings } = require('../utils/guildConfig');
+const {
+    renderSegmented,
+    renderSelect,
+    renderSettingsForm,
+    renderTextInput,
+    renderTextarea,
+    renderToggle,
+} = require('./views/components/forms');
+const {
+    renderLoggingDashboard,
+    renderModuleDashboard,
+    renderOverviewDashboard,
+    renderTicketDashboard,
+    renderVoiceDashboard,
+} = require('./views/components/dashboardPanels');
+const { escapeHtml } = require('./views/components/html');
+const { renderPageHeader } = require('./views/components/ui');
+const { renderLayout } = require('./views/layout');
 const {
     createScheduledMessage,
     deleteEmbedTemplate,
     listCommandStats,
     listEmbedTemplates,
+    listGuildHistory,
     listModerationCases,
     listModNotes,
     listScheduledMessages,
@@ -23,22 +56,20 @@ const {
     listTicketTranscripts,
     listVoiceActivity,
     getTicketTranscript,
-    readState,
     upsertEmbedTemplate,
 } = require('../utils/store');
 
 const states = new Map();
 const sessionMaxAgeMs = 30 * 24 * 60 * 60 * 1000;
-const redactedSecret = '[redacted]';
-const sensitiveKeys = new Set(['token', 'apiKey', 'clientSecret', 'client_secret', 'password', 'secret']);
+const maxOAuthStates = 500;
+const dashboardPermission = PermissionFlagsBits.Administrator;
 
-function escapeHtml(value) {
-    return String(value ?? '')
-        .replaceAll('&', '&amp;')
-        .replaceAll('<', '&lt;')
-        .replaceAll('>', '&gt;')
-        .replaceAll('"', '&quot;')
-        .replaceAll("'", '&#39;');
+function decodeCookieValue(value) {
+    try {
+        return decodeURIComponent(value);
+    } catch {
+        return '';
+    }
 }
 
 function parseCookies(header = '') {
@@ -48,7 +79,7 @@ function parseCookies(header = '') {
         .map(part => {
             const index = part.indexOf('=');
             if (index === -1) return [part, ''];
-            return [part.slice(0, index), decodeURIComponent(part.slice(index + 1))];
+            return [part.slice(0, index), decodeCookieValue(part.slice(index + 1))];
         }));
 }
 
@@ -56,6 +87,11 @@ function cleanupExpiringMaps() {
     const now = Date.now();
     for (const [state, expiresAt] of states.entries()) {
         if (expiresAt <= now) states.delete(state);
+    }
+    while (states.size > maxOAuthStates) {
+        const oldest = states.keys().next().value;
+        if (!oldest) break;
+        states.delete(oldest);
     }
 }
 
@@ -103,7 +139,9 @@ function createSessionToken(session) {
 
 function verifySessionToken(token) {
     if (!token || !token.includes('.')) return null;
-    const [payload, signature] = token.split('.');
+    const parts = token.split('.');
+    if (parts.length !== 2) return null;
+    const [payload, signature] = parts;
     const expectedSignature = signValue(payload);
 
     try {
@@ -138,56 +176,75 @@ function requireCsrf(req, res, next) {
     return next();
 }
 
-function isSensitiveKey(key) {
-    return sensitiveKeys.has(String(key));
-}
-
-function redactSensitiveConfig(value, key = '') {
-    if (Array.isArray(value)) {
-        return value.map(item => redactSensitiveConfig(item));
-    }
-
-    if (value && typeof value === 'object') {
-        return Object.fromEntries(Object.entries(value).map(([childKey, childValue]) => [
-            childKey,
-            redactSensitiveConfig(childValue, childKey),
-        ]));
-    }
-
-    if (isSensitiveKey(key) && typeof value === 'string' && value) {
-        return redactedSecret;
-    }
-
-    return value;
-}
-
 function restoreRedactedSecrets(submitted, current) {
-    if (Array.isArray(submitted)) {
-        return submitted.map((item, index) => restoreRedactedSecrets(item, current?.[index]));
-    }
-
-    if (submitted && typeof submitted === 'object') {
-        return Object.fromEntries(Object.entries(submitted).map(([key, value]) => [
-            key,
-            restoreRedactedSecrets(value, current?.[key]),
-        ]));
-    }
-
-    if (submitted === redactedSecret) {
-        return current ?? '';
-    }
-
-    return submitted;
+    return restoreProtectedConfig(submitted, current);
 }
 
 function csrfInput(session) {
     return `<input type="hidden" name="_csrf" value="${escapeHtml(session.csrfToken)}">`;
 }
 
+function getConfiguredDashboardAdminUserIds(config = getConfig()) {
+    return new Set(normalizeIdList(config.devs));
+}
+
+async function userCanAdminDashboard(client, userId, guild) {
+    if (!userId || !guild?.id) return false;
+    const config = getConfig();
+    if (getConfiguredDashboardAdminUserIds(config).has(userId)) return true;
+    if (guild.ownerId === userId) return true;
+
+    const member = await guild.members?.fetch?.(userId).catch(() => null);
+    if (!member) return false;
+    if (member.permissions?.has?.(dashboardPermission)) return true;
+    return false;
+}
+
+function requireDashboardAdmin(client) {
+    return async (req, res, next) => {
+        const guild = getDashboardGuild(client);
+        const userId = req.dashboardSession?.user?.id;
+        if (!guild || !await userCanAdminDashboard(client, userId, guild)) {
+            appendDashboardLog('Dashboard authorization denied', { guildId: guild?.id, userId });
+            return res.status(403).send('You are not allowed to manage this dashboard.');
+        }
+
+        req.dashboardGuild = guild;
+        return next();
+    };
+}
+
+function wantsJson(req) {
+    return req.get('x-dashboard-async') === '1' || req.accepts(['json', 'html']) === 'json';
+}
+
+function sendSettingsError(req, res, client, error) {
+    const message = safeErrorMessage(error, 'Settings were not saved.');
+    if (wantsJson(req)) {
+        return res.status(400).json({ ok: false, message });
+    }
+
+    return res.status(400).send(renderLayout('Settings not saved', `<section class="panel"><h2>Settings not saved</h2><p>${escapeHtml(message)}</p><p>Use the browser back button to keep editing.</p></section>`, req.dashboardSession.user, client));
+}
+
+function dashboardSettingsPage(section) {
+    return {
+        modules: '/modules',
+        welcome: '/community',
+        logging: '/config',
+        tickets: '/tickets',
+        joinToCreate: '/voice',
+        leveling: '/leveling',
+        moderation: '/moderation',
+        music: '/music',
+    }[section] || '/config';
+}
+
 function makeDiscordOauthUrl(settings) {
     cleanupExpiringMaps();
     const state = crypto.randomBytes(24).toString('hex');
     states.set(state, Date.now() + 10 * 60 * 1000);
+    cleanupExpiringMaps();
 
     const redirectUri = settings.oauth.redirectUri || `${settings.publicUrl.replace(/\/$/, '')}/auth/discord/callback`;
     const params = new URLSearchParams({
@@ -233,15 +290,21 @@ async function fetchDiscordUser(accessToken) {
     };
 }
 
-function canManageDashboard(discordUser, guilds, settings) {
+async function canManageDashboard(discordUser, guilds, settings, client) {
     const config = getConfig();
-    if (config.devs?.includes(discordUser.id)) return true;
+    if (getConfiguredDashboardAdminUserIds(config).has(discordUser.id)) return true;
 
     const guild = guilds.find(item => item.id === settings.guildId);
     if (!guild) return false;
+    if (guild.owner === true) return true;
 
     const permissions = BigInt(guild.permissions || 0);
-    return (permissions & PermissionFlagsBits.ManageGuild) === PermissionFlagsBits.ManageGuild;
+    if ((permissions & dashboardPermission) === dashboardPermission) return true;
+
+    const activeGuild = client ? getDashboardGuild(client) : null;
+    return activeGuild?.id === settings.guildId
+        ? userCanAdminDashboard(client, discordUser.id, activeGuild)
+        : false;
 }
 
 async function canViewTranscript(client, session, transcript) {
@@ -258,7 +321,8 @@ async function canViewTranscript(client, session, transcript) {
         return true;
     }
 
-    const supportRoleId = config.tickets?.supportRoleId || config.ticketRole;
+    const guildConfig = await getGuildSettings(transcript.guildId);
+    const supportRoleId = guildConfig.tickets?.supportRoleId || config.tickets?.supportRoleId || config.ticketRole;
     return Boolean(supportRoleId && member.roles?.cache?.has(supportRoleId));
 }
 
@@ -283,10 +347,6 @@ function slug(value) {
     return String(value || 'section').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase();
 }
 
-function getBotAvatar(client) {
-    return client?.user?.displayAvatarURL?.({ extension: 'png', size: 64 }) || '';
-}
-
 function getDashboardGuild(client) {
     const settings = getDashboardConfig();
     return settings.guildId ? client.guilds?.cache?.get(settings.guildId) : client.guilds?.cache?.first?.();
@@ -303,6 +363,41 @@ function getSendableChannels(client) {
         .sort((a, b) => a.rawPosition - b.rawPosition || a.name.localeCompare(b.name));
 }
 
+function getGuildChannels(client) {
+    const guild = getDashboardGuild(client);
+    if (!guild?.channels?.cache) return [];
+
+    return [...guild.channels.cache.values()]
+        .filter(channel => channel?.id && channel?.name)
+        .sort((a, b) => (a.rawPosition ?? 0) - (b.rawPosition ?? 0) || a.name.localeCompare(b.name));
+}
+
+function channelLabel(channel) {
+    if (channel.type === ChannelType.GuildCategory) return `[category] ${channel.name}`;
+    if (channel.type === ChannelType.GuildVoice || channel.type === ChannelType.GuildStageVoice) return `[voice] ${channel.name}`;
+    if (channel.type === ChannelType.GuildAnnouncement) return `# ${channel.name} (announcement)`;
+    return `# ${channel.name}`;
+}
+
+function channelOptions(channels, types) {
+    const allowed = new Set(types);
+    return channels
+        .filter(channel => allowed.has(channel.type))
+        .map(channel => ({ value: channel.id, label: channelLabel(channel) }));
+}
+
+function roleOptions(roles) {
+    return roles.map(role => ({ value: role.id, label: `@${role.name}` }));
+}
+
+function resolveUserLabel(client, guild, userId) {
+    if (!userId) return 'System';
+    const member = guild?.members?.cache?.get?.(userId);
+    if (member) return member.displayName || member.user?.tag || userId;
+    const user = client.users?.cache?.get?.(userId);
+    return user?.tag || user?.username || userId;
+}
+
 function getGuildRoles(client) {
     const guild = getDashboardGuild(client);
     if (!guild?.roles?.cache) return [];
@@ -310,6 +405,42 @@ function getGuildRoles(client) {
     return [...guild.roles.cache.values()]
         .filter(role => role.id !== guild.id)
         .sort((a, b) => b.position - a.position || a.name.localeCompare(b.name));
+}
+
+function channelBelongsToGuild(channel, guild) {
+    return Boolean(channel && guild?.id && (channel.guildId === guild.id || channel.guild?.id === guild.id));
+}
+
+function botCanSend(channel, guild) {
+    if (!channel?.send) return false;
+    const botMember = guild?.members?.me;
+    if (!channel.permissionsFor || !botMember) return true;
+    const permissions = channel.permissionsFor(botMember);
+    return permissions?.has?.(PermissionFlagsBits.ViewChannel) !== false
+        && permissions?.has?.(PermissionFlagsBits.SendMessages) !== false;
+}
+
+async function resolveDashboardChannel(guild, channelId, {
+    label = 'Channel',
+    types = [],
+    requireSendable = false,
+} = {}) {
+    const id = String(channelId || '').trim();
+    if (!id) throw new Error(`${label} is required.`);
+
+    const channel = guild?.channels?.cache?.get?.(id)
+        || await guild?.channels?.fetch?.(id).catch(() => null);
+    if (!channel || !channelBelongsToGuild(channel, guild)) {
+        throw new Error(`${label} is not part of this server.`);
+    }
+    if (types.length && !types.includes(channel.type)) {
+        throw new Error(`${label} has the wrong channel type.`);
+    }
+    if (requireSendable && !botCanSend(channel, guild)) {
+        throw new Error(`${label} is not sendable by the bot.`);
+    }
+
+    return channel;
 }
 
 function getLanguageSectionsForCategory(category) {
@@ -410,172 +541,6 @@ function getEditableLanguageValues(source) {
     return editable;
 }
 
-function renderLayout(title, body, user = null, client = null, active = 'overview') {
-    const avatar = getBotAvatar(client);
-    const botName = client?.user?.username || 'Bot Dashboard';
-    const navItems = [
-        ['overview', 'Overview', '/'],
-        ['audit', 'Audit', '/audit'],
-        ['analytics', 'Analytics', '/analytics'],
-        ['health', 'Health', '/health-page'],
-        ['modules', 'Modules', '/modules'],
-        ['commands', 'Commands', '/commands'],
-        ['moderation', 'Moderation', '/moderation'],
-        ['tickets', 'Tickets', '/tickets'],
-        ['community', 'Community', '/community'],
-        ['leveling', 'Leveling', '/leveling'],
-        ['voice', 'Voice', '/voice'],
-        ['media', 'Media', '/media'],
-        ['music', 'Music', '/music'],
-        ['language', 'Language', '/language'],
-        ['sender', 'Sender', '/sender'],
-        ['config', 'Config', '/config'],
-        ['backups', 'Backups', '/backups'],
-        ['logs', 'Logs', '/logs'],
-    ];
-
-    return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(title)}</title>
-${avatar ? `<link rel="icon" href="${escapeHtml(avatar)}">` : ''}
-<script>
-const savedTheme = localStorage.getItem('dashboard-theme');
-const systemDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-document.documentElement.dataset.theme = savedTheme || (systemDark ? 'dark' : 'light');
-</script>
-<style>
-:root{color-scheme:light;--bg:#f4f7fb;--panel:#ffffff;--panel-2:#f8fafc;--text:#172033;--muted:#667085;--line:#dde5ef;--brand:#5865f2;--brand-2:#0f766e;--danger:#b42318;--shadow:0 16px 40px rgba(15,23,42,.08)}
-:root[data-theme="dark"]{color-scheme:dark;--bg:#0b1120;--panel:#111827;--panel-2:#182235;--text:#eef4ff;--muted:#a6b0c3;--line:#2c374a;--brand:#8ea2ff;--brand-2:#2dd4bf;--danger:#fb7185;--shadow:0 18px 48px rgba(0,0,0,.32)}
-*{box-sizing:border-box}
-body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:var(--bg);color:var(--text)}
-a{color:inherit;text-decoration:none}
-.shell{min-height:100vh;display:grid;grid-template-columns:260px minmax(0,1fr)}
-.sidebar{position:sticky;top:0;height:100vh;padding:22px;background:#111827;color:white;display:flex;flex-direction:column;gap:22px}
-.brand{display:flex;align-items:center;gap:12px}
-.brand img{width:44px;height:44px;border-radius:8px;background:#273449}
-.brand strong{font-size:15px;display:block}
-.brand span{font-size:12px;color:#b9c2d3}
-.nav{display:grid;gap:6px}
-.nav a{padding:10px 12px;border-radius:8px;color:#d8dee9;font-size:14px}
-.nav a:hover,.nav a.active{background:#243044;color:white}
-.userbox{margin-top:auto;border-top:1px solid #2c374a;padding-top:16px;font-size:13px;color:#d8dee9}
-.userline{display:flex;align-items:center;justify-content:space-between;gap:12px}
-.content{min-width:0;padding:28px}
-.topbar{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;margin-bottom:22px}
-h1{margin:0;font-size:28px;letter-spacing:0}
-h2{margin:0 0 12px;font-size:18px;letter-spacing:0}
-h3{margin:0;font-size:15px;letter-spacing:0}
-p{line-height:1.55}
-.muted{color:var(--muted)}
-.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:16px}
-.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:18px;box-shadow:var(--shadow);margin-bottom:16px}
-.metric{grid-column:span 3;min-height:116px}
-.wide{grid-column:span 8}.side{grid-column:span 4}.full{grid-column:1/-1}
-.metric span{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
-.metric strong{display:block;margin-top:12px;font-size:28px}
-.row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid #edf2f7}
-.row:last-child{border-bottom:0}
-.module-card{scroll-margin-top:18px}
-.module-card.is-collapsed .module-body{display:none}
-.module-head{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:12px}
-.module-link{display:block;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--panel-2)}
-.module-link strong{display:block;margin-bottom:4px}.module-link:hover{border-color:var(--brand);transform:translateY(-1px)}
-.command{border:1px solid var(--line);border-radius:8px;padding:12px;margin:10px 0;background:var(--panel)}
-.command.is-hidden{display:none}
-.command-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
-.command-title{font-family:Consolas,monospace;font-size:14px}
-.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0}.toolbar input{max-width:340px}
-.access-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:12px}
-label{display:grid;gap:6px;font-size:13px;color:var(--text)}
-input,select,textarea{width:100%;border:1px solid #cfd8e3;border-radius:8px;padding:9px 10px;font:inherit;background:white;color:var(--text)}
-:root[data-theme="dark"] input,:root[data-theme="dark"] select,:root[data-theme="dark"] textarea{background:#0f172a;border-color:#344154;color:var(--text)}
-textarea{min-height:120px;font-family:Consolas,monospace;font-size:13px;resize:vertical}
-.config-json{min-height:420px}
-input[type="checkbox"]{width:20px;height:20px;accent-color:var(--brand)}
-button,.button{display:inline-flex;align-items:center;justify-content:center;gap:8px;background:#111827;color:white;border:0;border-radius:8px;padding:9px 13px;text-decoration:none;cursor:pointer;font-weight:600}
-button.secondary,.button.secondary{background:#eef2f7;color:#182235}:root[data-theme="dark"] button.secondary,:root[data-theme="dark"] .button.secondary{background:#243044;color:#eef4ff}
-button.success{background:var(--brand-2)}
-button.danger{background:var(--danger)}
-.button.ghost{background:transparent;color:#d8dee9;border:1px solid #3a4557}
-.pillrow{display:flex;flex-wrap:wrap;gap:8px}
-.pill{display:inline-flex;align-items:center;padding:5px 8px;border-radius:999px;background:#eef2ff;color:#30377a;font-size:12px;border:0}:root[data-theme="dark"] .pill{background:#25304d;color:#dbe5ff}
-.log{font-family:Consolas,monospace;font-size:12px;background:#101828;color:#d9e1ee;padding:12px;border-radius:8px;overflow:auto;max-height:360px}
-.log-entry{padding:7px 0;border-bottom:1px solid #263144}
-.notice{border-left:4px solid var(--brand);background:#eef2ff;padding:12px;border-radius:8px;margin-bottom:16px}:root[data-theme="dark"] .notice{background:#172554}
-.preview{border:1px solid var(--line);border-radius:8px;background:var(--panel-2);padding:12px;margin-top:12px}.preview-title{font-weight:700;margin-bottom:6px}.preview-body{white-space:pre-wrap;color:var(--muted)}
-.split-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.auth-card{max-width:520px;margin:12vh auto;background:white;border:1px solid var(--line);border-radius:8px;padding:24px;box-shadow:var(--shadow)}
-@media (max-width:960px){.shell{grid-template-columns:1fr}.sidebar{position:relative;height:auto}.content{padding:18px}.metric,.wide,.side{grid-column:1/-1}.access-grid{grid-template-columns:1fr}.topbar{display:block}}
-</style>
-</head>
-<body>
-<div class="shell">
-<aside class="sidebar">
-<div class="brand">${avatar ? `<img src="${escapeHtml(avatar)}" alt="">` : ''}<div><strong>${escapeHtml(botName)}</strong><span>Control dashboard</span></div></div>
-<nav class="nav">${navItems.map(([key, label, href]) => `<a class="${active === key ? 'active' : ''}" href="${href}">${escapeHtml(label)}</a>`).join('')}</nav>
-<button class="button ghost" type="button" data-theme-toggle>Toggle theme</button>
-<div class="userbox">${user ? `<div class="userline"><span>${escapeHtml(user.username)}</span><a class="button ghost" href="/logout">Log out</a></div>` : '<a class="button" href="/login">Log in with Discord</a>'}</div>
-</aside>
-<main class="content">${body}</main>
-</div>
-<script>
-document.querySelectorAll('[data-command-search]').forEach(input => {
-    input.addEventListener('input', () => {
-        const root = document.querySelector(input.dataset.commandSearch);
-        if (!root) return;
-        const query = input.value.trim().toLowerCase();
-        root.querySelectorAll('.command').forEach(command => {
-            command.classList.toggle('is-hidden', query && !command.textContent.toLowerCase().includes(query));
-        });
-    });
-});
-document.querySelector('[data-theme-toggle]')?.addEventListener('click', () => {
-    const nextTheme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
-    document.documentElement.dataset.theme = nextTheme;
-    localStorage.setItem('dashboard-theme', nextTheme);
-});
-document.querySelectorAll('[data-collapse-target]').forEach(button => {
-    button.addEventListener('click', () => {
-        const target = document.querySelector(button.dataset.collapseTarget);
-        if (!target) return;
-        target.classList.toggle('is-collapsed');
-        button.textContent = target.classList.contains('is-collapsed') ? 'Expand' : 'Collapse';
-    });
-});
-document.querySelectorAll('[data-copy]').forEach(button => {
-    button.addEventListener('click', async () => {
-        await navigator.clipboard?.writeText(button.dataset.copy);
-        button.textContent = 'Copied';
-        setTimeout(() => { button.textContent = button.dataset.copyLabel || 'Copy'; }, 900);
-    });
-});
-document.querySelector('[data-audit-filter]')?.addEventListener('input', event => {
-    const query = event.target.value.trim().toLowerCase();
-    document.querySelectorAll('[data-audit-type]').forEach(entry => {
-        entry.style.display = !query || entry.textContent.toLowerCase().includes(query) || entry.dataset.auditType.toLowerCase().includes(query) ? '' : 'none';
-    });
-});
-const messageForm = document.querySelector('[data-message-form]');
-if (messageForm) {
-    const renderPreview = () => {
-        const title = messageForm.embedTitle.value.trim() || 'Embed title';
-        const description = messageForm.embedDescription.value.trim() || 'Embed description preview';
-        const content = messageForm.content.value.trim() || 'Message content preview';
-        document.querySelector('[data-preview-content]').textContent = content;
-        document.querySelector('[data-preview-title]').textContent = title;
-        document.querySelector('[data-preview-body]').textContent = description;
-    };
-    messageForm.addEventListener('input', renderPreview);
-    renderPreview();
-}
-</script>
-</body>
-</html>`;
-}
-
 function renderLanguageEditor(section, values, session) {
     return `<form method="post" action="/language-section" class="panel">
 ${csrfInput(session)}
@@ -630,43 +595,6 @@ function renderCountRows(rows, emptyText = 'No data yet.') {
         : `<p class="muted">${escapeHtml(emptyText)}</p>`;
 }
 
-function getConfigBackupDirectory() {
-    return path.resolve(__dirname, '..', 'data', 'config-backups');
-}
-
-function listConfigBackups() {
-    const directory = getConfigBackupDirectory();
-    if (!fs.existsSync(directory)) return [];
-
-    return fs.readdirSync(directory)
-        .filter(file => /^config-\d{4}-\d{2}-\d{2}T/.test(file) && file.endsWith('.json'))
-        .map(file => {
-            const fullPath = path.join(directory, file);
-            return { file, fullPath, createdAt: fs.statSync(fullPath).mtimeMs };
-        })
-        .sort((a, b) => b.createdAt - a.createdAt);
-}
-
-function createConfigBackup(label = 'manual') {
-    const directory = getConfigBackupDirectory();
-    fs.mkdirSync(directory, { recursive: true });
-    const safeLabel = String(label || 'manual').replace(/[^a-z0-9-]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'manual';
-    const file = `config-${new Date().toISOString().replace(/[:.]/g, '-')}-${safeLabel}.json`;
-    const fullPath = path.join(directory, file);
-    fs.writeFileSync(fullPath, `${JSON.stringify(getStoredConfig(), null, 4)}\n`);
-    return file;
-}
-
-function restoreConfigBackup(file) {
-    const backup = listConfigBackups().find(item => item.file === file);
-    if (!backup) throw new Error('Backup was not found.');
-
-    const parsed = JSON.parse(fs.readFileSync(backup.fullPath, 'utf8'));
-    const errors = validateConfig(parsed);
-    if (errors.length) throw new Error(errors.join('\n'));
-    saveConfig(parsed);
-}
-
 function renderJsonEditorPanel(title, description, action, session, object) {
     return `<section class="panel">
 <h2>${escapeHtml(title)}</h2>
@@ -680,16 +608,231 @@ ${csrfInput(session)}
 }
 
 function renderConfigSectionEditor(section, title, description, session, object) {
-    return `<section class="panel">
-<h2>${escapeHtml(title)}</h2>
-<p class="muted">${escapeHtml(description)}</p>
+    return `<details class="panel advanced-json">
+<summary><span><strong>Advanced JSON: ${escapeHtml(title)}</strong><small>${escapeHtml(description)}</small></span></summary>
 <form method="post" action="/config-section">
 ${csrfInput(session)}
 <input type="hidden" name="section" value="${escapeHtml(section)}">
 <textarea class="config-json" name="json">${escapeHtml(JSON.stringify(object || {}, null, 4))}</textarea>
 <p><button class="success" type="submit">Save ${escapeHtml(title)}</button></p>
 </form>
-</section>`;
+</details>`;
+}
+
+const editableConfigSectionPages = Object.freeze({
+    autoMod: 'moderation',
+    reactionRoles: 'community',
+    rulesAgreement: 'community',
+    birthdays: 'community',
+    starboard: 'community',
+    pollTemplates: 'community',
+    youtube: 'media',
+    twitch: 'media',
+    socialAnnouncements: 'media',
+});
+
+const editableConfigSectionTypes = Object.freeze({
+    autoMod: 'object',
+    reactionRoles: 'object',
+    rulesAgreement: 'object',
+    birthdays: 'object',
+    starboard: 'object',
+    pollTemplates: 'array',
+    youtube: 'object',
+    twitch: 'object',
+    socialAnnouncements: 'object',
+});
+
+function validateConfigSectionEdit(section, value, currentConfig) {
+    const expectedType = editableConfigSectionTypes[section];
+    if (!expectedType) throw new Error('Unsupported config section.');
+
+    if (expectedType === 'array' && !Array.isArray(value)) {
+        throw new Error(`${section} must be a JSON array.`);
+    }
+    if (expectedType === 'object' && (!value || typeof value !== 'object' || Array.isArray(value))) {
+        throw new Error(`${section} must be a JSON object.`);
+    }
+
+    const candidate = { ...currentConfig, [section]: value };
+    const errors = validateConfig(candidate);
+    if (errors.length) throw new Error(errors.join('\n'));
+}
+
+function renderModuleSettingsForm(grouped, settings, session) {
+    const rows = grouped.map(([category, commands]) => renderToggle(
+        `module:${category}`,
+        humanize(category),
+        settings.modules[category] !== false,
+        `${commands.length} command${commands.length === 1 ? '' : 's'}`,
+    )).join('');
+
+    return renderSettingsForm({
+        title: 'Module Settings',
+        description: 'Enable or disable command modules without editing commandSettings JSON.',
+        section: 'modules',
+        session,
+        body: `
+<input type="hidden" name="moduleKeys" value="${escapeHtml(grouped.map(([category]) => category).join(','))}">
+<div class="settings-grid">${rows}</div>`,
+    });
+}
+
+function renderWelcomeSettingsForm(config, channels, session) {
+    const welcome = config.WelcomeEmbed || {};
+    const welcomeState = config.welcome || {
+        enabled: Boolean(config.welcomeID),
+        channelId: config.welcomeID || '',
+    };
+    return renderSettingsForm({
+        title: 'Welcome',
+        description: 'Server-specific welcome settings for the selected guild.',
+        section: 'welcome',
+        session,
+        body: `
+<div class="settings-stack">
+${renderToggle('welcomeEnabled', 'Welcome messages', welcomeState.enabled === true, 'Send a welcome embed when a member joins.')}
+<div class="settings-grid">
+${renderSelect('welcomeID', 'Welcome channel', channelOptions(channels, [ChannelType.GuildText, ChannelType.GuildAnnouncement]), welcomeState.channelId, { emptyLabel: 'Choose a channel' })}
+${renderTextInput('welcomeTitle', 'Embed title', welcome.title || '', { maxLength: 256 })}
+</div>
+${renderTextarea('welcomeDescription', 'Message', welcome.description || '', { rows: 5, description: 'Supports placeholders already used by the welcome command, such as ${user}.' })}
+${renderTextInput('welcomeFooter', 'Footer', welcome.footer || '', { maxLength: 2048 })}
+</div>`,
+    });
+}
+
+function renderLoggingSettingsForm(config, channels, session) {
+    const logChannels = config.logChannels || {};
+    const sendable = channelOptions(channels, [ChannelType.GuildText, ChannelType.GuildAnnouncement]);
+    const select = (name, label) => renderSelect(name, label, sendable, logChannels[name], { emptyLabel: 'Use default / disabled' });
+
+    return renderSettingsForm({
+        title: 'Logging',
+        description: 'Server-specific logging map for the selected guild. Leave a category unset to use the default log channel where supported.',
+        section: 'logging',
+        session,
+        body: `
+<div class="settings-stack">
+${renderToggle('showUserAvatars', 'Show user avatars', config.logging?.showUserAvatars !== false, 'Include user avatars in supported log embeds.')}
+<div class="settings-grid">
+${select('logChannel', 'Default logs')}
+${select('moderation', 'Moderation')}
+${select('ticket', 'Tickets')}
+${select('suggestion', 'Suggestions')}
+${select('messageDelete', 'Message deletes')}
+${select('editMessage', 'Message edits')}
+${select('threadCreate', 'Thread creates')}
+${select('threadDelete', 'Thread deletes')}
+${select('threadUpdate', 'Thread updates')}
+${select('directMessage', 'Direct messages')}
+</div>
+</div>`,
+    });
+}
+
+function renderTicketSettingsForm(config, channels, roles, session) {
+    const tickets = config.tickets || {};
+    return renderSettingsForm({
+        title: 'Tickets',
+        description: 'Server-specific ticket panel, category, and staff access for the selected guild.',
+        section: 'tickets',
+        session,
+        body: `
+<div class="settings-grid">
+${renderSelect('ticketChannelId', 'Panel channel', channelOptions(channels, [ChannelType.GuildText, ChannelType.GuildAnnouncement]), tickets.channelId, { emptyLabel: 'Choose a channel' })}
+${renderSelect('ticketCategoryId', 'Ticket category', channelOptions(channels, [ChannelType.GuildCategory]), tickets.categoryId, { emptyLabel: 'Choose a category' })}
+${renderSelect('supportRoleId', 'Support role', roleOptions(roles), tickets.supportRoleId || config.ticketRole, { emptyLabel: 'Choose a role' })}
+${renderTextInput('closeInactivityDays', 'Close inactivity days', tickets.closeInactivityDays ?? '', { type: 'number', description: '0 disables inactivity closing.' })}
+</div>
+<div class="settings-grid">
+${renderToggle('allowTranscripts', 'Allow transcripts', tickets.allowTranscripts !== false, 'Staff can generate transcript records.')}
+${renderToggle('allowUserAdding', 'Allow user adding', tickets.allowUserAdding !== false, 'Staff can add or remove ticket participants.')}
+${renderToggle('allowClaiming', 'Allow claiming', tickets.allowClaiming !== false, 'Staff can claim tickets.')}
+</div>`,
+    });
+}
+
+function renderJoinToCreateSettingsForm(config, channels, session) {
+    const voice = config.joinToCreate || {};
+    return renderSettingsForm({
+        title: 'Temporary Voice',
+        description: 'Server-specific join-to-create settings using real voice channel and category selectors.',
+        section: 'joinToCreate',
+        session,
+        body: `
+<div class="settings-stack">
+${renderToggle('enabled', 'Join-to-create', voice.enabled === true, 'Create temporary voice channels when users join the trigger channel.')}
+<div class="settings-grid">
+${renderSelect('triggerChannelId', 'Trigger channel', channelOptions(channels, [ChannelType.GuildVoice, ChannelType.GuildStageVoice]), voice.triggerChannelId, { emptyLabel: 'Choose a voice channel' })}
+${renderSelect('categoryId', 'Temporary channel category', channelOptions(channels, [ChannelType.GuildCategory]), voice.categoryId, { emptyLabel: 'Choose a category' })}
+${renderTextInput('nameFormat', 'Name format', voice.nameFormat || "{username}'s Channel", { description: 'Use {username}, {displayName}, {tag}, or {id}.' })}
+${renderTextInput('userLimitMax', 'Maximum users', voice.userLimitMax || 25, { type: 'number' })}
+${renderTextInput('emptyGraceSeconds', 'Empty grace period seconds', Math.round(Number(voice.emptyGraceMs || 10000) / 1000), { type: 'number' })}
+</div>
+</div>`,
+    });
+}
+
+function renderLevelingSettingsForm(config, session) {
+    const leveling = config.leveling || {};
+    return renderSettingsForm({
+        title: 'Leveling',
+        description: 'Server-specific leveling mode and XP pacing with bounded controls.',
+        section: 'leveling',
+        session,
+        body: `
+<div class="settings-stack">
+${renderToggle('enabled', 'Leveling', leveling.enabled === true, 'Award XP through text, voice, or both.')}
+<label>Mode${renderSegmented('mode', [
+        { value: 'text', label: 'Text' },
+        { value: 'voice', label: 'Voice' },
+        { value: 'both', label: 'Both' },
+    ], leveling.mode || 'both')}</label>
+<div class="settings-grid">
+${renderTextInput('textXpPerMessage', 'Text XP per message', leveling.textXpPerMessage ?? 1, { type: 'number' })}
+${renderTextInput('voiceXpPerMinute', 'Voice XP per minute', leveling.voiceXpPerMinute ?? 1, { type: 'number' })}
+${renderTextInput('cooldownSeconds', 'Text XP cooldown seconds', leveling.cooldownSeconds ?? 60, { type: 'number' })}
+</div>
+</div>`,
+    });
+}
+
+function renderModerationSettingsForm(config, roles, session) {
+    const moderation = config.moderation || {};
+    return renderSettingsForm({
+        title: 'Moderation Settings',
+        description: 'Configure mute role behavior and the appeal link used in moderation messages.',
+        section: 'moderation',
+        session,
+        body: `<div class="settings-stack">
+${renderSelect('muteRoleId', 'Mute role', roleOptions(roles), moderation.muteRoleId || '', { emptyLabel: 'Use mute role name' })}
+${renderTextInput('muteRoleName', 'Mute role name', moderation.muteRoleName || 'Muted', { maxLength: 80 })}
+${renderTextInput('appealUrl', 'Appeal URL', moderation.appealUrl || '', { type: 'url', placeholder: 'https://example.com/appeal' })}
+</div>`,
+    });
+}
+
+function renderMusicSettingsForm(config, session) {
+    const music = config.music || {};
+    return renderSettingsForm({
+        title: 'Music Settings',
+        description: 'Configure playback availability, queue limits, upload behavior, and voice connection retries.',
+        section: 'music',
+        session,
+        body: `<div class="settings-stack">
+${renderToggle('enabled', 'Music commands', music.enabled !== false, 'Allow music playback commands.')}
+${renderToggle('allowFileUploads', 'File uploads', music.allowFileUploads !== false, 'Allow users to play uploaded audio files.')}
+${renderToggle('voiceDebug', 'Voice diagnostics', music.voiceDebug === true, 'Include additional voice connection diagnostics.')}
+<div class="settings-grid">
+${renderTextInput('maxQueueLength', 'Maximum queue length', music.maxQueueLength ?? 50, { type: 'number', min: 1, max: 1000 })}
+${renderTextInput('voiceReadyTimeoutMs', 'Voice ready timeout', music.voiceReadyTimeoutMs ?? 60000, { type: 'number', min: 5000, max: 300000, step: 1000 })}
+${renderTextInput('voiceJoinRetries', 'Voice join retries', music.voiceJoinRetries ?? 1, { type: 'number', min: 0, max: 10 })}
+${renderTextInput('voiceRetryDelayMs', 'Voice retry delay', music.voiceRetryDelayMs ?? 1000, { type: 'number', min: 0, max: 60000, step: 100 })}
+</div>
+${renderTextInput('ytDlpCookiesPath', 'YouTube cookies path', music.ytDlpCookiesPath || '', { placeholder: 'data/youtube-cookies.txt' })}
+</div>`,
+    });
 }
 
 async function renderDashboard(client, session, notice = '', page = 'overview') {
@@ -700,31 +843,37 @@ async function renderDashboard(client, session, notice = '', page = 'overview') 
     const languageValues = language.loadLanguage();
     const editableLanguageValues = getEditableLanguageValues(languageValues);
     const lockedWatermark = language.getLockedWatermark();
-    const logs = readDashboardLogs(120);
     const channels = getSendableChannels(client);
+    const allChannels = getGuildChannels(client);
     const roles = getGuildRoles(client);
-    const avatar = getBotAvatar(client);
     const dashboardGuild = getDashboardGuild(client);
     const activeGuildId = dashboardGuild?.id || getDashboardConfig().guildId || config.guildId;
-    const scheduledMessages = await listScheduledMessages(activeGuildId, 25);
-    const templates = await listEmbedTemplates(activeGuildId);
-    const commandStats = await listCommandStats(activeGuildId, Date.now() - 30 * 24 * 60 * 60 * 1000);
-    const allState = await readState();
-    const moderationCases = await listModerationCases(activeGuildId || '', {});
-    const modNotes = activeGuildId
+    const effectiveConfig = activeGuildId ? await getGuildSettings(activeGuildId) : config;
+    const needsLogs = ['overview', 'logs', 'audit'].includes(page);
+    const needsSender = page === 'sender';
+    const needsCommandStats = ['overview', 'modules', 'analytics'].includes(page);
+    const needsAudit = page === 'audit';
+    const needsModeration = ['overview', 'moderation', 'audit'].includes(page);
+    const needsTickets = ['overview', 'tickets', 'audit'].includes(page);
+    const needsVoice = ['overview', 'voice'].includes(page);
+    const needsBackups = page === 'backups';
+    const logs = needsLogs ? readDashboardLogs(120) : [];
+    const scheduledMessages = needsSender ? await listScheduledMessages(activeGuildId, 25) : [];
+    const templates = needsSender ? await listEmbedTemplates(activeGuildId) : [];
+    const commandStats = needsCommandStats ? await listCommandStats(activeGuildId, Date.now() - 30 * 24 * 60 * 60 * 1000) : [];
+    const historyItems = needsAudit && activeGuildId ? await listGuildHistory(activeGuildId, 200) : [];
+    const moderationCases = needsModeration ? await listModerationCases(activeGuildId || '', {}) : [];
+    const modNotes = page === 'moderation' && activeGuildId
         ? await Promise.all([...new Set(moderationCases.slice(0, 20).map(item => item.userId))].map(userId => listModNotes(activeGuildId, userId, 5))).then(results => results.flat())
         : [];
-    const ticketRecords = await listTicketRecords(activeGuildId, 100);
-    const ticketTranscripts = await listTicketTranscripts(activeGuildId, 50);
-    const tempVoiceChannels = await listTempVoiceChannelsForGuild(activeGuildId);
-    const voiceActivity = await listVoiceActivity(activeGuildId, 80);
-    const configBackups = listConfigBackups();
-
-    const moduleLinks = grouped.map(([category, commands]) => `
-<a class="module-link" href="#module-${escapeHtml(slug(category))}">
-<strong>${escapeHtml(humanize(category))}</strong>
-<span class="muted">${commands.length} command${commands.length === 1 ? '' : 's'} ${settings.modules[category] === false ? 'disabled' : 'enabled'}</span>
-</a>`).join('');
+    const ticketRecords = needsTickets ? await listTicketRecords(activeGuildId, 100) : [];
+    const ticketTranscripts = page === 'tickets' ? await listTicketTranscripts(activeGuildId, 50) : [];
+    const tempVoiceChannels = needsVoice ? await listTempVoiceChannelsForGuild(activeGuildId) : [];
+    const voiceActivity = needsVoice ? await listVoiceActivity(activeGuildId, 80) : [];
+    const musicSummary = page === 'overview' && activeGuildId ? getQueueSummary(activeGuildId) : {};
+    const configBackups = needsBackups ? listConfigBackups() : [];
+    const configAudit = needsAudit && activeGuildId ? await listConfigAudit(activeGuildId, { limit: 75 }) : [];
+    const healthReport = ['overview', 'health'].includes(page) ? await buildHealthReport(client) : null;
 
     const renderCommandSections = includeLanguageEditors => grouped.map(([category, commands]) => `
 <section class="panel module-card" id="module-${escapeHtml(slug(category))}">
@@ -771,27 +920,38 @@ ${includeLanguageEditors ? getLanguageSectionsForCategory(category).map(section 
         : '<p class="muted">No saved templates yet.</p>';
     const commandsHtml = renderCommandSections(true);
     const accessHtml = renderCommandSections(false);
-    const topbar = `
-${notice ? `<div class="notice">${escapeHtml(notice)}</div>` : ''}
-<div class="topbar" id="overview">
-<div><h1>Dashboard</h1><p class="muted">Manage modules, responses, command access, and bot messages from one place.</p></div>
-<div class="split-actions">${avatar ? `<img src="${escapeHtml(avatar)}" alt="" style="width:46px;height:46px;border-radius:8px">` : ''}<a class="button secondary" href="/logout">Log out</a></div>
-</div>`;
-    const metricsSection = `
-<section class="grid">
-<div class="panel metric"><span>Modules</span><strong>${grouped.length}</strong></div>
-<div class="panel metric"><span>Commands</span><strong>${[...client.commands.values()].length}</strong></div>
-<div class="panel metric"><span>Sendable channels</span><strong>${channels.length}</strong></div>
-<div class="panel metric"><span>Roles cached</span><strong>${roles.length}</strong></div>
-</section>`;
+    const moduleSettingsSection = renderModuleSettingsForm(grouped, settings, session);
+    const welcomeSettingsSection = renderWelcomeSettingsForm(effectiveConfig, allChannels, session);
+    const loggingSettingsSection = renderLoggingSettingsForm(effectiveConfig, allChannels, session);
+    const ticketSettingsSection = renderTicketSettingsForm(effectiveConfig, allChannels, roles, session);
+    const joinToCreateSettingsSection = renderJoinToCreateSettingsForm(effectiveConfig, allChannels, session);
+    const levelingSettingsForm = renderLevelingSettingsForm(effectiveConfig, session);
+    const moderationSettingsSection = renderModerationSettingsForm(config, roles, session);
+    const musicSettingsSection = renderMusicSettingsForm(config, session);
+    const topbar = renderPageHeader({
+        eyebrow: dashboardGuild?.name || 'Dashboard',
+        title: 'Dashboard',
+        description: 'Manage modules, responses, command access, and bot messages from one place.',
+        notice,
+        actions: '<a class="button secondary" href="/logout">Log out</a>',
+    });
+    const overviewSection = renderOverviewDashboard({
+        client,
+        guild: dashboardGuild,
+        grouped,
+        ticketRecords,
+        tempVoiceChannels,
+        moderationCases,
+        musicSummary,
+        commandStats,
+        logs,
+        voiceActivity,
+        health: healthReport,
+    });
     const moduleLinksSection = `
+${renderModuleDashboard(grouped, settings, commandStats)}
 <section class="grid">
-<div class="panel wide" id="modules">
-<h2>Modules</h2>
-<p class="muted">Click a module to jump into command toggles, access rules, and related response text.</p>
-<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr))">${moduleLinks}</div>
-</div>
-<section class="panel side">
+<section class="panel full">
 <h2>Quick Actions</h2>
 <div class="pillrow">
 <a class="button secondary" href="/sender">Open sender</a>
@@ -800,6 +960,7 @@ ${notice ? `<div class="notice">${escapeHtml(notice)}</div>` : ''}
 </div>
 </section>
 </section>`;
+    const loggingDashboardSection = renderLoggingDashboard(effectiveConfig, dashboardGuild);
     const logsSection = `
 <section class="panel side">
 <h2>Logs</h2>
@@ -864,8 +1025,11 @@ ${csrfInput(session)}
 </form>
 </section>`;
     const configSection = `
+${moduleSettingsSection}
+${loggingSettingsSection}
+${loggingDashboardSection}
 <section class="panel" id="config">
-<h2>Config</h2>
+<h2>Advanced Config JSON</h2>
 <p class="muted">This edits config.json directly. Sensitive values are redacted and preserved if left unchanged. Create a backup before risky edits.</p>
 <form method="post" action="/config/backup" style="margin-bottom:12px">${csrfInput(session)}<input type="hidden" name="label" value="before-config-edit"><button class="secondary" type="submit">Create backup</button></form>
 <form method="post" action="/config-json">
@@ -896,50 +1060,71 @@ ${csrfInput(session)}
     const auditItems = [
         ...logs.map(log => ({ at: Date.parse(log.at) || 0, type: log.type || 'dashboard', text: log.message })),
         ...moderationCases.slice(0, 200).map(item => ({ at: item.createdAt, type: 'moderation', text: `#${item.id} ${item.type} ${item.userTag || item.userId}: ${item.reason}` })),
-        ...allState.history.filter(item => item.guildId === activeGuildId).slice(0, 200).map(item => ({ at: item.createdAt, type: item.type, text: `${item.userTag || item.userId}: ${item.summary}` })),
+        ...historyItems.map(item => ({ at: item.createdAt, type: item.type, text: `${item.userTag || item.userId}: ${item.summary}` })),
         ...ticketRecords.map(item => ({ at: item.updatedAt, type: 'ticket', text: `${item.status} <#${item.channelId}> ${item.priority}` })),
     ].sort((a, b) => b.at - a.at).slice(0, 250);
+    const configAuditRows = configAudit.map(item => `<tr>
+<td>${escapeHtml(new Date(item.createdAt || Date.now()).toLocaleString())}</td>
+<td>${escapeHtml(resolveUserLabel(client, dashboardGuild, item.actorId))}<br><span class="muted">${escapeHtml(item.actorId || '')}</span></td>
+<td>${escapeHtml(item.section)}</td>
+<td>${escapeHtml(item.key)}</td>
+<td>${escapeHtml(item.previousValue)}</td>
+<td>${escapeHtml(item.newValue)}</td>
+<td>${escapeHtml(item.source)}</td>
+</tr>`).join('');
     const auditSection = `
+<section class="panel">
+<h2>Configuration Changes</h2>
+<div class="table-wrap"><table class="dashboard-table"><thead><tr><th>Time</th><th>Admin</th><th>Section</th><th>Setting</th><th>Previous</th><th>New</th><th>Source</th></tr></thead><tbody>${configAuditRows || '<tr><td colspan="7">No configuration changes recorded yet.</td></tr>'}</tbody></table></div>
+</section>
 <section class="panel">
 <h2>Audit Timeline</h2>
 <div class="toolbar"><input data-audit-filter placeholder="Filter moderation, tickets, honeypot, config, dashboard"></div>
 <div class="log" data-audit-list>${auditItems.length ? auditItems.map(item => `<div class="log-entry" data-audit-type="${escapeHtml(item.type)}"><span class="muted">${escapeHtml(new Date(item.at || Date.now()).toLocaleString())}</span> [${escapeHtml(item.type)}] ${escapeHtml(item.text)}</div>`).join('') : '<div class="muted">No audit entries yet.</div>'}</div>
 </section>`;
+    const databaseState = healthReport?.databaseReadable
+        ? (healthReport.databaseWritable === false ? 'Read-only' : 'Reachable')
+        : 'Unreachable';
+    const schedulerState = healthReport?.schedulerAlive ? 'Running' : 'Stopped';
+    const pingLabel = healthReport?.gatewayPingMs === null || healthReport?.gatewayPingMs === undefined
+        ? 'Unknown'
+        : `${Math.round(healthReport.gatewayPingMs)}ms`;
     const healthSection = `
 <section class="grid">
-<div class="panel metric"><span>Discord</span><strong>${client.isReady?.() ? 'Ready' : 'Offline'}</strong></div>
-<div class="panel metric"><span>Ping</span><strong>${Math.round(client.ws?.ping || 0)}ms</strong></div>
-<div class="panel metric"><span>Guilds</span><strong>${client.guilds?.cache?.size || 0}</strong></div>
-<div class="panel metric"><span>Uptime</span><strong>${Math.floor(process.uptime() / 60)}m</strong></div>
+<div class="panel metric"><span>Discord</span><strong>${healthReport?.discordReady ? 'Ready' : 'Offline'}</strong></div>
+<div class="panel metric"><span>Ping</span><strong>${escapeHtml(pingLabel)}</strong></div>
+<div class="panel metric"><span>Guilds</span><strong>${escapeHtml(healthReport?.guilds ?? 0)}</strong></div>
+<div class="panel metric"><span>Uptime</span><strong>${escapeHtml(Math.floor(Number(healthReport?.uptimeSeconds || 0) / 60))}m</strong></div>
+<div class="panel metric"><span>Database</span><strong>${escapeHtml(databaseState)}</strong><small>${escapeHtml(healthReport?.database?.provider || 'unknown')}</small></div>
+<div class="panel metric"><span>Scheduler</span><strong>${escapeHtml(schedulerState)}</strong></div>
 </section>
 <section class="panel"><h2>Schedulers</h2>
 ${['punishmentScheduler', 'memberCounterScheduler', 'mediaAnnouncementScheduler', 'levelingScheduler', 'scheduledMessageScheduler'].map(key => `<div class="row"><span>${escapeHtml(humanize(key))}</span><strong>${client[key] ? 'Running' : 'Stopped'}</strong></div>`).join('')}
 </section>`;
     const moderationSection = `
+${moderationSettingsSection}
 ${renderConfigSectionEditor('autoMod', 'Auto-Mod Rules', 'Configure invite links, mass mentions, caps/spam, suspicious domains, exemptions, and escalation ladder.', session, config.autoMod || {
     enabled: false,
     deleteMatches: true,
     rules: { inviteLinks: true, massMentions: true, caps: true, spam: true, suspiciousDomains: true },
     escalation: [{ after: 3, action: 'mute', durationMs: 600000 }],
 })}
-${renderConfigSectionEditor('moderation', 'Moderation Settings', 'Configure mute role and appeal URL for moderation DMs.', session, config.moderation || {})}
 <section class="grid"><div class="panel wide"><h2>Recent Cases</h2>${moderationCases.slice(0, 20).map(item => `<div class="row"><span>#${escapeHtml(item.id)} ${escapeHtml(item.type)} ${escapeHtml(item.userTag || item.userId)}<br><span class="muted">${escapeHtml(item.reason)}</span></span><span>${escapeHtml(new Date(item.createdAt).toLocaleString())}</span></div>`).join('') || '<p class="muted">No cases yet.</p>'}</div><div class="panel side"><h2>Recent Notes</h2>${modNotes.slice(0, 10).map(item => `<div class="row"><span>${escapeHtml(item.userTag || item.userId)}<br><span class="muted">${escapeHtml(item.note)}</span></span></div>`).join('') || '<p class="muted">No notes yet.</p>'}</div></section>`;
     const ticketsSection = `
-${renderConfigSectionEditor('tickets', 'Ticket Settings', 'Configure ticket panel channel, category, support role, auto-close days, and transcript behavior.', session, config.tickets || {})}
-<section class="panel"><h2>Tickets</h2>${ticketRecords.length ? ticketRecords.map(item => `<div class="row"><span><strong><#${escapeHtml(item.channelId)}></strong><br><span class="muted">${escapeHtml(item.status)} - ${escapeHtml(item.priority)} - ${escapeHtml(item.tags?.join(', ') || 'no tags')}</span></span><span>${item.claimedById ? `Claimed by ${escapeHtml(item.claimedByTag || item.claimedById)}` : 'Unclaimed'}</span></div>`).join('') : '<p class="muted">No ticket records yet.</p>'}</section>
-<section class="panel"><h2>Transcripts</h2>${ticketTranscripts.length ? ticketTranscripts.map(item => `<div class="row"><span><strong>${escapeHtml(item.ticketName || item.channelName)}</strong><br><span class="muted">${escapeHtml(new Date(item.createdAt).toLocaleString())} - ${escapeHtml(item.messageCount)} messages</span></span><a class="button secondary" href="/transcripts/${encodeURIComponent(item.id)}">Open</a></div>`).join('') : '<p class="muted">No transcripts have been generated yet.</p>'}</section>`;
+${ticketSettingsSection}
+${renderTicketDashboard(ticketRecords, ticketTranscripts)}`;
     const communitySection = `
-${renderConfigSectionEditor('WelcomeEmbed', 'Welcome / Leave Editor', 'Configure welcome copy and media. Leave messages can be added as leaveEmbed in config.json.', session, config.WelcomeEmbed || {})}
+${welcomeSettingsSection}
 ${renderConfigSectionEditor('reactionRoles', 'Reaction Roles', 'Configure reaction-role panels. Use messageId, emoji, and roleId entries for each panel.', session, config.reactionRoles || { enabled: false, panels: [] })}
 ${renderConfigSectionEditor('rulesAgreement', 'Rules Agreement Panel', 'Configure a rules acknowledgement panel and verified role.', session, config.rulesAgreement || { enabled: false, channelId: '', roleId: '' })}
 ${renderConfigSectionEditor('birthdays', 'Birthday Reminders', 'Configure birthday reminder channel and timezone.', session, config.birthdays || { enabled: false, channelId: '', timezone: 'Europe/London' })}
 ${renderConfigSectionEditor('starboard', 'Starboard', 'Configure highlight/starboard emoji, threshold, and destination channel.', session, config.starboard || { enabled: false, channelId: '', emoji: '⭐', threshold: 3 })}
 ${renderConfigSectionEditor('pollTemplates', 'Poll Templates', 'Saved poll presets for staff workflows.', session, config.pollTemplates || [])}`;
     const levelingSection = `
-${renderConfigSectionEditor('leveling', 'Leveling Rewards and Multipliers', 'Configure reward roles, ignored channels/roles, role/channel multipliers, and reset policy.', session, config.leveling || {})}`;
+${levelingSettingsForm}`;
     const voiceSection = `
-${renderConfigSectionEditor('joinToCreate', 'Temporary Voice Controls', 'Configure join-to-create, naming, limits, categories, and presets.', session, config.joinToCreate || {})}
-<section class="grid"><div class="panel wide"><h2>Active Temporary Channels</h2>${tempVoiceChannels.map(item => `<div class="row"><span><#${escapeHtml(item.channelId)}> owner <@${escapeHtml(item.ownerId)}></span><span>${escapeHtml(new Date(item.createdAt).toLocaleString())}</span></div>`).join('') || '<p class="muted">No active temporary voice channels.</p>'}</div><div class="panel side"><h2>Voice Activity</h2>${voiceActivity.slice(0, 20).map(item => `<div class="row"><span>${escapeHtml(item.userTag)} ${escapeHtml(item.type)}<br><span class="muted">${escapeHtml(item.oldChannelId || '-')} -> ${escapeHtml(item.newChannelId || '-')}</span></span></div>`).join('') || '<p class="muted">No voice activity yet.</p>'}</div></section>`;
+${joinToCreateSettingsSection}
+${renderVoiceDashboard(tempVoiceChannels, voiceActivity, dashboardGuild)}`;
     const mediaSection = `
 ${renderConfigSectionEditor('youtube', 'YouTube Targets', 'Manage channels to announce and their Discord destination channels.', session, config.youtube || {})}
 ${renderConfigSectionEditor('twitch', 'Twitch Targets', 'Manage Twitch channels, auth status, retry/error settings, and announcement templates.', session, config.twitch || {})}
@@ -948,14 +1133,14 @@ ${renderConfigSectionEditor('socialAnnouncements', 'Multi-Platform Targets', 'Co
 <section class="panel"><h2>Config Backups</h2><form method="post" action="/config/backup">${csrfInput(session)}<label>Label<input name="label" placeholder="before-risky-edit"></label><p><button class="success" type="submit">Create backup</button></p></form></section>
 <section class="panel"><h2>Restore</h2>${configBackups.length ? configBackups.map(item => `<div class="row"><span>${escapeHtml(item.file)}<br><span class="muted">${escapeHtml(new Date(item.createdAt).toLocaleString())}</span></span><form method="post" action="/config/restore">${csrfInput(session)}<input type="hidden" name="file" value="${escapeHtml(item.file)}"><button class="danger" type="submit">Restore</button></form></div>`).join('') : '<p class="muted">No backups yet.</p>'}</section>`;
     const musicSection = `
-${renderConfigSectionEditor('music', 'Music Settings', 'Configure music feature limits, allowed roles/channels, and provider notes. Spotify playback resolves track metadata to a streamable source.', session, config.music || { enabled: true, maxQueueLength: 50, allowFileUploads: true })}
+${musicSettingsSection}
 <section class="panel"><h2>Playback</h2><p class="muted">Use /music play, /music file, /music queue, /music skip, and /music stop in Discord.</p></section>`;
     const pageBodies = {
-        overview: `${topbar}${metricsSection}${moduleLinksSection}<section class="grid"><div class="panel wide"><h2>Recent Status</h2><p class="muted">Use the sidebar to manage commands, language, sending, config, and logs without scrolling through one large page.</p></div>${logsSection}</section>`,
+        overview: `${topbar}${overviewSection}${moduleLinksSection}<section class="grid">${logsSection}</section>`,
         audit: `${topbar}${auditSection}`,
         analytics: `${topbar}${analyticsSection}`,
         health: `${topbar}${healthSection}`,
-        modules: `${topbar}${moduleLinksSection}<section>${commandsHtml}</section>`,
+        modules: `${topbar}${moduleSettingsSection}${moduleLinksSection}<section>${commandsHtml}</section>`,
         commands: `${topbar}${roleReferenceSection}<section>${accessHtml}</section>`,
         moderation: `${topbar}${moderationSection}`,
         tickets: `${topbar}${ticketsSection}`,
@@ -971,7 +1156,9 @@ ${renderConfigSectionEditor('music', 'Music Settings', 'Configure music feature 
         logs: `${topbar}<section class="grid"><div class="panel full"><h2>Dashboard Logs</h2><div class="log">${logsHtml}</div><form method="post" action="/logs/clear" style="margin-top:12px">${csrfInput(session)}<button class="danger" type="submit">Clear logs</button></form></div></section>`,
     };
 
-    return renderLayout('Bot Dashboard', pageBodies[page] || pageBodies.overview, session.user, client, page);
+    return renderLayout('Bot Dashboard', pageBodies[page] || pageBodies.overview, session.user, client, page, {
+        guild: dashboardGuild,
+    });
 }
 
 function startDashboard(client) {
@@ -986,14 +1173,19 @@ function startDashboard(client) {
         res.setHeader('X-Content-Type-Options', 'nosniff');
         next();
     });
+    app.use(express.static(path.join(__dirname, 'public'), {
+        extensions: false,
+        fallthrough: true,
+        immutable: false,
+    }));
 
     app.get('/health', async (req, res) => {
-        const health = await buildHealthReport(client);
+        const health = await buildPublicHealthReport(client);
         res.status(health.processAlive ? 200 : 500).json(health);
     });
 
     app.get('/ready', async (req, res) => {
-        const health = await buildHealthReport(client);
+        const health = await buildPublicHealthReport(client);
         res.status(health.ok ? 200 : 503).json(health);
     });
 
@@ -1015,7 +1207,7 @@ function startDashboard(client) {
             const currentSettings = getDashboardConfig();
             const token = await exchangeDiscordCode(currentSettings, req.query.code);
             const { user, guilds } = await fetchDiscordUser(token.access_token);
-            if (!canManageDashboard(user, guilds, currentSettings)) return res.status(403).send('You are not allowed to manage this dashboard.');
+            if (!await canManageDashboard(user, guilds, currentSettings, client)) return res.status(403).send('You are not allowed to manage this dashboard.');
 
             const session = {
                 user,
@@ -1038,6 +1230,8 @@ function startDashboard(client) {
         res.setHeader('Set-Cookie', 'dashboard_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0');
         res.redirect('/login');
     });
+
+    app.use(requireAuth, requireDashboardAdmin(client));
 
     const renderPage = page => async (req, res) => res.send(await renderDashboard(client, req.dashboardSession, req.query.message || '', page));
 
@@ -1074,6 +1268,8 @@ function startDashboard(client) {
 
     app.post('/toggle-module', requireAuth, requireCsrf, (req, res) => {
         const enabled = req.body.enabled === 'on';
+        const allowedModules = new Set(groupCommands(client).map(([category]) => category));
+        if (!allowedModules.has(req.body.module)) return res.status(400).send('Unknown module.');
         updateConfig(config => {
             config.commandSettings = config.commandSettings || {};
             config.commandSettings.modules = config.commandSettings.modules || {};
@@ -1086,6 +1282,7 @@ function startDashboard(client) {
 
     app.post('/toggle-command', requireAuth, requireCsrf, (req, res) => {
         const enabled = req.body.enabled === 'on';
+        if (!client.commands.has(req.body.command)) return res.status(400).send('Unknown command.');
         updateConfig(config => {
             config.commandSettings = config.commandSettings || {};
             config.commandSettings.commands = config.commandSettings.commands || {};
@@ -1098,6 +1295,7 @@ function startDashboard(client) {
 
     app.post('/command-access', requireAuth, requireCsrf, (req, res) => {
         const commandName = req.body.command;
+        if (!client.commands.has(commandName)) return res.status(400).send('Unknown command.');
         const access = {
             allowRoleIds: normalizeIdList(req.body.allowRoleIds),
             allowUserIds: normalizeIdList(req.body.allowUserIds),
@@ -1122,10 +1320,67 @@ function startDashboard(client) {
         res.redirect('/commands');
     });
 
+    app.post('/dashboard-settings', requireAuth, requireCsrf, async (req, res) => {
+        try {
+            const activeGuildId = getDashboardGuild(client)?.id || getDashboardConfig().guildId || getStoredConfig().guildId;
+            const channels = getGuildChannels(client);
+            const roles = getGuildRoles(client);
+            const allowedModules = groupCommands(client).map(([category]) => category);
+            const result = parseDashboardSettings(req.body, {
+                allowedModules,
+                botMember: req.dashboardGuild?.members?.me,
+                channels,
+                enforceSendable: true,
+                guildId: activeGuildId,
+                roles,
+            });
+
+            if (['moderation', 'modules', 'music'].includes(result.section)) {
+                updateConfig(config => {
+                    applyDashboardSettings(config, req.body, {
+                        allowedModules,
+                        botMember: req.dashboardGuild?.members?.me,
+                        channels,
+                        enforceSendable: true,
+                        guildId: activeGuildId,
+                        roles,
+                    });
+
+                    const errors = validateConfig(config);
+                    if (errors.length) {
+                        throw new Error(errors.join(' '));
+                    }
+
+                    return config;
+                });
+            } else {
+                await updateGuildSettings(activeGuildId, result.section, result.values, {
+                    actorId: req.dashboardSession.user.id,
+                    source: 'dashboard',
+                });
+            }
+
+            appendDashboardLog('Dashboard settings saved', {
+                section: result.section,
+                userId: req.dashboardSession.user.id,
+            });
+
+            if (wantsJson(req)) {
+                return res.json({ ok: true, message: result.message });
+            }
+
+            const page = dashboardSettingsPage(result.section);
+            return res.redirect(`${page}?message=${encodeURIComponent(result.message)}`);
+        } catch (error) {
+            return sendSettingsError(req, res, client, error);
+        }
+    });
+
     app.post('/language-section', requireAuth, requireCsrf, (req, res) => {
         try {
             const section = req.body.section;
             const parsed = JSON.parse(req.body.content || '{}');
+            assertSafeConfigObject(parsed);
             if (!section || !parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
                 throw new Error('Language section must be a JSON object.');
             }
@@ -1136,29 +1391,34 @@ function startDashboard(client) {
             appendDashboardLog('Language section saved', { section, userId: req.dashboardSession.user.id });
             res.redirect('/language');
         } catch (error) {
-            res.status(400).send(renderLayout('Invalid language', `<section class="panel"><h2>Invalid language JSON</h2><p>${escapeHtml(error.message)}</p><p>Use the browser back button and fix the JSON.</p></section>`, req.dashboardSession.user, client));
+            res.status(400).send(renderLayout('Invalid language', `<section class="panel"><h2>Invalid language JSON</h2><p>${escapeHtml(safeErrorMessage(error, 'Language was not saved.'))}</p><p>Use the browser back button and fix the JSON.</p></section>`, req.dashboardSession.user, client));
         }
     });
 
     app.post('/language-json', requireAuth, requireCsrf, (req, res) => {
         try {
             const parsed = JSON.parse(req.body.language);
+            assertSafeConfigObject(parsed);
             language.saveLanguage(parsed);
             appendDashboardLog('language.json saved from dashboard', { userId: req.dashboardSession.user.id });
             res.redirect('/language?message=language.json%20saved');
         } catch (error) {
-            res.status(400).send(renderLayout('Invalid language', `<section class="panel"><h2>Invalid language JSON</h2><p>${escapeHtml(error.message)}</p><p>Use the browser back button and fix the JSON.</p></section>`, req.dashboardSession.user, client));
+            res.status(400).send(renderLayout('Invalid language', `<section class="panel"><h2>Invalid language JSON</h2><p>${escapeHtml(safeErrorMessage(error, 'Language was not saved.'))}</p><p>Use the browser back button and fix the JSON.</p></section>`, req.dashboardSession.user, client));
         }
     });
 
     app.post('/send-message', requireAuth, requireCsrf, async (req, res) => {
         try {
-            const channel = await client.channels.fetch(req.body.channelId).catch(() => null);
-            if (!channel?.send && req.body.saveTemplate !== '1') {
-                return res.status(400).send(renderLayout('Message not sent', '<section class="panel"><h2>Message not sent</h2><p>I could not find a sendable channel.</p></section>', req.dashboardSession.user, client));
-            }
-
-            const activeGuildId = getDashboardGuild(client)?.id || getDashboardConfig().guildId || getStoredConfig().guildId;
+            const activeGuild = req.dashboardGuild || getDashboardGuild(client);
+            const activeGuildId = activeGuild?.id || getDashboardConfig().guildId || getStoredConfig().guildId;
+            const needsChannel = req.body.saveTemplate !== '1';
+            const channel = needsChannel
+                ? await resolveDashboardChannel(activeGuild, req.body.channelId, {
+                    label: 'Message channel',
+                    types: [ChannelType.GuildAnnouncement, ChannelType.GuildText],
+                    requireSendable: true,
+                })
+                : null;
             const selectedTemplate = req.body.templateId
                 ? (await listEmbedTemplates(activeGuildId)).find(item => item.id === req.body.templateId)
                 : null;
@@ -1198,7 +1458,7 @@ function startDashboard(client) {
                 }
 
                 await createScheduledMessage({
-                    guildId: channel.guildId || getDashboardConfig().guildId,
+                    guildId: activeGuildId,
                     channelId: channel.id,
                     content: payload.content || '',
                     embed: payload.embed || null,
@@ -1217,12 +1477,21 @@ function startDashboard(client) {
             return res.redirect('/sender?message=Message%20sent');
         } catch (error) {
             console.error('Dashboard message send failed:', error);
-            res.status(500).send(renderLayout('Message failed', '<section class="panel"><h2>Message failed</h2><p>Discord rejected the message. Check the bot permissions and message content.</p></section>', req.dashboardSession.user, client));
+            const redactedMessage = safeErrorMessage(error);
+            const safeMessage = /channel|template|message content|future date/i.test(redactedMessage)
+                ? redactedMessage
+                : 'Discord rejected the message. Check the bot permissions and message content.';
+            res.status(/channel|template|message content|future date/i.test(redactedMessage) ? 400 : 500)
+                .send(renderLayout('Message failed', `<section class="panel"><h2>Message failed</h2><p>${escapeHtml(safeMessage)}</p></section>`, req.dashboardSession.user, client));
         }
     });
 
     app.post('/embed-template/delete', requireAuth, requireCsrf, async (req, res) => {
-        const activeGuildId = getDashboardGuild(client)?.id || getDashboardConfig().guildId || getStoredConfig().guildId;
+        const activeGuildId = req.dashboardGuild?.id || getDashboardConfig().guildId || getStoredConfig().guildId;
+        const template = (await listEmbedTemplates(activeGuildId)).find(item => item.id === req.body.id);
+        if (!template) {
+            return res.status(404).send(renderLayout('Template not found', '<section class="panel"><h2>Template not found</h2><p>That template is not available for this server.</p></section>', req.dashboardSession.user, client));
+        }
         await deleteEmbedTemplate(activeGuildId, req.body.id);
         appendDashboardLog('Embed template deleted', { id: req.body.id, userId: req.dashboardSession.user.id });
         res.redirect('/sender?message=Template%20deleted');
@@ -1231,54 +1500,36 @@ function startDashboard(client) {
     app.post('/config-section', requireAuth, requireCsrf, (req, res) => {
         try {
             const section = String(req.body.section || '').trim();
-            if (!section || ['token', 'clientId', 'guildId', 'dashboard', 'database'].includes(section)) {
+            if (!editableConfigSectionPages[section]) {
                 return res.status(400).send(renderLayout('Invalid section', '<section class="panel"><h2>Invalid config section</h2><p>Use the full config editor for this section.</p></section>', req.dashboardSession.user, client));
             }
 
             const parsed = JSON.parse(req.body.json || '{}');
+            assertSafeConfigObject(parsed);
             updateConfig(config => {
+                validateConfigSectionEdit(section, parsed, config);
                 config[section] = parsed;
                 return config;
             });
             appendDashboardLog('Config section saved', { section, userId: req.dashboardSession.user.id });
-            const sectionPages = {
-                autoMod: 'moderation',
-                moderation: 'moderation',
-                tickets: 'tickets',
-                WelcomeEmbed: 'community',
-                reactionRoles: 'community',
-                rulesAgreement: 'community',
-                birthdays: 'community',
-                starboard: 'community',
-                pollTemplates: 'community',
-                leveling: 'leveling',
-                joinToCreate: 'voice',
-                youtube: 'media',
-                twitch: 'media',
-                socialAnnouncements: 'media',
-                music: 'music',
-            };
-            res.redirect(`/${sectionPages[section] || 'config'}?message=Saved`);
+            res.redirect(`/${editableConfigSectionPages[section] || 'config'}?message=Saved`);
         } catch (error) {
-            res.status(400).send(renderLayout('Invalid JSON', `<section class="panel"><h2>Invalid JSON</h2><p>${escapeHtml(error.message)}</p></section>`, req.dashboardSession.user, client));
+            res.status(400).send(renderLayout('Invalid JSON', `<section class="panel"><h2>Invalid JSON</h2><p>${escapeHtml(safeErrorMessage(error, 'Config section was not saved.'))}</p></section>`, req.dashboardSession.user, client));
         }
     });
 
     app.post('/config-json', requireAuth, requireCsrf, (req, res) => {
         try {
             const parsedConfig = JSON.parse(req.body.config);
-            const restoredConfig = restoreRedactedSecrets(parsedConfig, getStoredConfig());
-            const errors = validateConfig(restoredConfig);
-            if (errors.length) {
-                const items = errors.map(error => `<li>${escapeHtml(error)}</li>`).join('');
-                return res.status(400).send(renderLayout('Invalid config', `<section class="panel"><h2>Invalid config</h2><ul>${items}</ul><p>Use the browser back button and fix the JSON.</p></section>`, req.dashboardSession.user, client));
-            }
-
+            const restoredConfig = buildRestoredConfig(parsedConfig, getStoredConfig());
             saveConfig(restoredConfig);
             appendDashboardLog('Config saved from dashboard', { userId: req.dashboardSession.user.id });
             res.redirect('/config');
-        } catch {
-            res.status(400).send(renderLayout('Invalid JSON', '<section class="panel"><h2>Invalid JSON</h2><p>The config was not saved. Use the browser back button and fix the JSON.</p></section>', req.dashboardSession.user, client));
+        } catch (error) {
+            const message = error instanceof SyntaxError
+                ? 'The config was not saved. Use the browser back button and fix the JSON.'
+                : safeErrorMessage(error, 'The config was not saved.');
+            res.status(400).send(renderLayout('Invalid config', `<section class="panel"><h2>Invalid config</h2><p>${escapeHtml(message)}</p></section>`, req.dashboardSession.user, client));
         }
     });
 
@@ -1295,7 +1546,7 @@ function startDashboard(client) {
             appendDashboardLog('Config backup restored', { file: req.body.file, userId: req.dashboardSession.user.id });
             res.redirect('/backups?message=Backup%20restored');
         } catch (error) {
-            res.status(400).send(renderLayout('Restore failed', `<section class="panel"><h2>Restore failed</h2><p>${escapeHtml(error.message)}</p></section>`, req.dashboardSession.user, client));
+            res.status(400).send(renderLayout('Restore failed', `<section class="panel"><h2>Restore failed</h2><p>${escapeHtml(safeErrorMessage(error, 'Backup was not restored.'))}</p></section>`, req.dashboardSession.user, client));
         }
     });
 
@@ -1314,9 +1565,24 @@ function startDashboard(client) {
 }
 
 module.exports = {
+    assertSafeConfigObject,
+    buildRestoredConfig,
+    canManageDashboard,
+    createConfigBackup,
     createSessionToken,
+    getOAuthStateCount: () => {
+        cleanupExpiringMaps();
+        return states.size;
+    },
+    makeDiscordOauthUrl,
+    parseCookies,
+    requireCsrf,
     redactSensitiveConfig,
+    resolveDashboardChannel,
+    restoreConfigBackup,
     restoreRedactedSecrets,
     startDashboard,
+    userCanAdminDashboard,
+    validateConfigSectionEdit,
     verifySessionToken,
 };

@@ -2,6 +2,7 @@ const { createEmbed } = require('./embeds');
 const { findSendableChannel, truncate } = require('./discord');
 const { getConfig } = require('./config');
 const { appendDashboardLog } = require('./dashboardLogs');
+const { getGuildSettings } = require('./guildConfig');
 
 const channelKeys = {
     general: 'logChannel',
@@ -16,8 +17,7 @@ const channelKeys = {
     threadUpdate: 'threadUpdate',
 };
 
-function getLogChannel(guild, type = 'general') {
-    const config = getConfig();
+function getLogChannel(guild, type = 'general', config = getConfig()) {
     const channelKey = channelKeys[type] || channelKeys.general;
     const channelId = config.logChannels?.[channelKey] || config.logChannels?.logChannel;
     return findSendableChannel(guild, channelId, 'logs');
@@ -43,7 +43,8 @@ function getLogAuthor(user) {
 }
 
 async function sendLog(guild, options = {}) {
-    const settings = getLoggingSettings();
+    const config = guild?.id ? await getGuildSettings(guild.id) : getConfig();
+    const settings = getLoggingSettings(config);
 
     appendDashboardLog(options.title || 'Log event', {
         type: options.type || 'general',
@@ -51,7 +52,7 @@ async function sendLog(guild, options = {}) {
         description: options.description ? truncate(options.description, 500) : '',
     });
 
-    const channel = getLogChannel(guild, options.type);
+    const channel = getLogChannel(guild, options.type, config);
     if (!channel) return false;
 
     const embed = createEmbed({

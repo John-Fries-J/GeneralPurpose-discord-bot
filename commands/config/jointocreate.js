@@ -1,7 +1,7 @@
 const { ChannelType, PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
-const { getConfig, updateConfig } = require('../../utils/config');
 const { createEmbed } = require('../../utils/embeds');
 const { deleteJoinToCreateChannels } = require('../../utils/joinToCreate');
+const { getGuildSettings, updateJoinToCreateSettings } = require('../../utils/guildConfig');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -29,31 +29,30 @@ module.exports = {
             const nameFormat = interaction.options.getString('name_format') || "{username}'s Channel";
             const userLimitMax = interaction.options.getInteger('max_limit') || 25;
 
-            updateConfig(config => {
-                config.joinToCreate = {
-                    enabled: true,
-                    triggerChannelId: triggerChannel.id,
-                    categoryId: category?.id || triggerChannel.parentId || '',
-                    nameFormat,
-                    userLimitMax,
-                };
-                return config;
+            await updateJoinToCreateSettings(interaction.guild.id, {
+                enabled: true,
+                triggerChannelId: triggerChannel.id,
+                categoryId: category?.id || triggerChannel.parentId || '',
+                nameFormat,
+                userLimitMax,
+            }, {
+                actorId: interaction.user.id,
+                source: 'command',
             });
 
             return interaction.reply({ content: `Join-to-create enabled using <#${triggerChannel.id}>.`, flags: 64 });
         }
 
         if (subcommand === 'disable') {
-            updateConfig(config => {
-                config.joinToCreate ||= {};
-                config.joinToCreate.enabled = false;
-                return config;
+            await updateJoinToCreateSettings(interaction.guild.id, { enabled: false }, {
+                actorId: interaction.user.id,
+                source: 'command',
             });
             const deleted = await deleteJoinToCreateChannels(interaction.guild);
             return interaction.reply({ content: `Join-to-create disabled. Deleted ${deleted} active temporary voice channel${deleted === 1 ? '' : 's'}.`, flags: 64 });
         }
 
-        const settings = getConfig().joinToCreate || {};
+        const settings = (await getGuildSettings(interaction.guild.id)).joinToCreate || {};
         const embed = createEmbed({
             title: 'Join-to-Create Settings',
             color: settings.enabled ? 'green' : 'orange',
