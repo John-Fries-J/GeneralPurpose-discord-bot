@@ -3,6 +3,7 @@ const { createEmbed } = require('../../utils/embeds');
 const {
     formatXp,
     formatProgressBar,
+    getGuildLevelingConfig,
     getLevelProgress,
     getUserLevelRecord,
     listLevelLeaderboard,
@@ -28,7 +29,8 @@ module.exports = {
             });
         }
 
-        const progress = getLevelProgress(record);
+        const settings = await getGuildLevelingConfig(interaction.guild.id);
+        const progress = getLevelProgress(record, settings);
         const percent = Math.floor(progress.percent * 100);
         const leaderboard = await listLevelLeaderboard(interaction.guild.id, 1000, 'total');
         const placement = leaderboard.findIndex(item => item.userId === user.id);

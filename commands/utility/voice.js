@@ -1,6 +1,5 @@
 const { MessageFlags, PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
-const { getConfig } = require('../../utils/config');
-const { deleteTemporaryVoiceChannel, getOwnedVoiceChannel, transferOwnership } = require('../../utils/joinToCreate');
+const { deleteTemporaryVoiceChannel, getGuildJoinToCreateConfig, getOwnedVoiceChannel, transferOwnership } = require('../../utils/joinToCreate');
 const { getTempVoiceChannel, upsertTempVoiceChannel } = require('../../utils/store');
 const { createVoicePanelPayload } = require('../../utils/voicePanel');
 
@@ -71,7 +70,7 @@ module.exports = {
 
         if (subcommand === 'limit') {
             const amount = interaction.options.getInteger('amount', true);
-            const max = Number(getConfig().joinToCreate?.userLimitMax || 25);
+            const max = Number((await getGuildJoinToCreateConfig(interaction.guild.id)).userLimitMax || 25);
             if (amount > max) {
                 return interaction.reply({ content: `The maximum allowed limit is ${max}.`, flags: MessageFlags.Ephemeral });
             }

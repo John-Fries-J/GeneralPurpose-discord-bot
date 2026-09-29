@@ -1,20 +1,25 @@
 const { getConfig } = require('./config');
+const { getGuildSettings } = require('./guildConfig');
 const { addUserXp, getUserLevelRecord, listLevelLeaderboard } = require('./store');
 
 function getLevelingConfig(config = getConfig()) {
     return {
         enabled: config.leveling?.enabled === true,
         mode: config.leveling?.mode || 'text',
-        textXpPerMessage: Number(config.leveling?.textXpPerMessage || 1),
-        voiceXpPerMinute: Number(config.leveling?.voiceXpPerMinute || 1),
-        cooldownSeconds: Number(config.leveling?.cooldownSeconds || 60),
+        textXpPerMessage: Number(config.leveling?.textXpPerMessage ?? 1),
+        voiceXpPerMinute: Number(config.leveling?.voiceXpPerMinute ?? 1),
+        cooldownSeconds: Number(config.leveling?.cooldownSeconds ?? 60),
         roleRewards: Array.isArray(config.leveling?.roleRewards) ? config.leveling.roleRewards : [],
         ignoredChannelIds: Array.isArray(config.leveling?.ignoredChannelIds) ? config.leveling.ignoredChannelIds : [],
         ignoredRoleIds: Array.isArray(config.leveling?.ignoredRoleIds) ? config.leveling.ignoredRoleIds : [],
         roleMultipliers: Array.isArray(config.leveling?.roleMultipliers) ? config.leveling.roleMultipliers : [],
         channelMultipliers: Array.isArray(config.leveling?.channelMultipliers) ? config.leveling.channelMultipliers : [],
-        xpPerLevelBase: Number(config.leveling?.xpPerLevelBase || 100),
+        xpPerLevelBase: Number(config.leveling?.xpPerLevelBase ?? 100),
     };
+}
+
+async function getGuildLevelingConfig(guildId) {
+    return getLevelingConfig(await getGuildSettings(guildId));
 }
 
 function allowsTextXp(settings) {
@@ -103,8 +108,9 @@ async function applyLevelRoles(member, record, settings = getLevelingConfig()) {
 }
 
 async function awardTextXp(message) {
-    const settings = getLevelingConfig();
-    if (!allowsTextXp(settings) || !message.guild || message.author?.bot) return null;
+    if (!message.guild || message.author?.bot) return null;
+    const settings = await getGuildLevelingConfig(message.guild.id);
+    if (!allowsTextXp(settings) || message.author?.bot) return null;
     if (isIgnoredForXp(message.member, message.channelId, settings)) return null;
 
     const amount = Math.round(settings.textXpPerMessage * getMultiplier(message.member, message.channelId, settings));
@@ -124,11 +130,12 @@ async function awardTextXp(message) {
 }
 
 async function awardVoiceXp(client) {
-    const settings = getLevelingConfig();
-    if (!allowsVoiceXp(settings)) return { awarded: 0 };
     let awarded = 0;
 
     for (const guild of client.guilds.cache.values()) {
+        const settings = await getGuildLevelingConfig(guild.id);
+        if (!allowsVoiceXp(settings)) continue;
+
         for (const channel of guild.channels.cache.values()) {
             if (!channel.isVoiceBased?.()) continue;
 
@@ -161,6 +168,7 @@ module.exports = {
     awardVoiceXp,
     getLevelingConfig,
     getLevelProgress,
+    getGuildLevelingConfig,
     getMultiplier,
     getTotalXp,
     getUserLevelRecord,

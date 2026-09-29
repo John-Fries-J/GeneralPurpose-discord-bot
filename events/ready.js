@@ -3,6 +3,7 @@ const { getConfig } = require('../utils/config');
 const language = require('../utils/language');
 const { createEmbed } = require('../utils/embeds');
 const { findSendableChannel } = require('../utils/discord');
+const { getGuildSettings } = require('../utils/guildConfig');
 const { bootstrapNameless } = require('../utils/namelessmc');
 const { initializeStorage } = require('../utils/store');
 const { createScheduler } = require('../services/scheduler');
@@ -54,8 +55,11 @@ module.exports = {
             client.user.setPresence({ activities: [{ name: config.statusName }] });
         }
 
-        const channel = findSendableChannel(client.guilds.cache.get(config.guildId), config.logChannels?.logChannel, 'logs')
-            || client.channels.cache.get(config.logChannels?.logChannel);
+        const guild = client.guilds.cache.get(config.guildId);
+        const guildConfig = guild ? await getGuildSettings(guild.id) : config;
+        const readyLogChannelId = guildConfig.logChannels?.logChannel || config.logChannels?.logChannel;
+        const channel = findSendableChannel(guild, readyLogChannelId, 'logs')
+            || client.channels.cache.get(readyLogChannelId);
 
         if (!channel?.send) return;
 

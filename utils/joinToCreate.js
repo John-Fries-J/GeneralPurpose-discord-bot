@@ -1,5 +1,6 @@
 const { ChannelType, PermissionFlagsBits } = require('discord.js');
 const { getConfig } = require('./config');
+const { getGuildSettings } = require('./guildConfig');
 const { getTempVoiceChannel, listTempVoiceChannelsForGuild, removeTempVoiceChannel, upsertTempVoiceChannel } = require('./store');
 
 const emptyDeletionTimers = new Map();
@@ -11,9 +12,13 @@ function getJoinToCreateConfig(config = getConfig()) {
         triggerChannelId: config.joinToCreate?.triggerChannelId || '',
         categoryId: config.joinToCreate?.categoryId || '',
         nameFormat: config.joinToCreate?.nameFormat || "{username}'s Channel",
-        userLimitMax: Number(config.joinToCreate?.userLimitMax || 25),
-        emptyGraceMs: Number(config.joinToCreate?.emptyGraceMs || 10_000),
+        userLimitMax: Number(config.joinToCreate?.userLimitMax ?? 25),
+        emptyGraceMs: Number(config.joinToCreate?.emptyGraceMs ?? 10_000),
     };
+}
+
+async function getGuildJoinToCreateConfig(guildId) {
+    return getJoinToCreateConfig(await getGuildSettings(guildId));
 }
 
 async function withChannelLock(channelId, callback) {
@@ -171,7 +176,7 @@ async function deleteJoinToCreateChannels(guild) {
 }
 
 async function handleJoinToCreate(oldState, newState) {
-    const settings = getJoinToCreateConfig();
+    const settings = await getGuildJoinToCreateConfig(newState.guild.id);
     if (!settings.enabled) return;
 
     if (newState.channelId === settings.triggerChannelId && oldState.channelId !== newState.channelId) {
@@ -308,6 +313,7 @@ module.exports = {
     deleteTemporaryVoiceChannel,
     formatVoiceChannelName,
     getJoinToCreateConfig,
+    getGuildJoinToCreateConfig,
     getOwnedVoiceChannel,
     handleJoinToCreate,
     reconcileGuildTempVoiceChannels,

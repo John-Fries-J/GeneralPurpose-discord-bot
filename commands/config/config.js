@@ -1,6 +1,7 @@
 const { ChannelType, PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
-const { getConfig, updateConfig } = require('../../utils/config');
+const { getConfig } = require('../../utils/config');
 const { createEmbed } = require('../../utils/embeds');
+const { getGuildSettings, updateLoggingSettings } = require('../../utils/guildConfig');
 const { sendLog, formatUser } = require('../../utils/logging');
 
 const logChannelChoices = [
@@ -53,6 +54,7 @@ module.exports = {
 
         if (subcommand === 'view') {
             const config = getConfig();
+            const guildConfig = await getGuildSettings(interaction.guild.id);
             const embed = createEmbed({
                 title: 'Config Summary',
                 color: 'blue',
@@ -61,10 +63,10 @@ module.exports = {
                     { name: 'Client ID', value: config.clientId || 'Not set', inline: true },
                     { name: 'Guild ID', value: config.guildId || 'Not set', inline: true },
                     { name: 'Status', value: config.statusName || 'Not set', inline: true },
-                    { name: 'Welcome Channel', value: config.welcomeID ? `<#${config.welcomeID}>` : 'Not set', inline: true },
+                    { name: 'Welcome Channel', value: guildConfig.welcomeID ? `<#${guildConfig.welcomeID}>` : 'Not set', inline: true },
                     { name: 'Suggestion Channel', value: config.suggestionID ? `<#${config.suggestionID}>` : 'Not set', inline: true },
                     { name: 'Auto Roles', value: [config.roles?.autoRoleId, ...(config.roles?.autoRoleIds || [])].filter(Boolean).map(roleId => `<@&${roleId}>`).join('\n') || 'Not set' },
-                    { name: 'Log Channels', value: Object.entries(config.logChannels || {}).map(([key, value]) => `${key}: ${value ? `<#${value}>` : 'Not set'}`).join('\n') || 'Not set' },
+                    { name: 'Log Channels', value: Object.entries(guildConfig.logChannels || {}).map(([key, value]) => `${key}: ${value ? `<#${value}>` : 'Not set'}`).join('\n') || 'Not set' },
                 ],
             });
 
@@ -76,10 +78,11 @@ module.exports = {
             const channel = interaction.options.getChannel('channel', true);
             const configKey = logChannelChoices.find(([name]) => name === type)?.[1];
 
-            updateConfig(config => {
-                config.logChannels ||= {};
-                config.logChannels[configKey] = channel.id;
-                return config;
+            await updateLoggingSettings(interaction.guild.id, {
+                channels: { [configKey]: channel.id },
+            }, {
+                actorId: interaction.user.id,
+                source: 'command',
             });
 
             await sendLog(interaction.guild, {

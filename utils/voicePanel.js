@@ -8,9 +8,8 @@ const {
     TextInputStyle,
     UserSelectMenuBuilder,
 } = require('discord.js');
-const { getConfig } = require('./config');
 const { createEmbed } = require('./embeds');
-const { deleteTemporaryVoiceChannel, getOwnedVoiceChannel, transferOwnership } = require('./joinToCreate');
+const { deleteTemporaryVoiceChannel, getGuildJoinToCreateConfig, getOwnedVoiceChannel, transferOwnership } = require('./joinToCreate');
 const { getTempVoiceChannel, upsertTempVoiceChannel } = require('./store');
 
 const voicePanelCustomIds = {
@@ -178,7 +177,8 @@ async function handleVoicePanelButton(interaction) {
         return true;
     }
     if (interaction.customId === voicePanelCustomIds.limit) {
-        await interaction.showModal(createLimitModal(Number(getConfig().joinToCreate?.userLimitMax || 25)));
+        const settings = await getGuildJoinToCreateConfig(interaction.guild.id);
+        await interaction.showModal(createLimitModal(Number(settings.userLimitMax || 25)));
         return true;
     }
     if (interaction.customId === voicePanelCustomIds.lock) {
@@ -237,7 +237,7 @@ async function handleVoicePanelModal(interaction) {
     if (interaction.customId === voicePanelCustomIds.limitModal) {
         const rawLimit = interaction.fields.getTextInputValue('limit').trim();
         const amount = Number(rawLimit);
-        const max = Number(getConfig().joinToCreate?.userLimitMax || 25);
+        const max = Number((await getGuildJoinToCreateConfig(interaction.guild.id)).userLimitMax || 25);
         if (!Number.isInteger(amount) || amount < 0 || amount > max) {
             await interaction.reply({ content: `Enter a whole number from 0 to ${max}.`, flags: MessageFlags.Ephemeral });
             return true;

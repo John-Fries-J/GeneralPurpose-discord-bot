@@ -1,6 +1,6 @@
 const { PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
-const { getConfig, updateConfig } = require('../../utils/config');
 const { createEmbed } = require('../../utils/embeds');
+const { getGuildSettings, updateLevelingSettings } = require('../../utils/guildConfig');
 
 const modeChoices = [
     { name: 'Text only', value: 'text' },
@@ -40,24 +40,25 @@ module.exports = {
         const subcommand = interaction.options.getSubcommand();
 
         if (subcommand === 'enable') {
-            updateConfig(config => {
-                config.leveling ||= {};
-                config.leveling.enabled = true;
-                config.leveling.mode = interaction.options.getString('mode', true);
-                config.leveling.textXpPerMessage = interaction.options.getInteger('text_xp') ?? config.leveling.textXpPerMessage ?? 1;
-                config.leveling.voiceXpPerMinute = interaction.options.getInteger('voice_xp') ?? config.leveling.voiceXpPerMinute ?? 1;
-                config.leveling.cooldownSeconds = interaction.options.getInteger('cooldown') ?? config.leveling.cooldownSeconds ?? 60;
-                config.leveling.roleRewards ||= [];
-                return config;
+            const current = (await getGuildSettings(interaction.guild.id)).leveling;
+            await updateLevelingSettings(interaction.guild.id, {
+                enabled: true,
+                mode: interaction.options.getString('mode', true),
+                textXpPerMessage: interaction.options.getInteger('text_xp') ?? current.textXpPerMessage ?? 1,
+                voiceXpPerMinute: interaction.options.getInteger('voice_xp') ?? current.voiceXpPerMinute ?? 1,
+                cooldownSeconds: interaction.options.getInteger('cooldown') ?? current.cooldownSeconds ?? 60,
+                roleRewards: current.roleRewards || [],
+            }, {
+                actorId: interaction.user.id,
+                source: 'command',
             });
             return interaction.reply({ content: 'Leveling enabled.', flags: 64 });
         }
 
         if (subcommand === 'disable') {
-            updateConfig(config => {
-                config.leveling ||= {};
-                config.leveling.enabled = false;
-                return config;
+            await updateLevelingSettings(interaction.guild.id, { enabled: false }, {
+                actorId: interaction.user.id,
+                source: 'command',
             });
             return interaction.reply({ content: 'Leveling disabled.', flags: 64 });
         }
@@ -65,27 +66,29 @@ module.exports = {
         if (subcommand === 'add-role') {
             const xp = interaction.options.getInteger('xp', true);
             const role = interaction.options.getRole('role', true);
-            updateConfig(config => {
-                config.leveling ||= {};
-                config.leveling.roleRewards = (config.leveling.roleRewards || []).filter(reward => reward.roleId !== role.id);
-                config.leveling.roleRewards.push({ xp, roleId: role.id });
-                config.leveling.roleRewards.sort((a, b) => a.xp - b.xp);
-                return config;
+            const current = (await getGuildSettings(interaction.guild.id)).leveling;
+            const roleRewards = (current.roleRewards || []).filter(reward => reward.roleId !== role.id);
+            roleRewards.push({ xp, roleId: role.id });
+            roleRewards.sort((a, b) => a.xp - b.xp);
+            await updateLevelingSettings(interaction.guild.id, { roleRewards }, {
+                actorId: interaction.user.id,
+                source: 'command',
             });
             return interaction.reply({ content: `<@&${role.id}> will be awarded at ${xp} total XP.`, flags: 64 });
         }
 
         if (subcommand === 'remove-role') {
             const role = interaction.options.getRole('role', true);
-            updateConfig(config => {
-                config.leveling ||= {};
-                config.leveling.roleRewards = (config.leveling.roleRewards || []).filter(reward => reward.roleId !== role.id);
-                return config;
+            const current = (await getGuildSettings(interaction.guild.id)).leveling;
+            const roleRewards = (current.roleRewards || []).filter(reward => reward.roleId !== role.id);
+            await updateLevelingSettings(interaction.guild.id, { roleRewards }, {
+                actorId: interaction.user.id,
+                source: 'command',
             });
             return interaction.reply({ content: `Removed reward for <@&${role.id}>.`, flags: 64 });
         }
 
-        const settings = getConfig().leveling || {};
+        const settings = (await getGuildSettings(interaction.guild.id)).leveling || {};
         const embed = createEmbed({
             title: 'Level Settings',
             color: settings.enabled ? 'green' : 'orange',
