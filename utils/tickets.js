@@ -129,6 +129,31 @@ function createSafeTicketName(user) {
     return `ticket-${safeName || user.id}`;
 }
 
+function formatTicketRelative(timestamp) {
+    return timestamp ? `<t:${Math.floor(Number(timestamp) / 1000)}:R>` : 'Unknown';
+}
+
+function createTicketHeaderEmbed(record = {}, options = {}) {
+    const status = record.status || options.status || 'open';
+    const fields = [
+        { name: 'Ticket #', value: record.channelId ? `<#${record.channelId}>` : options.channelName || 'Pending', inline: true },
+        { name: 'Opened by', value: record.openerId ? `<@${record.openerId}>` : 'Unknown', inline: true },
+        { name: 'Claimed by', value: record.claimedById ? `<@${record.claimedById}>` : 'Unclaimed', inline: true },
+        { name: 'Status', value: status, inline: true },
+        { name: 'Priority', value: record.priority || 'normal', inline: true },
+        { name: 'Created', value: formatTicketRelative(record.createdAt), inline: true },
+        record.tags?.length ? { name: 'Tags', value: record.tags.join(', ') } : null,
+        record.closeReason ? { name: 'Close reason', value: record.closeReason } : null,
+    ].filter(Boolean);
+
+    return createEmbed({
+        title: options.title || `Ticket ${status}`,
+        description: options.description || 'Ticket metadata and controls are persisted for restart-safe management.',
+        color: options.color || (status === 'closed' ? 'red' : 'green'),
+        fields,
+    });
+}
+
 function createCloseTicketModal() {
     return new ModalBuilder()
         .setCustomId(customIds.closeModal)
@@ -274,23 +299,7 @@ async function openTicket(interaction) {
         ],
     });
 
-    const ticketEmbed = createEmbed({
-        title: language.tickets.createdTitle,
-        description: language.tickets.createdDescription,
-        color: 'green',
-        fields: [
-            { name: 'Opened by', value: `<@${interaction.user.id}>`, inline: true },
-            { name: 'Support role', value: `<@&${ticketConfig.supportRoleId}>`, inline: true },
-        ],
-    });
-
-    await newChannel.send({
-        content: `<@${interaction.user.id}> <@&${ticketConfig.supportRoleId}>`,
-        embeds: [ticketEmbed],
-        components: createTicketControls('open'),
-    });
-
-    await upsertTicketRecord({
+    const record = await upsertTicketRecord({
         guildId: interaction.guild.id,
         channelId: newChannel.id,
         openerId: interaction.user.id,
@@ -299,6 +308,16 @@ async function openTicket(interaction) {
         priority: 'normal',
         tags: [],
         lastActivityAt: Date.now(),
+    });
+
+    await newChannel.send({
+        content: `<@${interaction.user.id}> <@&${ticketConfig.supportRoleId}>`,
+        embeds: [createTicketHeaderEmbed(record, {
+            title: language.tickets.createdTitle,
+            description: language.tickets.createdDescription,
+            color: 'green',
+        })],
+        components: createTicketControls('open'),
     });
 
     await sendLog(interaction.guild, {
@@ -607,12 +626,7 @@ async function showTicketStatus(interaction) {
     if (!record) return interaction.reply({ content: 'No ticket metadata was found for this channel.', flags: 64 });
 
     return interaction.reply({
-        content: [
-            `Status: ${record.status}`,
-            `Priority: ${record.priority}`,
-            `Claimed by: ${record.claimedById ? `<@${record.claimedById}>` : 'Unclaimed'}`,
-            `Tags: ${record.tags?.length ? record.tags.join(', ') : 'None'}`,
-        ].join('\n'),
+        embeds: [createTicketHeaderEmbed(record, { title: 'Ticket Status', color: 'blue' })],
         flags: 64,
     });
 }
@@ -629,6 +643,7 @@ async function listTickets(interaction) {
         record.status,
         record.priority,
         record.claimedById ? `claimed by <@${record.claimedById}>` : 'unclaimed',
+        record.createdAt ? `opened <t:${Math.floor(record.createdAt / 1000)}:R>` : '',
         record.tags?.length ? `[${record.tags.join(', ')}]` : '',
     ].filter(Boolean).join(' - '));
 
@@ -756,7 +771,7 @@ async function closeTicket(interaction, options = {}) {
     await channel.setName(channel.name.replace('ticket-', 'closed-'));
     const closedAt = Date.now();
     const closeReason = options.reason?.trim() || null;
-    await upsertTicketRecord({
+    const record = await upsertTicketRecord({
         guildId: interaction.guild.id,
         channelId: channel.id,
         status: 'closed',
@@ -765,14 +780,10 @@ async function closeTicket(interaction, options = {}) {
         lastActivityAt: closedAt,
     });
 
-    const closedEmbed = createEmbed({
+    const closedEmbed = createTicketHeaderEmbed(record, {
         title: language.tickets.closedTitle,
-        description: language.tickets.closedDescription,
+        description: `${language.tickets.closedDescription}\n\nClosed by <@${interaction.user.id}>.`,
         color: 'red',
-        fields: [
-            { name: 'Closed by', value: `<@${interaction.user.id}>` },
-            closeReason ? { name: 'Reason', value: closeReason } : null,
-        ].filter(Boolean),
     });
 
     await sendLog(interaction.guild, {
@@ -962,6 +973,7 @@ module.exports = {
     closeTicket,
     createCloseTicketModal,
     createRenameTicketModal,
+    createTicketHeaderEmbed,
     createTicketPanel,
     createTicketControls,
     customIds,

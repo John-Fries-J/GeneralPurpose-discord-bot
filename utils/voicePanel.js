@@ -20,6 +20,8 @@ const voicePanelCustomIds = {
     lock: 'voice:panel:lock',
     unlock: 'voice:panel:unlock',
     delete: 'voice:panel:delete',
+    confirmDelete: 'voice:panel:delete-confirm',
+    cancelDelete: 'voice:panel:delete-cancel',
     transfer: 'voice:panel:transfer',
     permit: 'voice:panel:permit',
     reject: 'voice:panel:reject',
@@ -192,6 +194,21 @@ async function handleVoicePanelButton(interaction) {
         return true;
     }
     if (interaction.customId === voicePanelCustomIds.delete) {
+        await interaction.reply({
+            content: `Delete <#${owned.channel.id}>? This disconnects members and removes the temporary channel.`,
+            components: [new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId(voicePanelCustomIds.confirmDelete).setLabel('Delete Channel').setStyle(ButtonStyle.Danger),
+                new ButtonBuilder().setCustomId(voicePanelCustomIds.cancelDelete).setLabel('Cancel').setStyle(ButtonStyle.Secondary),
+            )],
+            flags: MessageFlags.Ephemeral,
+        });
+        return true;
+    }
+    if (interaction.customId === voicePanelCustomIds.cancelDelete) {
+        await interaction.reply({ content: 'Delete cancelled.', flags: MessageFlags.Ephemeral });
+        return true;
+    }
+    if (interaction.customId === voicePanelCustomIds.confirmDelete) {
         await interaction.reply({ content: 'Deleting your temporary voice channel.', flags: MessageFlags.Ephemeral });
         await deleteTemporaryVoiceChannel(interaction.guild, owned.channel.id, 'Voice owner deleted temporary channel from panel', { force: true });
         return true;

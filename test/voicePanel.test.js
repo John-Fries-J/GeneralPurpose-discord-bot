@@ -5,7 +5,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { closeDatabase } = require('../database');
 const { upsertTempVoiceChannel } = require('../utils/store');
-const { createVoicePanelPayload } = require('../utils/voicePanel');
+const { createVoicePanelPayload, handleVoicePanelButton, voicePanelCustomIds } = require('../utils/voicePanel');
 
 function withEnvironment(environment) {
     const previous = {};
@@ -68,6 +68,48 @@ test('createVoicePanelPayload shows persisted temporary voice channel details', 
         assert.equal(fields['User limit'], '5');
         assert.equal(fields.Created, '<t:1700000000:R>');
         assert.equal(payload.components.length, 5);
+    } finally {
+        restore();
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('voice panel delete button requires confirmation', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'bot-voice-panel-'));
+    const restore = withEnvironment({
+        DATABASE_PROVIDER: 'sqlite',
+        DATABASE_SQLITE_PATH: path.join(directory, 'state.sqlite'),
+        DATABASE_JSON_PATH: path.join(directory, 'missing.json'),
+    });
+
+    try {
+        await upsertTempVoiceChannel({
+            guildId: 'guild',
+            channelId: 'voice',
+            ownerId: 'owner',
+            name: 'Focus Room',
+            createdAt: Date.now(),
+        });
+        const replies = [];
+        const handled = await handleVoicePanelButton({
+            customId: voicePanelCustomIds.delete,
+            guild: { id: 'guild' },
+            user: { id: 'owner' },
+            member: {
+                voice: {
+                    channel: {
+                        id: 'voice',
+                        name: 'Focus Room',
+                    },
+                },
+            },
+            isButton: () => true,
+            reply: async payload => replies.push(payload),
+        });
+
+        assert.equal(handled, true);
+        assert.match(replies[0].content, /Delete <#voice>/);
+        assert.equal(replies[0].components[0].toJSON().components[0].custom_id, voicePanelCustomIds.confirmDelete);
     } finally {
         restore();
         fs.rmSync(directory, { recursive: true, force: true });
