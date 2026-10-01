@@ -39,6 +39,7 @@ function createEmptyState() {
         guildLogChannels: [],
         guildLevelRewards: [],
         configAudit: [],
+        limitedAccounts: [],
     };
 }
 
@@ -249,6 +250,7 @@ function clearNormalizedState(db) {
         DELETE FROM guild_level_rewards;
         DELETE FROM guild_log_channels;
         DELETE FROM guild_settings;
+        DELETE FROM honeypot_limited_accounts;
     `);
 }
 
@@ -330,6 +332,126 @@ async function getTempMute(guildId, userId) {
     const settings = getStorageSettings();
     if (settings.provider === 'sqlite') return repository.getTempMute(await getSqliteDb(), guildId, userId);
     return (await readState()).tempMutes.find(item => item.guildId === guildId && item.userId === userId) || null;
+}
+
+function normalizeLimitedAccount(record, overrides = {}) {
+    const timestamp = overrides.timestamp || Date.now();
+    return {
+        guildId: record.guildId,
+        userId: record.userId,
+        previousRoleIds: Array.isArray(record.previousRoleIds) ? [...new Set(record.previousRoleIds.map(String))] : [],
+        limitedRoleId: record.limitedRoleId,
+        limitedChannelId: record.limitedChannelId || null,
+        limitedBy: record.limitedBy || null,
+        limitedAt: record.limitedAt || timestamp,
+        restoredBy: record.restoredBy || null,
+        restoredAt: record.restoredAt || null,
+        restorationSource: record.restorationSource || null,
+        status: record.status || 'active',
+        createdAt: record.createdAt || timestamp,
+        updatedAt: record.updatedAt || timestamp,
+    };
+}
+
+async function getLimitedAccount(guildId, userId) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.getLimitedAccount(await getSqliteDb(), guildId, userId);
+    return ((await readState()).limitedAccounts || []).find(item => item.guildId === guildId && item.userId === userId) || null;
+}
+
+async function listLimitedAccounts(guildId = null) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listLimitedAccounts(await getSqliteDb(), guildId);
+    return ((await readState()).limitedAccounts || [])
+        .filter(item => !guildId || item.guildId === guildId)
+        .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
+}
+
+async function upsertLimitedAccount(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.upsertLimitedAccount(await getSqliteDb(), record);
+
+    let saved = null;
+    await useLegacyStateMutation(state => {
+        state.limitedAccounts ||= [];
+        saved = normalizeLimitedAccount(record);
+        state.limitedAccounts = state.limitedAccounts.filter(item => !(item.guildId === saved.guildId && item.userId === saved.userId));
+        state.limitedAccounts.push(saved);
+        return state;
+    });
+    return saved;
+}
+
+async function beginLimitedAccount(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.beginLimitedAccount(await getSqliteDb(), record);
+
+    let result = null;
+    await useLegacyStateMutation(state => {
+        state.limitedAccounts ||= [];
+        const existing = state.limitedAccounts.find(item => item.guildId === record.guildId && item.userId === record.userId) || null;
+        if (existing?.status === 'active') {
+            result = { ok: false, record: existing };
+            return state;
+        }
+
+        const account = normalizeLimitedAccount({
+            ...record,
+            restoredBy: null,
+            restoredAt: null,
+            restorationSource: null,
+            status: 'active',
+        });
+        state.limitedAccounts = state.limitedAccounts.filter(item => !(item.guildId === account.guildId && item.userId === account.userId));
+        state.limitedAccounts.push(account);
+        result = { ok: true, record: account };
+        return state;
+    });
+    return result;
+}
+
+async function markLimitedAccountRestored(guildId, userId, options = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.markLimitedAccountRestored(await getSqliteDb(), guildId, userId, options);
+
+    let updated = null;
+    await useLegacyStateMutation(state => {
+        state.limitedAccounts ||= [];
+        const record = state.limitedAccounts.find(item => item.guildId === guildId && item.userId === userId) || null;
+        if (!record) return state;
+        if (record.status === 'restored') {
+            updated = record;
+            return state;
+        }
+
+        const timestamp = options.restoredAt || Date.now();
+        record.status = 'restored';
+        record.restoredBy = options.restoredBy || null;
+        record.restoredAt = timestamp;
+        record.restorationSource = options.restorationSource || 'unknown';
+        record.updatedAt = timestamp;
+        updated = record;
+        return state;
+    });
+    return updated;
+}
+
+async function markLimitedAccountFailed(guildId, userId, options = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.markLimitedAccountFailed(await getSqliteDb(), guildId, userId, options);
+
+    let updated = null;
+    await useLegacyStateMutation(state => {
+        state.limitedAccounts ||= [];
+        const record = state.limitedAccounts.find(item => item.guildId === guildId && item.userId === userId) || null;
+        if (!record) return state;
+        record.status = 'failed';
+        record.restorationSource = options.source || 'limit_failed';
+        record.updatedAt = options.updatedAt || Date.now();
+        updated = record;
+        return state;
+    });
+    return updated;
 }
 
 async function createModerationCase(record) {
@@ -1206,6 +1328,7 @@ module.exports = {
     getTempMute,
     getModerationCase,
     getGuildConfigurationOverrides,
+    getLimitedAccount,
     getRetentionSettings,
     getTempVoiceChannel,
     getTicketRecord,
@@ -1219,6 +1342,7 @@ module.exports = {
     listExpiredTempBans,
     listExpiredTempMutes,
     listExpiredTempRoles,
+    listLimitedAccounts,
     listLevelLeaderboard,
     listDueScheduledMessages,
     listConfigAudit,
@@ -1242,9 +1366,13 @@ module.exports = {
     updateReminderStatus,
     markScheduledJobFinish,
     markScheduledJobStart,
+    markLimitedAccountFailed,
+    markLimitedAccountRestored,
     updateScheduledMessageStatus,
     updateModerationCaseReason,
     upsertEmbedTemplate,
+    beginLimitedAccount,
+    upsertLimitedAccount,
     upsertStarboardMessage,
     upsertTempBan,
     upsertTempMute,

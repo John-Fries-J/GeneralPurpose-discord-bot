@@ -1,5 +1,6 @@
 const { makeId } = require('./ids');
 const historyRepository = require('./historyRepository');
+const honeypotLimitedAccountsRepository = require('./honeypotLimitedAccountsRepository');
 const { now, parseJson, pruneTableByNewest, stringify } = require('./shared');
 
 function mapCase(row) {
@@ -173,6 +174,7 @@ function readState(db) {
         guildLogChannels: listAllGuildLogChannels(db),
         guildLevelRewards: listAllGuildLevelRewards(db),
         configAudit: listConfigAudit(db, null, { limit: 1000 }),
+        limitedAccounts: honeypotLimitedAccountsRepository.listLimitedAccounts(db),
     };
 }
 
@@ -881,11 +883,13 @@ function importState(db, state = {}) {
         `).run(record.guildId, record.roleId, Number(record.xp || 0), record.updatedBy || null, record.createdAt || now(), record.updatedAt || now());
     });
     count('configAudit', state.configAudit, record => addConfigAuditEntries(db, [record]));
+    count('limitedAccounts', state.limitedAccounts, record => honeypotLimitedAccountsRepository.upsertLimitedAccount(db, record));
 
     return counts;
 }
 
 module.exports = {
+    ...honeypotLimitedAccountsRepository,
     addModNote,
     addUserHistory,
     addUserXp,

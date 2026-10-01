@@ -3,6 +3,7 @@ module.exports = {
     moderation: require('./moderationRepository'),
     tickets: require('./ticketsRepository'),
     guildSettings: require('./guildSettingsRepository'),
+    honeypotLimitedAccounts: require('./honeypotLimitedAccountsRepository'),
     leveling: require('./levelingRepository'),
     history: require('./historyRepository'),
     scheduler: require('./schedulerRepository'),
