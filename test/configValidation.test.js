@@ -70,3 +70,52 @@ test('validateConfig validates retention limits', () => {
     assert(errors.includes('retention.commandUsageMaxEntries must be an integer from 1 to 1000000.'));
     assert(errors.includes('retention.voiceActivityMaxEntries must be an integer from 1 to 1000000.'));
 });
+
+test('validateConfig accepts expanded honeypot settings', () => {
+    const errors = validateConfig({
+        honeypot: {
+            enabled: true,
+            channelId: 'honeypot',
+            alertChannelId: 'alerts',
+            mentionId: 'moderators',
+            mentionType: 'role',
+            actions: {
+                limit: true,
+                softban: true,
+                timeout: true,
+                ignore: true,
+            },
+            timeoutDurationMs: 3600000,
+            limitedAccount: {
+                enabled: true,
+                roleId: 'limited',
+                channelId: 'recovery',
+                panelMessageId: 'panel',
+                restoreButton: true,
+                removeExistingRoles: true,
+            },
+        },
+    });
+
+    assert.deepEqual(errors, []);
+});
+
+test('validateConfig rejects invalid expanded honeypot settings', () => {
+    const errors = validateConfig({
+        honeypot: {
+            actions: {
+                limit: 'yes',
+            },
+            timeoutDurationMs: 0,
+            limitedAccount: {
+                enabled: 'yes',
+                roleId: 123,
+            },
+        },
+    });
+
+    assert(errors.includes('honeypot.actions.limit must be a boolean.'));
+    assert(errors.includes('honeypot.timeoutDurationMs must be an integer from 1000 to 2419200000.'));
+    assert(errors.includes('honeypot.limitedAccount.enabled must be a boolean.'));
+    assert(errors.includes('honeypot.limitedAccount.roleId must be a string.'));
+});
