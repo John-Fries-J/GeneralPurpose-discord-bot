@@ -28,6 +28,15 @@ function validateInteger(errors, config, path, { min = Number.MIN_SAFE_INTEGER, 
     }
 }
 
+function validateObject(errors, config, path) {
+    const value = path.split('.').reduce((current, part) => current?.[part], config);
+    if (value !== undefined && !isPlainObject(value)) {
+        errors.push(`${path} must be an object.`);
+        return false;
+    }
+    return value === undefined || isPlainObject(value);
+}
+
 function validateConfig(config, options = {}) {
     const errors = [];
 
@@ -128,6 +137,23 @@ function validateConfig(config, options = {}) {
             validateString(errors, config, 'honeypot.mentionType');
             if (config.honeypot.mentionType !== undefined && config.honeypot.mentionType !== '' && !['user', 'role'].includes(config.honeypot.mentionType)) {
                 errors.push('honeypot.mentionType must be "user", "role", or an empty string.');
+            }
+            validateInteger(errors, config, 'honeypot.timeoutDurationMs', { min: 1_000, max: 2_419_200_000 });
+
+            if (validateObject(errors, config, 'honeypot.actions') && config.honeypot.actions) {
+                validateBoolean(errors, config, 'honeypot.actions.limit');
+                validateBoolean(errors, config, 'honeypot.actions.softban');
+                validateBoolean(errors, config, 'honeypot.actions.timeout');
+                validateBoolean(errors, config, 'honeypot.actions.ignore');
+            }
+
+            if (validateObject(errors, config, 'honeypot.limitedAccount') && config.honeypot.limitedAccount) {
+                validateBoolean(errors, config, 'honeypot.limitedAccount.enabled');
+                validateString(errors, config, 'honeypot.limitedAccount.roleId');
+                validateString(errors, config, 'honeypot.limitedAccount.channelId');
+                validateString(errors, config, 'honeypot.limitedAccount.panelMessageId');
+                validateBoolean(errors, config, 'honeypot.limitedAccount.restoreButton');
+                validateBoolean(errors, config, 'honeypot.limitedAccount.removeExistingRoles');
             }
         }
     }

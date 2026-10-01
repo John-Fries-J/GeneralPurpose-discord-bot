@@ -51,7 +51,22 @@
         "channelId": "",
         "alertChannelId": "",
         "mentionId": "",
-        "mentionType": ""
+        "mentionType": "",
+        "actions": {
+            "limit": true,
+            "softban": true,
+            "timeout": true,
+            "ignore": true
+        },
+        "timeoutDurationMs": 3600000,
+        "limitedAccount": {
+            "enabled": true,
+            "roleId": "",
+            "channelId": "",
+            "panelMessageId": "",
+            "restoreButton": true,
+            "removeExistingRoles": true
+        }
     },
     "memberCounters": [],
     "youtube": {
