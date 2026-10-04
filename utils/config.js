@@ -1,10 +1,11 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const configPath = path.join(__dirname, '..', 'config.json');
+const defaultConfigPath = path.join(__dirname, '..', 'config.json');
 const exampleConfigPath = path.join(__dirname, '..', 'exampleconfig.json');
 
 const environmentConfigKeys = [
+    'CONFIG_PATH',
     'DASHBOARD_ENABLED',
     'DASHBOARD_HOST',
     'DASHBOARD_PORT',
@@ -26,6 +27,11 @@ const environmentConfigKeys = [
 function readJson(filePath, fallback = {}) {
     if (!fs.existsSync(filePath)) return fallback;
     return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+}
+
+function resolveConfigPath(env = process.env) {
+    const configuredPath = String(env.CONFIG_PATH || '').trim();
+    return path.resolve(configuredPath || defaultConfigPath);
 }
 
 function clone(value) {
@@ -157,22 +163,47 @@ function writeJsonAtomic(filePath, value) {
     fs.renameSync(temporaryPath, filePath);
 }
 
+function writeJsonIfMissing(filePath, value) {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    try {
+        fs.writeFileSync(filePath, `${JSON.stringify(value, null, 4)}\n`, { flag: 'wx' });
+        return true;
+    } catch (error) {
+        if (error.code === 'EEXIST') return false;
+        throw error;
+    }
+}
+
 class ConfigService {
-    constructor({
-        configFile = configPath,
-        exampleConfigFile = exampleConfigPath,
-        env = process.env,
-    } = {}) {
-        this.configPath = configFile;
-        this.exampleConfigPath = exampleConfigFile;
+    constructor(options = {}) {
+        const env = options.env || process.env;
+        const hasConfigPathOverride = Boolean(String(env.CONFIG_PATH || '').trim());
+
+        this.configPath = path.resolve(options.configFile || resolveConfigPath(env));
+        this.exampleConfigPath = path.resolve(options.exampleConfigFile || exampleConfigPath);
         this.env = env;
+        this.initializeMissingConfig = options.initializeMissingConfig ?? (!options.configFile && hasConfigPathOverride);
         this.snapshot = null;
         this.storedSnapshot = null;
         this.envSignature = '';
     }
 
+    initializeConfigIfMissing(fallback) {
+        if (!this.initializeMissingConfig || fs.existsSync(this.configPath)) return;
+        if (!fs.existsSync(this.exampleConfigPath)) {
+            throw new Error(`Config file does not exist at ${this.configPath} and example config was not found at ${this.exampleConfigPath}. Create the config file manually or set CONFIG_PATH to an existing JSON config.`);
+        }
+
+        try {
+            writeJsonIfMissing(this.configPath, fallback);
+        } catch (error) {
+            throw new Error(`Config file does not exist at ${this.configPath} and could not be initialized from ${this.exampleConfigPath}: ${error.message}. Create the file manually or set CONFIG_PATH to a writable JSON file path.`);
+        }
+    }
+
     loadStoredConfig() {
         const fallback = readJson(this.exampleConfigPath);
+        this.initializeConfigIfMissing(fallback);
         return prepareConfigForRuntime(readJson(this.configPath, fallback));
     }
 
@@ -221,6 +252,7 @@ class ConfigService {
 }
 
 const defaultConfigService = new ConfigService();
+const configPath = defaultConfigService.configPath;
 
 function getConfig() {
     return defaultConfigService.getConfig();
@@ -256,11 +288,13 @@ module.exports = {
     ConfigService,
     applyEnvironmentOverrides,
     configPath,
+    defaultConfigPath,
     getConfig,
     getStoredConfig,
     normalizeLegacyTwitch,
     prepareConfigForRuntime,
     refreshConfig: () => defaultConfigService.refresh(),
+    resolveConfigPath,
     saveConfig,
     updateConfig,
     getNestedValue,

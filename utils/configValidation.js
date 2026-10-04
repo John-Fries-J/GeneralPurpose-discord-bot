@@ -322,7 +322,7 @@ function validateConfig(config, options = {}) {
 function assertValidConfig(config, options) {
     const errors = validateConfig(config, options);
     if (errors.length) {
-        throw new Error(`Invalid config.json:\n- ${errors.join('\n- ')}`);
+        throw new Error(`Invalid config file:\n- ${errors.join('\n- ')}`);
     }
 }
 

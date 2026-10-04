@@ -2,7 +2,7 @@ function registerAuthRoutes(app, client, deps) {
     app.get('/login', (req, res) => {
         const currentSettings = deps.getDashboardConfig();
         if (!currentSettings.oauth.clientId || !currentSettings.oauth.clientSecret) {
-            return res.send(deps.renderLayout('Dashboard setup required', '<section class="auth-card"><h2>OAuth setup required</h2><p>Add dashboard.oauth.clientId and dashboard.oauth.clientSecret to config.json, or set DISCORD_OAUTH_CLIENT_ID and DISCORD_OAUTH_CLIENT_SECRET.</p></section>', null, client));
+            return res.send(deps.renderLayout('Dashboard setup required', '<section class="auth-card"><h2>OAuth setup required</h2><p>Add dashboard.oauth.clientId and dashboard.oauth.clientSecret to the configured bot config file, or set DISCORD_OAUTH_CLIENT_ID and DISCORD_OAUTH_CLIENT_SECRET.</p></section>', null, client));
         }
 
         return res.redirect(deps.makeDiscordOauthUrl(currentSettings));

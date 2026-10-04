@@ -6,7 +6,7 @@
     "general": {
         "commandError": "There was an error while executing this command.",
         "guildOnly": "This command can only be used in a server.",
-        "missingLogChannel": "Log channel not found. Check config.json.",
+        "missingLogChannel": "Log channel not found. Check the bot config file.",
         "noReason": "No reason provided."
     },
     "help": {
@@ -54,7 +54,7 @@
         "threadName": "Suggestion by ${user}",
         "submitted": "Your suggestion has been submitted.",
         "failed": "Failed to submit suggestion. Please try again later.",
-        "missingChannel": "Suggestion channel is not set up. Check config.json.",
+        "missingChannel": "Suggestion channel is not set up. Check the bot config file.",
         "tooLong": "Suggestions must be 1900 characters or fewer."
     },
     "welcome": {

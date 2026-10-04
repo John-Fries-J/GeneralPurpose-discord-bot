@@ -702,7 +702,7 @@ ${loggingSettingsSection}
 ${loggingDashboardSection}
 <section class="panel" id="config">
 <h2>Advanced Config JSON</h2>
-<p class="muted">This edits config.json directly. Sensitive values are redacted and preserved if left unchanged. Create a backup before risky edits.</p>
+<p class="muted">This edits the configured bot config file directly. Sensitive values are redacted and preserved if left unchanged. Create a backup before risky edits.</p>
 <form method="post" action="/config/backup" style="margin-bottom:12px">${csrfInput(session)}<input type="hidden" name="label" value="before-config-edit"><button class="secondary" type="submit">Create backup</button></form>
 <form method="post" action="/config-json">
 ${csrfInput(session)}
