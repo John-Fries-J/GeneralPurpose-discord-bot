@@ -3,30 +3,15 @@ services:
     build: .
     container_name: generalpurpose-discord-bot
     restart: unless-stopped
-    expose:
-      - "3000"
+    ports:
+      - "127.0.0.1:3000:3000"
     volumes:
-      - ./config.json:/app/config.json:ro
       - ./language.json:/app/language.json
       - ./data:/app/data
     environment:
+      CONFIG_PATH: "${CONFIG_PATH:-/app/data/config.json}"
       DASHBOARD_ENABLED: "true"
       DASHBOARD_HOST: "0.0.0.0"
       DASHBOARD_PORT: "3000"
       DASHBOARD_PUBLIC_URL: "https://${DASHBOARD_DOMAIN}"
       DISCORD_OAUTH_REDIRECT_URI: "https://${DASHBOARD_DOMAIN}/auth/discord/callback"
-
-  nginx:
-    image: nginx:1.27-alpine
-    container_name: generalpurpose-discord-bot-nginx
-    restart: unless-stopped
-    depends_on:
-      - bot
-    environment:
-      DASHBOARD_DOMAIN: "${DASHBOARD_DOMAIN}"
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./deploy/nginx/templates:/etc/nginx/templates:ro
-      - ./deploy/certs:/etc/nginx/certs:ro

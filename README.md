@@ -2,7 +2,7 @@
 
 A Discord.js v14 bot with common moderation, ticket, suggestion, welcome, logging, Twitch notification, utility commands, and an optional simple web dashboard.
 
-This project is meant to be easy to run and easy to edit. Runtime IDs and secrets live in `config.json`; public-facing text lives in `language.json`.
+This project is meant to be easy to run and easy to edit. Runtime IDs and secrets live in `config.json` by default; production Docker deployments can set `CONFIG_PATH` to use a mounted data directory instead. Public-facing text lives in `language.json`.
 
 ## Support
 
@@ -61,7 +61,7 @@ Copy-Item exampleconfig.json config.json
 npm run run
 ```
 
-The bot validates `config.json` on startup and the dashboard validates config edits before saving. If a value has the wrong shape, the error lists the exact field to fix.
+The bot validates the active config file on startup and the dashboard validates config edits before saving. If a value has the wrong shape, the error lists the exact field to fix.
 
 ## Docker
 
@@ -71,31 +71,38 @@ Build the image:
 docker build -t generalpurpose-discord-bot .
 ```
 
-Run with a mounted config:
+Run with a mounted data directory and config:
 
 ```bash
-docker run --rm -it -v "${PWD}/config.json:/app/config.json" generalpurpose-discord-bot
+mkdir -p data
+cp exampleconfig.json data/config.json
+docker run --rm -it \
+  -v "${PWD}/data:/app/data" \
+  -e CONFIG_PATH="/app/data/config.json" \
+  generalpurpose-discord-bot
 ```
 
 You can also provide the core Discord values with environment variables:
 
 ```bash
 docker run --rm -it \
+  -v "${PWD}/data:/app/data" \
+  -e CONFIG_PATH="/app/data/config.json" \
   -e DISCORD_TOKEN="your-token" \
   -e DISCORD_CLIENT_ID="your-client-id" \
   -e DISCORD_GUILD_ID="your-server-id" \
   generalpurpose-discord-bot
 ```
 
-Mount `config.json` when you need global channel IDs, roles, Twitch, or logging defaults.
+Do not bind-mount `/app/config.json` as a single writable file in production. The bot saves configuration atomically by writing a temporary file and renaming it over the configured path. Mount a writable directory such as `/app/data` and set `CONFIG_PATH=/app/data/config.json` so the rename stays inside the mounted directory. If `CONFIG_PATH` points at a missing file, the bot initializes it from `exampleconfig.json`; it will not overwrite an existing file.
 
 For the dashboard and longer temporary punishments, also mount `data/` and publish the dashboard port:
 
 ```bash
 docker run --rm -it \
   -p 3000:3000 \
-  -v "${PWD}/config.json:/app/config.json" \
   -v "${PWD}/data:/app/data" \
+  -e CONFIG_PATH="/app/data/config.json" \
   -e DASHBOARD_ENABLED="true" \
   -e DISCORD_OAUTH_CLIENT_ID="your-oauth-client-id" \
   -e DISCORD_OAUTH_CLIENT_SECRET="your-oauth-client-secret" \
@@ -105,33 +112,62 @@ docker run --rm -it \
 
 ### Dashboard With A Domain
 
-The included `docker-compose.dashboard.yml` runs the bot behind nginx. It expects TLS files at `deploy/certs/fullchain.pem` and `deploy/certs/privkey.pem`, which can come from certbot, Cloudflare origin certificates, or another certificate provider.
+The included `docker-compose.dashboard.yml` runs only the bot and binds the dashboard to `127.0.0.1:3000`, which is suitable when you already have nginx, Caddy, Traefik, Cloudflare Tunnel, or another reverse proxy on the host.
 
-1. Create a deployment env file:
+1. Create the production config under the persistent data mount:
+
+```bash
+mkdir -p data
+cp exampleconfig.json data/config.json
+```
+
+2. Create a deployment env file:
 
 ```bash
 cp deploy/dashboard.env.example .env
 ```
 
-2. Edit `.env` and set:
+3. Edit `.env` and set:
 
 ```bash
 DASHBOARD_DOMAIN=dashboard.example.com
+CONFIG_PATH=/app/data/config.json
 ```
 
-3. In the Discord Developer Portal, add this OAuth redirect URL:
+4. In the Discord Developer Portal, add this OAuth redirect URL:
 
 ```text
 https://dashboard.example.com/auth/discord/callback
 ```
 
-4. Start the dashboard stack:
+5. Start the dashboard container:
 
 ```bash
 docker compose -f docker-compose.dashboard.yml --env-file .env up -d --build
 ```
 
-5. Point your domain's DNS record at the server running Docker. nginx listens on ports `80` and `443` and proxies the dashboard to the bot container.
+6. Configure your existing reverse proxy to forward `https://dashboard.example.com` to `http://127.0.0.1:3000`.
+
+A production Compose service can be as small as:
+
+```yaml
+services:
+  bot:
+    image: generalpurpose-discord-bot
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./data:/app/data
+      - ./language.json:/app/language.json
+    environment:
+      CONFIG_PATH: /app/data/config.json
+      DASHBOARD_ENABLED: "true"
+      DASHBOARD_HOST: "0.0.0.0"
+      DASHBOARD_PORT: "3000"
+      DASHBOARD_PUBLIC_URL: "https://dashboard.example.com"
+      DISCORD_OAUTH_REDIRECT_URI: "https://dashboard.example.com/auth/discord/callback"
+```
 
 ## Web Dashboard
 
@@ -146,7 +182,7 @@ The dashboard is disabled by default.
 5. Set `dashboard.oauth.clientId` and `dashboard.oauth.clientSecret`, or use the environment variables shown above.
 6. Start the bot and open `http://localhost:3000`.
 
-Dashboard access requires Discord OAuth. Full dashboard administration is limited to users listed in `devs`, the configured guild owner, or members with `Administrator` in the configured `guildId`; `Manage Server` alone does not grant unrestricted dashboard access. The panel is split into focused pages for overview, modules, commands, community settings, tickets, temporary voice, leveling, music, language, message sending, config, backups, health, audit, and logs. It can edit structured per-guild settings, edit advanced `config.json` sections, toggle modules and commands, set per-command user/role access rules, edit `language.json` response text, send or schedule messages through the bot, manage embed templates, create redacted config backups, restore validated backups, and view recent bot/dashboard logs. Disabled commands are blocked immediately; restart the bot to refresh Discord's visible slash command list.
+Dashboard access requires Discord OAuth. Full dashboard administration is limited to users listed in `devs`, the configured guild owner, or members with `Administrator` in the configured `guildId`; `Manage Server` alone does not grant unrestricted dashboard access. The panel is split into focused pages for overview, modules, commands, community settings, tickets, temporary voice, leveling, music, language, message sending, config, backups, health, audit, and logs. It can edit structured per-guild settings, edit advanced config sections, toggle modules and commands, set per-command user/role access rules, edit `language.json` response text, send or schedule messages through the bot, manage embed templates, create redacted config backups, restore validated backups, and view recent bot/dashboard logs. Disabled commands are blocked immediately; restart the bot to refresh Discord's visible slash command list.
 
 The dashboard includes a light/dark theme toggle stored in the browser. Login sessions use signed cookies that last 30 days, so users do not need to re-authorize after every dashboard restart. Set `DASHBOARD_SESSION_SECRET` if you want a dedicated signing secret instead of using the configured dashboard OAuth secret or bot token.
 
@@ -156,6 +192,7 @@ The dashboard exposes unauthenticated `GET /health` and `GET /ready` for deploym
 
 Useful dashboard environment variables:
 
+- `CONFIG_PATH=/app/data/config.json`
 - `DASHBOARD_ENABLED=true`
 - `DASHBOARD_PORT=3000`
 - `DASHBOARD_PUBLIC_URL=http://localhost:3000`
