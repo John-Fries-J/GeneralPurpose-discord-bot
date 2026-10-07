@@ -21,6 +21,11 @@
     "check": "node scripts/check.js",
     "lint": "node scripts/lint.js",
     "test": "npm run check && node --test",
+    "activity:dev": "npm --prefix activity/client run dev",
+    "activity:build": "npm --prefix activity/client run build",
+    "activity:typecheck": "npm --prefix activity/client run typecheck",
+    "activity:lint": "npm --prefix activity/client run lint",
+    "activity:test": "npm --prefix activity/client run test",
     "start": "node index.js",
     "run": "node index.js"
   },
