@@ -1,4 +1,6 @@
 node_modules
+activity/client/node_modules
+activity/client/dist
 npm-debug.log
 .git
 .idea

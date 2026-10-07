@@ -15,6 +15,9 @@ services:
       DASHBOARD_PORT: "3000"
       DASHBOARD_PUBLIC_URL: "https://${DASHBOARD_DOMAIN}"
       DISCORD_OAUTH_REDIRECT_URI: "https://${DASHBOARD_DOMAIN}/auth/discord/callback"
+      DISCORD_ACTIVITY_ENABLED: "${DISCORD_ACTIVITY_ENABLED:-false}"
+      DISCORD_ACTIVITY_PUBLIC_URL: "https://${DASHBOARD_DOMAIN}/activity"
+      DISCORD_ACTIVITY_CLIENT_SECRET: "${DISCORD_ACTIVITY_CLIENT_SECRET:-}"
 
   nginx:
     image: nginx:1.27-alpine
