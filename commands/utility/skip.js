@@ -1,6 +1,11 @@
 const { InteractionContextType, ApplicationIntegrationType, SlashCommandBuilder } = require('discord.js');
-const { skip } = require('../../utils/music');
+const { MusicControlError, skipMusic } = require('../../services/musicControlService');
 const { createStatusPayload } = require('../../utils/musicMessages');
+
+function musicErrorMessage(error) {
+    if (error instanceof MusicControlError) return error.message;
+    return error?.message || 'There is no active music queue.';
+}
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -10,11 +15,13 @@ module.exports = {
         .setIntegrationTypes(ApplicationIntegrationType.GuildInstall),
 
     async execute(interaction) {
-        const skipped = skip(interaction.guild.id);
+        const result = await skipMusic(interaction.client, interaction.guild.id, interaction.user.id)
+            .then(() => ({ ok: true }))
+            .catch(error => ({ ok: false, error }));
         return interaction.reply(createStatusPayload(
-            skipped ? 'Skipped' : 'Nothing Playing',
-            skipped ? 'Skipped the current track.' : 'There is no active music queue.',
-            { color: skipped ? 'blue' : 'orange' },
+            result.ok ? 'Skipped' : 'Music Error',
+            result.ok ? 'Skipped the current track.' : musicErrorMessage(result.error),
+            { color: result.ok ? 'blue' : 'orange' },
         ));
     },
 };

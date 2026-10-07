@@ -1,5 +1,6 @@
 const { InteractionContextType, ApplicationIntegrationType, SlashCommandBuilder } = require('discord.js');
-const { getMusicErrorMessage, setVolume } = require('../../utils/music');
+const { getMusicErrorMessage } = require('../../utils/music');
+const { setMusicVolume } = require('../../services/musicControlService');
 const { createStatusPayload } = require('../../utils/musicMessages');
 
 module.exports = {
@@ -18,10 +19,10 @@ module.exports = {
 
     async execute(interaction) {
         try {
-            const queue = setVolume(interaction.guild.id, interaction.options.getInteger('amount', true));
+            const summary = await setMusicVolume(interaction.client, interaction.guild.id, interaction.user.id, interaction.options.getInteger('amount', true));
             return interaction.reply(createStatusPayload(
                 'Volume Updated',
-                `Playback volume is now ${queue.volume}%.`,
+                `Playback volume is now ${summary.volume}%.`,
             ));
         } catch (error) {
             return interaction.reply(createStatusPayload(
