@@ -164,6 +164,25 @@ Useful dashboard environment variables:
 - `DISCORD_OAUTH_CLIENT_SECRET=...`
 - `DISCORD_OAUTH_REDIRECT_URI=http://localhost:3000/auth/discord/callback`
 
+## Discord Activity Control Panel
+
+The optional Discord Activity serves an in-Discord control panel for Join-to-Create voice channels and music playback. It is disabled by default and uses the existing bot services as the source of truth.
+
+Useful Activity commands:
+
+- `npm run activity:dev`
+- `npm run activity:build`
+- `npm run activity:test`
+
+Useful Activity environment variables:
+
+- `DISCORD_ACTIVITY_ENABLED=true`
+- `DISCORD_ACTIVITY_PUBLIC_URL=https://bot.example.com/activity`
+- `DISCORD_ACTIVITY_CLIENT_SECRET=...`
+- `DISCORD_ACTIVITY_SESSION_SECRET=...`
+
+See `docs/DISCORD_ACTIVITY_SETUP.md` for Discord Developer Portal setup and production proxy notes.
+
 ## Database / State Storage
 
 No external database is required. The bot uses a normalized SQLite database at `data/bot.sqlite` by default, powered by `better-sqlite3`. SQLite runs with foreign keys and WAL enabled, so production backups should include `bot.sqlite` plus any `bot.sqlite-wal` and `bot.sqlite-shm` sidecar files. Runtime state such as temporary punishments, reminders, scheduled dashboard messages, ticket metadata/transcripts, temporary voice metadata, per-guild settings, config audit entries, command usage, and user history is restart-persistent where the feature records it.
