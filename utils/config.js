@@ -14,6 +14,13 @@ const environmentConfigKeys = [
     'DATABASE_MYSQL_URL',
     'DATABASE_PROVIDER',
     'DATABASE_SQLITE_PATH',
+    'DISCORD_ACTIVITY_CLIENT_ID',
+    'DISCORD_ACTIVITY_CLIENT_SECRET',
+    'DISCORD_ACTIVITY_ENABLED',
+    'DISCORD_ACTIVITY_PUBLIC_URL',
+    'DISCORD_ACTIVITY_MUSIC_CONTROLS',
+    'DISCORD_ACTIVITY_SESSION_SECRET',
+    'DISCORD_ACTIVITY_VOICE_CONTROLS',
     'DISCORD_CLIENT_ID',
     'DISCORD_GUILD_ID',
     'DISCORD_OAUTH_CLIENT_ID',
@@ -99,6 +106,26 @@ function applyEnvironmentOverrides(config, env = process.env) {
     if (env.DISCORD_CLIENT_ID) config.clientId = env.DISCORD_CLIENT_ID;
     if (env.DISCORD_GUILD_ID) config.guildId = env.DISCORD_GUILD_ID;
     if (env.DISCORD_STATUS) config.statusName = env.DISCORD_STATUS;
+    if (env.DISCORD_ACTIVITY_ENABLED) {
+        config.activity = config.activity || {};
+        config.activity.enabled = env.DISCORD_ACTIVITY_ENABLED === 'true';
+    }
+    if (env.DISCORD_ACTIVITY_PUBLIC_URL) {
+        config.activity = config.activity || {};
+        config.activity.publicUrl = env.DISCORD_ACTIVITY_PUBLIC_URL;
+    }
+    if (env.DISCORD_ACTIVITY_CLIENT_ID) {
+        config.activity = config.activity || {};
+        config.activity.clientId = env.DISCORD_ACTIVITY_CLIENT_ID;
+    }
+    if (env.DISCORD_ACTIVITY_VOICE_CONTROLS) {
+        config.activity = config.activity || {};
+        config.activity.voiceControls = env.DISCORD_ACTIVITY_VOICE_CONTROLS !== 'false';
+    }
+    if (env.DISCORD_ACTIVITY_MUSIC_CONTROLS) {
+        config.activity = config.activity || {};
+        config.activity.musicControls = env.DISCORD_ACTIVITY_MUSIC_CONTROLS !== 'false';
+    }
     if (env.DASHBOARD_ENABLED) {
         config.dashboard = config.dashboard || {};
         config.dashboard.enabled = env.DASHBOARD_ENABLED === 'true';

@@ -28,6 +28,24 @@ function validateInteger(errors, config, path, { min = Number.MIN_SAFE_INTEGER, 
     }
 }
 
+function validateUrl(errors, config, path, { required = false, protocols = ['http:', 'https:'] } = {}) {
+    const value = path.split('.').reduce((current, part) => current?.[part], config);
+    if (value === undefined || value === null || value === '') {
+        if (required) errors.push(`${path} is required.`);
+        return;
+    }
+    if (typeof value !== 'string') {
+        errors.push(`${path} must be a string.`);
+        return;
+    }
+    try {
+        const url = new URL(value);
+        if (!protocols.includes(url.protocol)) errors.push(`${path} must use ${protocols.join(' or ')}.`);
+    } catch {
+        errors.push(`${path} must be a valid URL.`);
+    }
+}
+
 function validateConfig(config, options = {}) {
     const errors = [];
 
@@ -112,6 +130,21 @@ function validateConfig(config, options = {}) {
             validateString(errors, config, 'dashboard.oauth.clientId');
             validateString(errors, config, 'dashboard.oauth.clientSecret');
             validateString(errors, config, 'dashboard.oauth.redirectUri');
+        }
+    }
+
+    if (config.activity !== undefined) {
+        if (!isPlainObject(config.activity)) {
+            errors.push('activity must be an object.');
+        } else {
+            validateBoolean(errors, config, 'activity.enabled');
+            validateString(errors, config, 'activity.clientId');
+            validateBoolean(errors, config, 'activity.voiceControls');
+            validateBoolean(errors, config, 'activity.musicControls');
+            validateUrl(errors, config, 'activity.publicUrl', { required: config.activity.enabled === true });
+            if (config.activity.enabled === true && !config.activity.clientId && !config.clientId) {
+                errors.push('activity.clientId or clientId is required when activity.enabled is true.');
+            }
         }
     }
 

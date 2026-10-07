@@ -81,6 +81,7 @@ const {
     userCanAdminDashboard,
     verifySessionToken,
 } = require('./services/dashboardAuth');
+const { getActivityConfig } = require('../activity/server/auth');
 
 function restoreRedactedSecrets(submitted, current) {
     return restoreProtectedConfig(submitted, current);
@@ -835,7 +836,8 @@ ${musicSettingsSection}
 
 function startDashboard(client) {
     const settings = getDashboardConfig();
-    if (!settings.enabled) return null;
+    const activitySettings = getActivityConfig();
+    if (!settings.enabled && !activitySettings.enabled) return null;
 
     const app = createDashboardApp(client, {
         appendDashboardLog,
@@ -892,8 +894,12 @@ function startDashboard(client) {
     });
 
     const server = app.listen(settings.port, settings.host, () => {
-        console.log(`[DASHBOARD] Listening on ${settings.publicUrl}`);
-        appendDashboardLog('Dashboard started', { url: settings.publicUrl });
+        const enabledApps = [
+            settings.enabled ? `dashboard ${settings.publicUrl}` : null,
+            activitySettings.enabled ? `activity ${activitySettings.publicUrl || settings.publicUrl}` : null,
+        ].filter(Boolean).join(', ');
+        console.log(`[WEB] Listening on ${settings.host}:${settings.port} (${enabledApps})`);
+        appendDashboardLog('Web server started', { dashboardUrl: settings.publicUrl, activityUrl: activitySettings.publicUrl });
     });
 
     return server;

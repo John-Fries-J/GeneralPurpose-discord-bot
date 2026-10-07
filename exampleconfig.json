@@ -99,6 +99,13 @@
             "redirectUri": "http://localhost:3000/auth/discord/callback"
         }
     },
+    "activity": {
+        "enabled": false,
+        "publicUrl": "",
+        "clientId": "",
+        "voiceControls": true,
+        "musicControls": true
+    },
     "database": {
         "provider": "sqlite",
         "jsonPath": "data/bot-state.json",
