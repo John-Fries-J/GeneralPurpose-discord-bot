@@ -2,6 +2,7 @@ const { ChannelType, PermissionFlagsBits } = require('discord.js');
 const { getConfig } = require('./config');
 const { getGuildSettings } = require('./guildConfig');
 const { getTempVoiceChannel, listTempVoiceChannelsForGuild, removeTempVoiceChannel, upsertTempVoiceChannel } = require('./store');
+const { emitDomainEvent } = require('../services/domainEvents');
 
 const emptyDeletionTimers = new Map();
 const channelLocks = new Map();
@@ -90,6 +91,13 @@ async function deleteTemporaryVoiceChannelUnlocked(guild, channelId, reason, { f
     const channel = guild.channels.cache.get(channelId) || await guild.channels.fetch(channelId).catch(() => null);
     if (!channel) {
         await removeTempVoiceChannel(channelId);
+        emitDomainEvent('voice:deleted', {
+            channelId,
+            reason: 'missing',
+        }, {
+            guildId: guild.id,
+            channelId,
+        });
         return true;
     }
 
@@ -109,6 +117,13 @@ async function deleteTemporaryVoiceChannelUnlocked(guild, channelId, reason, { f
 
     await channel.delete(reason).catch(() => null);
     await removeTempVoiceChannel(channelId);
+    emitDomainEvent('voice:deleted', {
+        channelId,
+        reason,
+    }, {
+        guildId: guild.id,
+        channelId,
+    });
     return true;
 }
 
@@ -151,6 +166,15 @@ async function transferOwnership(record, channel, nextOwner) {
         MoveMembers: null,
     }).catch(() => null);
     await channel.send?.(`<@${nextOwner.id}> is now the temporary voice channel owner.`).catch(() => null);
+    emitDomainEvent('voice:owner-change', {
+        channelId: channel.id,
+        previousOwnerId,
+        ownerId: nextOwner.id,
+    }, {
+        guildId: record.guildId,
+        channelId: channel.id,
+        userId: nextOwner.id,
+    });
     return updated;
 }
 
@@ -166,6 +190,13 @@ async function deleteJoinToCreateChannels(guild) {
         }
         await channel.delete('Join-to-create disabled').then(() => {
             deleted += 1;
+            emitDomainEvent('voice:deleted', {
+                channelId: record.channelId,
+                reason: 'Join-to-create disabled',
+            }, {
+                guildId: guild.id,
+                channelId: record.channelId,
+            });
             return removeTempVoiceChannel(record.channelId);
         }).catch(error => {
             console.error(`Failed to delete join-to-create channel ${record.channelId}:`, error);
@@ -213,6 +244,14 @@ async function handleJoinToCreate(oldState, newState) {
             lastOccupiedAt: Date.now(),
             createdAt: Date.now(),
         });
+        emitDomainEvent('voice:created', {
+            channelId: channel.id,
+            ownerId: newState.member.id,
+        }, {
+            guildId: newState.guild.id,
+            channelId: channel.id,
+            userId: newState.member.id,
+        });
         await newState.setChannel(channel, 'Moving user to join-to-create channel').catch(() => null);
         await sendJoinToCreateIntro(channel, newState.member);
         return;
@@ -220,10 +259,33 @@ async function handleJoinToCreate(oldState, newState) {
 
     if (newState.channelId && newState.channelId !== oldState.channelId) {
         const joinedRecord = await getTempVoiceChannel(newState.channelId);
-        if (joinedRecord) cancelEmptyDeletion(newState.channelId);
+        if (joinedRecord) {
+            cancelEmptyDeletion(newState.channelId);
+            emitDomainEvent('voice:member-change', {
+                channelId: newState.channelId,
+                userId: newState.member?.id,
+                type: 'join',
+            }, {
+                guildId: newState.guild.id,
+                channelId: newState.channelId,
+                userId: newState.member?.id,
+            });
+        }
     }
 
     if (oldState.channelId && oldState.channelId !== newState.channelId) {
+        const leftRecord = await getTempVoiceChannel(oldState.channelId);
+        if (leftRecord) {
+            emitDomainEvent('voice:member-change', {
+                channelId: oldState.channelId,
+                userId: oldState.member?.id,
+                type: 'leave',
+            }, {
+                guildId: oldState.guild.id,
+                channelId: oldState.channelId,
+                userId: oldState.member?.id,
+            });
+        }
         await withChannelLock(oldState.channelId, async () => {
             const record = await getTempVoiceChannel(oldState.channelId);
             if (!record) return;
@@ -231,6 +293,13 @@ async function handleJoinToCreate(oldState, newState) {
             const oldChannel = oldState.guild.channels.cache.get(oldState.channelId) || await oldState.guild.channels.fetch(oldState.channelId).catch(() => null);
             if (!oldChannel) {
                 await removeTempVoiceChannel(oldState.channelId);
+                emitDomainEvent('voice:deleted', {
+                    channelId: oldState.channelId,
+                    reason: 'missing',
+                }, {
+                    guildId: oldState.guild.id,
+                    channelId: oldState.channelId,
+                });
                 return;
             }
 
@@ -314,6 +383,7 @@ module.exports = {
     formatVoiceChannelName,
     getJoinToCreateConfig,
     getGuildJoinToCreateConfig,
+    getHumanMembers,
     getOwnedVoiceChannel,
     handleJoinToCreate,
     reconcileGuildTempVoiceChannels,
