@@ -19,6 +19,13 @@ const {
     startProbotScan,
 } = require('../../utils/probotRecovery');
 const {
+    applyFinalProbotMigration,
+    buildFinalProbotMigrationPreview,
+    getLevelProbotMigrationBatch,
+    latestFinalProbotMigrationBatch,
+    rollbackFinalProbotMigration,
+} = require('../../utils/probotFinalMigration');
+const {
     cancelLevelImport,
     getLevelImportStatus,
     previewRoleRecovery,
@@ -382,6 +389,92 @@ function createProbotRecoveryExport(records, format, filenameBase, metadata = {}
     return null;
 }
 
+function finalMigrationRows(records = [], limit = 8) {
+    return records.slice(0, limit).map(record => {
+        const sources = [
+            record.announcementMinLevel ? `announcement ${record.announcementMinLevel}` : null,
+            record.roleMinLevel ? `role ${record.roleMinLevel}` : null,
+        ].filter(Boolean).join(', ') || 'estimated only';
+        const warnings = record.confidenceWarnings?.length ? `; ${record.confidenceWarnings.slice(0, 2).join(', ')}` : '';
+        return `<@${record.userId}> - confirmed **${record.confirmedMinimumLevel || 0}** (${sources}), current **${record.currentStoredLevel || 0}**, final **${record.finalLevel || 0}**, text +**${formatXp(record.textDelta || 0)}**${warnings}`;
+    }).join('\n') || 'No matching recovered records.';
+}
+
+function finalOutlierRows(records = [], limit = 8) {
+    return records
+        .filter(record => record.unreliableEstimate)
+        .slice(0, limit)
+        .map(record => {
+            const warnings = (record.confidenceWarnings || []).slice(0, 3).join(', ') || 'unreliable estimate';
+            return `<@${record.userId}> - reconstructed **${record.reconstructedLevel || 0}**, confirmed **${record.confirmedMinimumLevel || 0}**; ${warnings}`;
+        }).join('\n') || 'No unreliable reconstructed-level outliers in this preview.';
+}
+
+function createFinalMigrationExport(preview, format, filenameBase) {
+    if (format === 'json') {
+        return new AttachmentBuilder(Buffer.from(JSON.stringify({
+            metadata: {
+                guildId: preview.guildId,
+                policy: preview.policy,
+                settings: preview.settings,
+                summary: preview.summary,
+                warnings: preview.warnings,
+                importJobId: preview.importJob?.id || null,
+            },
+            records: preview.records,
+        }, null, 2), 'utf8'), { name: `${filenameBase}.json` });
+    }
+    if (format === 'csv') {
+        const headers = [
+            'user_id',
+            'current_text_xp',
+            'current_voice_xp',
+            'live_text_xp',
+            'prior_historical_text_xp',
+            'prior_final_text_xp',
+            'confirmed_level',
+            'required_total_xp',
+            'target_text_xp',
+            'target_voice_xp',
+            'text_delta',
+            'final_level',
+            'role_min_level',
+            'announcement_min_level',
+            'reconstructed_level',
+            'reconstructed_xp',
+            'would_change',
+            'unreliable_estimate',
+            'confidence_warnings',
+        ];
+        const lines = [
+            headers.join(','),
+            ...preview.records.map(record => headers.map(header => csvCell({
+                user_id: record.userId,
+                current_text_xp: record.currentTextXp,
+                current_voice_xp: record.currentVoiceXp,
+                live_text_xp: record.liveTextXp,
+                prior_historical_text_xp: record.priorHistoricalTextXp,
+                prior_final_text_xp: record.priorFinalTextXp,
+                confirmed_level: record.confirmedMinimumLevel,
+                required_total_xp: record.requiredTotalXp,
+                target_text_xp: record.targetTextXp,
+                target_voice_xp: record.targetVoiceXp,
+                text_delta: record.textDelta,
+                final_level: record.finalLevel,
+                role_min_level: record.roleMinLevel,
+                announcement_min_level: record.announcementMinLevel,
+                reconstructed_level: record.reconstructedLevel,
+                reconstructed_xp: record.reconstructedXp,
+                would_change: record.wouldChange,
+                unreliable_estimate: record.unreliableEstimate,
+                confidence_warnings: (record.confidenceWarnings || []).join(';'),
+            }[header])).join(',')),
+        ];
+        return new AttachmentBuilder(Buffer.from(`${lines.join('\n')}\n`, 'utf8'), { name: `${filenameBase}.csv` });
+    }
+    return null;
+}
+
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('level')
@@ -453,6 +546,35 @@ module.exports = {
                 .addNumberOption(option => option.setName('factor').setDescription('Exponential curve factor.').setMinValue(1.01).setMaxValue(10))
                 .addStringOption(option => option.setName('users').setDescription('Optional user IDs or mentions to preview.'))
                 .addStringOption(option => option.setName('export').setDescription('Remember preferred export format for the result.').addChoices(...exportChoices)))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('probot-final-preview')
+                .setDescription('Preview the final conservative ProBot XP migration.')
+                .addUserOption(option => option.setName('user').setDescription('Limit the preview to one member.'))
+                .addStringOption(option => option.setName('users').setDescription('Optional user IDs or mentions to preview.'))
+                .addStringOption(option => option.setName('import_job_id').setDescription('Completed historical import job for outlier audit. Defaults to latest completed.'))
+                .addBooleanOption(option => option.setName('current_members_only').setDescription('Preview only current members; departed records are preserved.'))
+                .addStringOption(option => option.setName('export').setDescription('Attach detailed migration records.').addChoices(...exportChoices)))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('probot-final-test')
+                .setDescription('Apply the final ProBot migration to one user only.')
+                .addUserOption(option => option.setName('user').setDescription('Single member to test.').setRequired(true))
+                .addStringOption(option => option.setName('confirm').setDescription('Type APPLY_PROBOT_TEST to confirm.').setRequired(true))
+                .addStringOption(option => option.setName('import_job_id').setDescription('Completed historical import job for outlier audit. Defaults to latest completed.')))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('probot-final-apply')
+                .setDescription('Apply the final conservative ProBot XP migration.')
+                .addStringOption(option => option.setName('confirm').setDescription('Type APPLY_PROBOT_FINAL to confirm.').setRequired(true))
+                .addStringOption(option => option.setName('import_job_id').setDescription('Completed historical import job for outlier audit. Defaults to latest completed.'))
+                .addBooleanOption(option => option.setName('current_members_only').setDescription('Apply only to current members; departed records are preserved.')))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('probot-final-rollback')
+                .setDescription('Rollback an applied final ProBot migration batch.')
+                .addStringOption(option => option.setName('confirm').setDescription('Type ROLLBACK_PROBOT_FINAL to confirm.').setRequired(true))
+                .addStringOption(option => option.setName('batch_id').setDescription('Migration batch ID. Defaults to latest applied batch.')))
         .addSubcommand(subcommand =>
             subcommand
                 .setName('role-map-add')
@@ -776,6 +898,133 @@ module.exports = {
                     `Use \`/level calibration-status job_id:${created.job.id} export:${interaction.options.getString('export') || 'none'}\` to view results.`,
                 ].join('\n'),
                 flags: 64,
+            });
+        }
+
+        if (subcommand === 'probot-final-preview') {
+            await interaction.deferReply({ flags: 64 });
+            const user = interaction.options.getUser('user');
+            const userIds = parseUserIds(interaction.options.getString('users') || '');
+            if (user) userIds.add(user.id);
+            const preview = await buildFinalProbotMigrationPreview(interaction.guild, {
+                targetUserIds: userIds.size ? userIds : null,
+                importJobId: interaction.options.getString('import_job_id') || null,
+                currentMemberOnly: interaction.options.getBoolean('current_members_only') === true,
+            });
+            const exportFormat = interaction.options.getString('export') || 'none';
+            const attachment = createFinalMigrationExport(preview, exportFormat, `probot-final-preview-${interaction.guild.id}`);
+            return interaction.editReply({
+                embeds: [createEmbed({
+                    title: 'Final ProBot Migration Preview',
+                    color: 'blue',
+                    description: [
+                        `Policy: **${preview.policy.id}**`,
+                        `Formula: **${preview.settings.progressionFormula}**, base **${preview.settings.xpPerLevelBase}**`,
+                        `Confirmed members: **${formatXp(preview.summary.confirmedMembers)}**`,
+                        `Would change: **${formatXp(preview.summary.affectedCount)}**`,
+                        `Text XP to add: **${formatXp(preview.summary.xpDelta)}**`,
+                        `Unreliable estimates flagged: **${formatXp(preview.summary.unreliableEstimates)}**`,
+                        preview.currentMemberOnly ? 'Scope: **current members only**. Departed stored records are not deleted or modified unless included separately.' : 'Scope: **all recovered stored records**, including departed members with verified announcements.',
+                        'No XP or roles were changed.',
+                    ].join('\n'),
+                    fields: [
+                        { name: 'Top affected records', value: finalMigrationRows(preview.records.filter(record => record.wouldChange), 8).slice(0, 1024), inline: false },
+                        { name: 'Unreliable estimate audit', value: finalOutlierRows(preview.records, 8).slice(0, 1024), inline: false },
+                        preview.warnings.length ? { name: 'Warnings', value: preview.warnings.join('\n').slice(0, 1024), inline: false } : null,
+                    ].filter(Boolean),
+                })],
+                files: attachment ? [attachment] : [],
+            });
+        }
+
+        if (subcommand === 'probot-final-test') {
+            const confirm = interaction.options.getString('confirm', true);
+            if (confirm !== 'APPLY_PROBOT_TEST') {
+                return interaction.reply({ content: 'Type `APPLY_PROBOT_TEST` in the confirm option before applying a single-user ProBot migration test.', flags: 64 });
+            }
+            const user = interaction.options.getUser('user', true);
+            await interaction.deferReply({ flags: 64 });
+            const result = await applyFinalProbotMigration(interaction.guild, {
+                targetUserId: user.id,
+                importJobId: interaction.options.getString('import_job_id') || null,
+                adminId: interaction.user.id,
+                mode: 'single_user_test',
+            });
+            return interaction.editReply({
+                embeds: [createEmbed({
+                    title: 'Single-User ProBot Migration Applied',
+                    color: result.batch.affectedCount ? 'green' : 'blue',
+                    description: [
+                        `Batch: \`${result.batch.id}\``,
+                        `User: <@${user.id}>`,
+                        `Records changed: **${formatXp(result.batch.affectedCount)}**`,
+                        `Text XP added: **${formatXp(result.batch.xpDelta)}**`,
+                        'Voice XP was preserved and no Discord roles were changed.',
+                        `Rollback with \`/level probot-final-rollback batch_id:${result.batch.id} confirm:ROLLBACK_PROBOT_FINAL\`.`,
+                    ].join('\n'),
+                    fields: [
+                        { name: 'Preview result', value: finalMigrationRows(result.preview.records, 3).slice(0, 1024), inline: false },
+                    ],
+                })],
+            });
+        }
+
+        if (subcommand === 'probot-final-apply') {
+            const confirm = interaction.options.getString('confirm', true);
+            if (confirm !== 'APPLY_PROBOT_FINAL') {
+                return interaction.reply({ content: 'Type `APPLY_PROBOT_FINAL` in the confirm option before applying the server-wide ProBot migration.', flags: 64 });
+            }
+            await interaction.deferReply({ flags: 64 });
+            const result = await applyFinalProbotMigration(interaction.guild, {
+                importJobId: interaction.options.getString('import_job_id') || null,
+                currentMemberOnly: interaction.options.getBoolean('current_members_only') === true,
+                adminId: interaction.user.id,
+                mode: 'server_apply',
+            });
+            return interaction.editReply({
+                embeds: [createEmbed({
+                    title: 'Final ProBot Migration Applied',
+                    color: result.batch.affectedCount ? 'green' : 'blue',
+                    description: [
+                        `Batch: \`${result.batch.id}\``,
+                        `Records evaluated: **${formatXp(result.batch.recordsTotal)}**`,
+                        `Records changed: **${formatXp(result.batch.affectedCount)}**`,
+                        `Text XP added: **${formatXp(result.batch.xpDelta)}**`,
+                        'Only live leveling XP records were updated. Voice XP was preserved and no Discord roles were changed.',
+                        `Rollback with \`/level probot-final-rollback batch_id:${result.batch.id} confirm:ROLLBACK_PROBOT_FINAL\`.`,
+                    ].join('\n'),
+                    fields: [
+                        { name: 'Top affected records', value: finalMigrationRows(result.preview.records.filter(record => record.wouldChange), 8).slice(0, 1024), inline: false },
+                        result.preview.summary.unreliableEstimates ? { name: 'Unreliable estimates flagged', value: finalOutlierRows(result.preview.records, 6).slice(0, 1024), inline: false } : null,
+                    ].filter(Boolean),
+                })],
+            });
+        }
+
+        if (subcommand === 'probot-final-rollback') {
+            const confirm = interaction.options.getString('confirm', true);
+            if (confirm !== 'ROLLBACK_PROBOT_FINAL') {
+                return interaction.reply({ content: 'Type `ROLLBACK_PROBOT_FINAL` in the confirm option before rolling back a ProBot migration batch.', flags: 64 });
+            }
+            const batchId = interaction.options.getString('batch_id') || (await latestFinalProbotMigrationBatch(interaction.guild.id))?.id;
+            if (!batchId) return interaction.reply({ content: 'No applied final ProBot migration batch is available to roll back.', flags: 64 });
+            const batch = await getLevelProbotMigrationBatch(batchId);
+            if (!batch) return interaction.reply({ content: 'That final ProBot migration batch was not found.', flags: 64 });
+            if (batch.guildId !== interaction.guild.id) return interaction.reply({ content: 'That final ProBot migration batch belongs to a different server.', flags: 64 });
+            await interaction.deferReply({ flags: 64 });
+            const result = await rollbackFinalProbotMigration(batchId, { adminId: interaction.user.id });
+            if (!result) return interaction.editReply({ content: 'That final ProBot migration batch was not found.' });
+            return interaction.editReply({
+                embeds: [createEmbed({
+                    title: 'Final ProBot Migration Rolled Back',
+                    color: 'green',
+                    description: [
+                        `Batch: \`${result.batch.id}\``,
+                        `Snapshots rolled back: **${formatXp(result.rollbackCount)}**`,
+                        `Text XP delta: **${formatXp(result.xpDelta)}**`,
+                        'Rollback subtracts only the migration delta and preserves text XP earned after application. Voice XP and Discord roles are untouched.',
+                    ].join('\n'),
+                })],
             });
         }
 

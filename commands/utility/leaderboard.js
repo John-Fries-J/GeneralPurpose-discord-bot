@@ -20,17 +20,34 @@ module.exports = {
             .setName('page')
             .setDescription('Leaderboard page.')
             .setMinValue(1)
-            .setMaxValue(100000)),
+            .setMaxValue(100000))
+        .addBooleanOption(option => option
+            .setName('current_members_only')
+            .setDescription('Show only current server members; stored departed-member records are preserved.')),
 
     async execute(interaction) {
         const type = interaction.options.getString('type') || 'total';
         const page = interaction.options.getInteger('page') || 1;
+        const currentMembersOnly = interaction.options.getBoolean('current_members_only') === true;
         const pageSize = 10;
         const offset = (page - 1) * pageSize;
-        const records = await listLevelLeaderboard(interaction.guild.id, pageSize, type, offset);
+        let records = await listLevelLeaderboard(interaction.guild.id, pageSize, type, offset);
+
+        if (currentMembersOnly) {
+            let memberIds = null;
+            try {
+                const fetched = await interaction.guild.members.fetch();
+                memberIds = new Set([...(fetched?.keys?.() || interaction.guild.members.cache.keys())].map(String));
+            } catch {
+                memberIds = new Set([...(interaction.guild.members.cache?.keys?.() || [])].map(String));
+            }
+            records = (await listLevelLeaderboard(interaction.guild.id, 100000, type, 0))
+                .filter(record => memberIds.has(String(record.userId)))
+                .slice(offset, offset + pageSize);
+        }
 
         if (!records.length) {
-            return interaction.reply({ content: `No ${type} XP has been recorded yet.`, flags: 64 });
+            return interaction.reply({ content: currentMembersOnly ? `No current members have recorded ${type} XP on this page.` : `No ${type} XP has been recorded yet.`, flags: 64 });
         }
 
         const score = record => {
@@ -45,7 +62,7 @@ module.exports = {
             description: records.map((record, index) => {
                 return `**${offset + index + 1}.** <@${record.userId}> - **${formatXp(score(record))} XP** (${formatXp(record.textXp)} text, ${formatXp(record.voiceXp)} voice)`;
             }).join('\n'),
-            footerText: `Page ${page}`,
+            footerText: currentMembersOnly ? `Page ${page} - current members only` : `Page ${page}`,
         });
 
         return interaction.reply({ embeds: [embed] });
