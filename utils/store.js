@@ -40,6 +40,14 @@ function createEmptyState() {
         guildLevelRewards: [],
         configAudit: [],
         limitedAccounts: [],
+        levelXpEvents: [],
+        levelImportJobs: [],
+        levelImportCheckpoints: [],
+        levelImportMessages: [],
+        levelProcessedMessages: [],
+        levelRoleMappings: [],
+        levelReconciliationRecords: [],
+        levelTestSessions: [],
     };
 }
 
@@ -251,6 +259,14 @@ function clearNormalizedState(db) {
         DELETE FROM guild_log_channels;
         DELETE FROM guild_settings;
         DELETE FROM honeypot_limited_accounts;
+        DELETE FROM level_xp_events;
+        DELETE FROM level_import_messages;
+        DELETE FROM level_import_checkpoints;
+        DELETE FROM level_import_processed_messages;
+        DELETE FROM level_import_jobs;
+        DELETE FROM level_role_level_mappings;
+        DELETE FROM level_reconciliation_records;
+        DELETE FROM level_test_sessions;
     `);
 }
 
@@ -795,20 +811,544 @@ async function getUserLevelRecord(guildId, userId) {
     return (await readState()).levels.find(item => item.guildId === guildId && item.userId === userId) || null;
 }
 
-async function listLevelLeaderboard(guildId, limit = 10, mode = 'total') {
-    const settings = getStorageSettings();
-    if (settings.provider === 'sqlite') return repository.listLevelLeaderboard(await getSqliteDb(), guildId, limit, mode);
-    const score = record => {
-        if (mode === 'text') return Number(record.textXp || 0);
-        if (mode === 'voice') return Number(record.voiceXp || 0);
-        return Number(record.textXp || 0) + Number(record.voiceXp || 0);
+function levelScore(record, mode = 'total') {
+    if (!record) return 0;
+    if (mode === 'text') return Number(record.textXp || 0);
+    if (mode === 'voice') return Number(record.voiceXp || 0);
+    return Number(record.textXp || 0) + Number(record.voiceXp || 0);
+}
+
+function normalizeLevelRecord(record, timestamp = Date.now()) {
+    return {
+        guildId: record.guildId,
+        userId: record.userId,
+        userTag: record.userTag || null,
+        textXp: Math.max(0, Math.floor(Number(record.textXp || 0))),
+        voiceXp: Math.max(0, Math.floor(Number(record.voiceXp || 0))),
+        lastTextXpAt: Number(record.lastTextXpAt || 0),
+        createdAt: record.createdAt || timestamp,
+        updatedAt: record.updatedAt || timestamp,
     };
+}
+
+async function listLevelLeaderboard(guildId, limit = 10, mode = 'total', offset = 0) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listLevelLeaderboard(await getSqliteDb(), guildId, limit, mode, offset);
 
     return (await readState()).levels
         .filter(item => item.guildId === guildId)
-        .filter(item => score(item) > 0)
-        .sort((a, b) => score(b) - score(a))
+        .filter(item => levelScore(item, mode) > 0)
+        .sort((a, b) => levelScore(b, mode) - levelScore(a, mode) || String(a.userId).localeCompare(String(b.userId)))
+        .slice(Math.max(0, Number(offset || 0)), Math.max(0, Number(offset || 0)) + limit);
+}
+
+async function getLevelRank(guildId, userId, mode = 'total') {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.getLevelRank(await getSqliteDb(), guildId, userId, mode);
+    const state = await readState();
+    const record = state.levels.find(item => item.guildId === guildId && item.userId === userId);
+    const score = levelScore(record, mode);
+    if (!record || score <= 0) return null;
+    return state.levels
+        .filter(item => item.guildId === guildId)
+        .filter(item => levelScore(item, mode) > score || (levelScore(item, mode) === score && String(item.userId).localeCompare(String(userId)) < 0))
+        .length + 1;
+}
+
+async function insertLevelXpEvent(event) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.insertLevelXpEvent(await getSqliteDb(), event);
+    const timestamp = event.createdAt || Date.now();
+    let saved = null;
+    await useLegacyStateMutation(state => {
+        state.levelXpEvents ||= [];
+        if (event.sourceKey && state.levelXpEvents.some(item => item.guildId === event.guildId && item.source === event.source && item.sourceKey === event.sourceKey)) {
+            return state;
+        }
+        saved = {
+            id: state.levelXpEvents.length + 1,
+            guildId: event.guildId,
+            userId: event.userId,
+            userTag: event.userTag || null,
+            source: event.source,
+            sourceKey: event.sourceKey || null,
+            xpType: event.xpType || 'text',
+            amount: Number(event.amount || 0),
+            previousTextXp: Number(event.previousTextXp || 0),
+            previousVoiceXp: Number(event.previousVoiceXp || 0),
+            newTextXp: Number(event.newTextXp || 0),
+            newVoiceXp: Number(event.newVoiceXp || 0),
+            adminId: event.adminId || null,
+            jobId: event.jobId || null,
+            metadata: event.metadata || {},
+            createdAt: timestamp,
+        };
+        state.levelXpEvents.push(saved);
+        return state;
+    });
+    return saved;
+}
+
+async function adjustUserXp(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.adjustUserXp(await getSqliteDb(), record);
+    const timestamp = record.createdAt || Date.now();
+    let updated = null;
+    await useLegacyStateMutation(state => {
+        state.levels ||= [];
+        let current = state.levels.find(item => item.guildId === record.guildId && item.userId === record.userId);
+        if (!current) {
+            current = normalizeLevelRecord({ guildId: record.guildId, userId: record.userId, userTag: record.userTag }, timestamp);
+            state.levels.push(current);
+        }
+        const previous = { ...current };
+        const amount = Math.trunc(Number(record.amount || 0));
+        const xpType = record.xpType === 'voice' ? 'voice' : 'text';
+        if (xpType === 'voice') current.voiceXp = Math.max(0, Number(current.voiceXp || 0) + amount);
+        else current.textXp = Math.max(0, Number(current.textXp || 0) + amount);
+        current.userTag = record.userTag || current.userTag;
+        current.updatedAt = timestamp;
+        state.levelXpEvents ||= [];
+        if (!record.sourceKey || !state.levelXpEvents.some(item => item.guildId === record.guildId && item.source === (record.source || 'adjustment') && item.sourceKey === record.sourceKey)) {
+            state.levelXpEvents.push({
+                id: state.levelXpEvents.length + 1,
+                guildId: record.guildId,
+                userId: record.userId,
+                userTag: current.userTag,
+                source: record.source || 'adjustment',
+                sourceKey: record.sourceKey || null,
+                xpType,
+                amount,
+                previousTextXp: previous.textXp,
+                previousVoiceXp: previous.voiceXp,
+                newTextXp: current.textXp,
+                newVoiceXp: current.voiceXp,
+                adminId: record.adminId || null,
+                jobId: record.jobId || null,
+                metadata: record.metadata || {},
+                createdAt: timestamp,
+            });
+        }
+        updated = { ...current };
+        return state;
+    });
+    return updated;
+}
+
+async function setUserXp(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.setUserXp(await getSqliteDb(), record);
+    const timestamp = record.createdAt || Date.now();
+    let updated = null;
+    await useLegacyStateMutation(state => {
+        state.levels ||= [];
+        let current = state.levels.find(item => item.guildId === record.guildId && item.userId === record.userId);
+        if (!current) {
+            current = normalizeLevelRecord({ guildId: record.guildId, userId: record.userId, userTag: record.userTag }, timestamp);
+            state.levels.push(current);
+        }
+        const previous = { ...current };
+        current.textXp = Math.max(0, Math.floor(Number(record.textXp ?? current.textXp ?? 0)));
+        current.voiceXp = Math.max(0, Math.floor(Number(record.voiceXp ?? current.voiceXp ?? 0)));
+        current.lastTextXpAt = Number(record.lastTextXpAt ?? current.lastTextXpAt ?? 0);
+        current.userTag = record.userTag || current.userTag;
+        current.updatedAt = timestamp;
+        state.levelXpEvents ||= [];
+        state.levelXpEvents.push({
+            id: state.levelXpEvents.length + 1,
+            guildId: record.guildId,
+            userId: record.userId,
+            userTag: current.userTag,
+            source: record.source || 'set',
+            sourceKey: record.sourceKey || null,
+            xpType: record.xpType || 'combined',
+            amount: levelScore(current) - levelScore(previous),
+            previousTextXp: previous.textXp,
+            previousVoiceXp: previous.voiceXp,
+            newTextXp: current.textXp,
+            newVoiceXp: current.voiceXp,
+            adminId: record.adminId || null,
+            jobId: record.jobId || null,
+            metadata: record.metadata || {},
+            createdAt: timestamp,
+        });
+        updated = { ...current };
+        return state;
+    });
+    return updated;
+}
+
+async function setUserXpMinimum(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.setUserXpMinimum(await getSqliteDb(), record);
+    const current = await getUserLevelRecord(record.guildId, record.userId);
+    if (levelScore(current) >= Number(record.minimumTotalXp || 0)) return current;
+    return setUserXp({
+        ...record,
+        textXp: Math.max(0, Math.floor(Number(record.minimumTotalXp || 0))),
+        voiceXp: 0,
+        source: record.source || 'minimum',
+    });
+}
+
+async function listLevelXpEvents(guildId = null, options = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listLevelXpEvents(await getSqliteDb(), guildId, options);
+    const limit = Math.max(1, Number(options.limit || 100));
+    return ((await readState()).levelXpEvents || [])
+        .filter(item => !guildId || item.guildId === guildId)
+        .filter(item => !options.userId || item.userId === options.userId)
+        .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))
         .slice(0, limit);
+}
+
+async function createLevelImportJob(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.createLevelImportJob(await getSqliteDb(), record);
+    const timestamp = Date.now();
+    let result = null;
+    await useLegacyStateMutation(state => {
+        state.levelImportJobs ||= [];
+        const active = state.levelImportJobs.find(item => item.guildId === record.guildId && ['queued', 'running', 'cancelling'].includes(item.status));
+        if (active) {
+            result = { ok: false, job: active, reason: 'active_job' };
+            return state;
+        }
+        const job = {
+            id: record.id || makeId(),
+            guildId: record.guildId,
+            targetUserId: record.targetUserId || null,
+            status: record.status || 'queued',
+            dryRun: record.dryRun !== false,
+            profileHash: record.profileHash,
+            profile: record.profile || {},
+            createdBy: record.createdBy || null,
+            createdAt: record.createdAt || timestamp,
+            updatedAt: timestamp,
+            startedAt: null,
+            completedAt: null,
+            currentChannelId: null,
+            channelsTotal: 0,
+            channelsScanned: 0,
+            messagesSeen: 0,
+            messagesEligible: 0,
+            membersSeen: 0,
+            xpEstimated: 0,
+            xpApplied: 0,
+            skippedChannels: [],
+            errors: [],
+            cancelRequested: false,
+            provenance: record.provenance || {},
+            result: {},
+        };
+        state.levelImportJobs.push(job);
+        result = { ok: true, job };
+        return state;
+    });
+    return result;
+}
+
+async function getLevelImportJob(id) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.getLevelImportJob(await getSqliteDb(), id);
+    return ((await readState()).levelImportJobs || []).find(item => item.id === id) || null;
+}
+
+async function listLevelImportJobs(guildId = null, options = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listLevelImportJobs(await getSqliteDb(), guildId, options);
+    const limit = Math.max(1, Number(options.limit || 50));
+    const statuses = Array.isArray(options.statuses) ? new Set(options.statuses) : null;
+    return ((await readState()).levelImportJobs || [])
+        .filter(item => !guildId || item.guildId === guildId)
+        .filter(item => !statuses || statuses.has(item.status))
+        .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0))
+        .slice(0, limit);
+}
+
+async function updateLevelImportJob(id, patch = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.updateLevelImportJob(await getSqliteDb(), id, patch);
+    let updated = null;
+    await useLegacyStateMutation(state => {
+        const job = (state.levelImportJobs || []).find(item => item.id === id);
+        if (!job) return state;
+        Object.assign(job, patch, { updatedAt: patch.updatedAt || Date.now() });
+        updated = { ...job };
+        return state;
+    });
+    return updated;
+}
+
+async function requestCancelLevelImportJob(id) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.requestCancelLevelImportJob(await getSqliteDb(), id);
+    const job = await getLevelImportJob(id);
+    if (!job) return null;
+    return updateLevelImportJob(id, {
+        status: ['completed', 'cancelled', 'failed'].includes(job.status) ? job.status : 'cancelling',
+        cancelRequested: true,
+    });
+}
+
+async function upsertLevelImportCheckpoint(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.upsertLevelImportCheckpoint(await getSqliteDb(), record);
+    let saved = null;
+    await useLegacyStateMutation(state => {
+        state.levelImportCheckpoints ||= [];
+        const timestamp = record.updatedAt || Date.now();
+        saved = {
+            jobId: record.jobId,
+            guildId: record.guildId,
+            channelId: record.channelId,
+            parentChannelId: record.parentChannelId || null,
+            beforeMessageId: record.beforeMessageId || null,
+            oldestMessageId: record.oldestMessageId || null,
+            status: record.status || 'pending',
+            messagesSeen: Number(record.messagesSeen || 0),
+            messagesEligible: Number(record.messagesEligible || 0),
+            error: record.error || null,
+            updatedAt: timestamp,
+        };
+        state.levelImportCheckpoints = state.levelImportCheckpoints.filter(item => !(item.jobId === saved.jobId && item.channelId === saved.channelId));
+        state.levelImportCheckpoints.push(saved);
+        return state;
+    });
+    return saved;
+}
+
+async function listLevelImportCheckpoints(jobId = null) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listLevelImportCheckpoints(await getSqliteDb(), jobId);
+    return ((await readState()).levelImportCheckpoints || [])
+        .filter(item => !jobId || item.jobId === jobId)
+        .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
+}
+
+async function insertLevelImportMessage(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.insertLevelImportMessage(await getSqliteDb(), record);
+    let inserted = false;
+    await useLegacyStateMutation(state => {
+        state.levelImportMessages ||= [];
+        if (state.levelImportMessages.some(item => item.jobId === record.jobId && item.messageId === record.messageId)) return state;
+        state.levelImportMessages.push({
+            jobId: record.jobId,
+            guildId: record.guildId,
+            messageId: record.messageId,
+            userId: record.userId,
+            userTag: record.userTag || null,
+            channelId: record.channelId,
+            createdAt: Number(record.createdAt || 0),
+            xpAmount: Number(record.xpAmount || 0),
+            eligible: record.eligible !== false,
+            skipReason: record.skipReason || null,
+        });
+        inserted = true;
+        return state;
+    });
+    return inserted;
+}
+
+async function listLevelImportMessages(jobId = null, options = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listLevelImportMessages(await getSqliteDb(), jobId, options);
+    const limit = Math.max(1, Number(options.limit || 10000));
+    return ((await readState()).levelImportMessages || [])
+        .filter(item => !jobId || item.jobId === jobId)
+        .filter(item => !options.userId || item.userId === options.userId)
+        .sort((a, b) => Number(a.createdAt || 0) - Number(b.createdAt || 0) || String(a.messageId).localeCompare(String(b.messageId)))
+        .slice(0, limit);
+}
+
+async function countProcessedLevelMessage(guildId, messageId, profileHash) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.countProcessedLevelMessage(await getSqliteDb(), guildId, messageId, profileHash);
+    return ((await readState()).levelProcessedMessages || [])
+        .filter(item => item.guildId === guildId && item.messageId === messageId && item.profileHash === profileHash)
+        .length;
+}
+
+async function markLevelImportMessageProcessed(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.markLevelImportMessageProcessed(await getSqliteDb(), record);
+    let inserted = false;
+    await useLegacyStateMutation(state => {
+        state.levelProcessedMessages ||= [];
+        if (state.levelProcessedMessages.some(item => item.guildId === record.guildId && item.messageId === record.messageId && item.profileHash === record.profileHash)) return state;
+        state.levelProcessedMessages.push({
+            guildId: record.guildId,
+            messageId: record.messageId,
+            profileHash: record.profileHash,
+            jobId: record.jobId,
+            userId: record.userId,
+            channelId: record.channelId,
+            xpAmount: Number(record.xpAmount || 0),
+            createdAt: record.createdAt || Date.now(),
+        });
+        inserted = true;
+        return state;
+    });
+    return inserted;
+}
+
+async function listLevelProcessedMessages(guildId = null, options = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listLevelProcessedMessages(await getSqliteDb(), guildId, options);
+    const limit = Math.max(1, Number(options.limit || 10000));
+    return ((await readState()).levelProcessedMessages || [])
+        .filter(item => !guildId || item.guildId === guildId)
+        .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))
+        .slice(0, limit);
+}
+
+async function upsertLevelRoleMapping(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.upsertLevelRoleMapping(await getSqliteDb(), record);
+    let saved = null;
+    await useLegacyStateMutation(state => {
+        state.levelRoleMappings ||= [];
+        const timestamp = Date.now();
+        saved = {
+            guildId: record.guildId,
+            roleId: record.roleId,
+            minimumLevel: Number(record.minimumLevel || 0),
+            createdBy: record.createdBy || null,
+            createdAt: record.createdAt || timestamp,
+            updatedAt: timestamp,
+        };
+        state.levelRoleMappings = state.levelRoleMappings.filter(item => !(item.guildId === saved.guildId && item.roleId === saved.roleId));
+        state.levelRoleMappings.push(saved);
+        return state;
+    });
+    return saved;
+}
+
+async function removeLevelRoleMapping(guildId, roleId) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.removeLevelRoleMapping(await getSqliteDb(), guildId, roleId);
+    let changes = 0;
+    await useLegacyStateMutation(state => {
+        const before = (state.levelRoleMappings || []).length;
+        state.levelRoleMappings = (state.levelRoleMappings || []).filter(item => !(item.guildId === guildId && item.roleId === roleId));
+        changes = before - state.levelRoleMappings.length;
+        return state;
+    });
+    return changes;
+}
+
+async function listLevelRoleMappings(guildId = null) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listLevelRoleMappings(await getSqliteDb(), guildId);
+    return ((await readState()).levelRoleMappings || [])
+        .filter(item => !guildId || item.guildId === guildId)
+        .sort((a, b) => Number(a.minimumLevel || 0) - Number(b.minimumLevel || 0) || String(a.roleId).localeCompare(String(b.roleId)));
+}
+
+async function insertLevelReconciliationRecord(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.insertLevelReconciliationRecord(await getSqliteDb(), record);
+    const timestamp = record.createdAt || Date.now();
+    let saved = null;
+    await useLegacyStateMutation(state => {
+        state.levelReconciliationRecords ||= [];
+        saved = {
+            id: state.levelReconciliationRecords.length + 1,
+            jobId: record.jobId || null,
+            guildId: record.guildId,
+            userId: record.userId,
+            userTag: record.userTag || null,
+            existingXp: Number(record.existingXp || 0),
+            messageEstimatedXp: Number(record.messageEstimatedXp || 0),
+            messageEstimatedLevel: Number(record.messageEstimatedLevel || 0),
+            roleMinLevel: Number(record.roleMinLevel || 0),
+            roleMinXp: Number(record.roleMinXp || 0),
+            finalXp: Number(record.finalXp || 0),
+            policy: record.policy || 'max',
+            dryRun: record.dryRun !== false,
+            applied: record.applied === true,
+            metadata: record.metadata || {},
+            createdAt: timestamp,
+        };
+        state.levelReconciliationRecords.push(saved);
+        return state;
+    });
+    return saved;
+}
+
+async function listLevelReconciliationRecords(jobId = null, options = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listLevelReconciliationRecords(await getSqliteDb(), jobId, options);
+    const limit = Math.max(1, Number(options.limit || 100));
+    return ((await readState()).levelReconciliationRecords || [])
+        .filter(item => !jobId || item.jobId === jobId)
+        .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))
+        .slice(0, limit);
+}
+
+async function createLevelTestSession(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.createLevelTestSession(await getSqliteDb(), record);
+    const timestamp = Date.now();
+    let saved = null;
+    await useLegacyStateMutation(state => {
+        state.levelTestSessions ||= [];
+        saved = {
+            id: record.id || makeId(),
+            guildId: record.guildId,
+            userId: record.userId,
+            userTag: record.userTag || null,
+            adminId: record.adminId,
+            status: record.status || (record.previewOnly ? 'preview' : 'active'),
+            previewOnly: record.previewOnly !== false,
+            previousTextXp: Number(record.previousTextXp || 0),
+            previousVoiceXp: Number(record.previousVoiceXp || 0),
+            xpDelta: Number(record.xpDelta || 0),
+            xpType: record.xpType || 'text',
+            managedRoleIds: record.managedRoleIds || [],
+            addedRoleIds: record.addedRoleIds || [],
+            removedRoleIds: record.removedRoleIds || [],
+            metadata: record.metadata || {},
+            createdAt: record.createdAt || timestamp,
+            updatedAt: timestamp,
+            rolledBackAt: null,
+        };
+        state.levelTestSessions.push(saved);
+        return state;
+    });
+    return saved;
+}
+
+async function getLevelTestSession(id) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.getLevelTestSession(await getSqliteDb(), id);
+    return ((await readState()).levelTestSessions || []).find(item => item.id === id) || null;
+}
+
+async function listLevelTestSessions(guildId = null, options = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listLevelTestSessions(await getSqliteDb(), guildId, options);
+    const limit = Math.max(1, Number(options.limit || 50));
+    return ((await readState()).levelTestSessions || [])
+        .filter(item => !guildId || item.guildId === guildId)
+        .filter(item => !options.userId || item.userId === options.userId)
+        .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))
+        .slice(0, limit);
+}
+
+async function updateLevelTestSession(id, patch = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.updateLevelTestSession(await getSqliteDb(), id, patch);
+    let updated = null;
+    await useLegacyStateMutation(state => {
+        const session = (state.levelTestSessions || []).find(item => item.id === id);
+        if (!session) return state;
+        Object.assign(session, patch, { updatedAt: patch.updatedAt || Date.now() });
+        updated = { ...session };
+        return state;
+    });
+    return updated;
 }
 
 async function createScheduledMessage(record) {
@@ -1247,7 +1787,11 @@ async function saveGuildConfigurationSection(guildId, section, payload = {}, met
 
         if (payload.levelRewards) {
             const rewards = payload.levelRewards
-                .map(reward => ({ xp: Number(reward.xp || 0), roleId: reward.roleId }))
+                .map(reward => ({
+                    xp: Number(reward.xp || 0),
+                    level: reward.level === undefined ? undefined : Number(reward.level || 0),
+                    roleId: reward.roleId,
+                }))
                 .filter(reward => reward.roleId);
             state.guildLevelRewards = state.guildLevelRewards.filter(item => item.guildId !== guildId);
             for (const reward of rewards) {
@@ -1313,9 +1857,13 @@ module.exports = {
     addUserHistory,
     addModNote,
     addUserXp,
+    adjustUserXp,
     appendVoiceActivity,
     clearWarningCases,
     countActiveModerationCases,
+    countProcessedLevelMessage,
+    createLevelImportJob,
+    createLevelTestSession,
     createModerationCase,
     createEmptyState,
     createReminder,
@@ -1328,6 +1876,9 @@ module.exports = {
     getTempMute,
     getModerationCase,
     getGuildConfigurationOverrides,
+    getLevelImportJob,
+    getLevelRank,
+    getLevelTestSession,
     getLimitedAccount,
     getRetentionSettings,
     getTempVoiceChannel,
@@ -1353,25 +1904,45 @@ module.exports = {
     listTicketTranscripts,
     listTempVoiceChannelsForGuild,
     listGuildHistory,
+    listLevelImportCheckpoints,
+    listLevelImportJobs,
+    listLevelImportMessages,
+    listLevelProcessedMessages,
+    listLevelReconciliationRecords,
+    listLevelRoleMappings,
+    listLevelTestSessions,
+    listLevelXpEvents,
     listUserHistory,
     listModerationCases,
     listVoiceActivity,
     readState,
     removeTempBan,
+    removeLevelRoleMapping,
     removeTempMute,
     removeTempRole,
     removeTempVoiceChannel,
     recordCommandUsage,
+    requestCancelLevelImportJob,
     saveGuildConfigurationSection,
+    setUserXp,
+    setUserXpMinimum,
     updateReminderStatus,
+    updateLevelImportJob,
+    updateLevelTestSession,
     markScheduledJobFinish,
     markScheduledJobStart,
+    markLevelImportMessageProcessed,
+    insertLevelImportMessage,
+    insertLevelReconciliationRecord,
+    insertLevelXpEvent,
     markLimitedAccountFailed,
     markLimitedAccountRestored,
     updateScheduledMessageStatus,
     updateModerationCaseReason,
     upsertEmbedTemplate,
     beginLimitedAccount,
+    upsertLevelImportCheckpoint,
+    upsertLevelRoleMapping,
     upsertLimitedAccount,
     upsertStarboardMessage,
     upsertTempBan,

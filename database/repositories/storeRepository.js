@@ -150,6 +150,150 @@ function mapConfigAudit(row) {
     };
 }
 
+function mapLevelXpEvent(row) {
+    if (!row) return null;
+    return {
+        id: row.id,
+        guildId: row.guild_id,
+        userId: row.user_id,
+        userTag: row.user_tag,
+        source: row.source,
+        sourceKey: row.source_key,
+        xpType: row.xp_type,
+        amount: row.amount,
+        previousTextXp: row.previous_text_xp,
+        previousVoiceXp: row.previous_voice_xp,
+        newTextXp: row.new_text_xp,
+        newVoiceXp: row.new_voice_xp,
+        adminId: row.admin_id,
+        jobId: row.job_id,
+        metadata: parseJson(row.metadata_json, {}),
+        createdAt: row.created_at,
+    };
+}
+
+function mapLevelImportJob(row) {
+    if (!row) return null;
+    return {
+        id: row.id,
+        guildId: row.guild_id,
+        targetUserId: row.target_user_id,
+        status: row.status,
+        dryRun: row.dry_run !== 0,
+        profileHash: row.profile_hash,
+        profile: parseJson(row.profile_json, {}),
+        createdBy: row.created_by,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        startedAt: row.started_at,
+        completedAt: row.completed_at,
+        currentChannelId: row.current_channel_id,
+        channelsTotal: row.channels_total,
+        channelsScanned: row.channels_scanned,
+        messagesSeen: row.messages_seen,
+        messagesEligible: row.messages_eligible,
+        membersSeen: row.members_seen,
+        xpEstimated: row.xp_estimated,
+        xpApplied: row.xp_applied,
+        skippedChannels: parseJson(row.skipped_channels_json, []),
+        errors: parseJson(row.errors_json, []),
+        cancelRequested: row.cancel_requested !== 0,
+        provenance: parseJson(row.provenance_json, {}),
+        result: parseJson(row.result_json, {}),
+    };
+}
+
+function mapLevelImportCheckpoint(row) {
+    if (!row) return null;
+    return {
+        jobId: row.job_id,
+        guildId: row.guild_id,
+        channelId: row.channel_id,
+        parentChannelId: row.parent_channel_id,
+        beforeMessageId: row.before_message_id,
+        oldestMessageId: row.oldest_message_id,
+        status: row.status,
+        messagesSeen: row.messages_seen,
+        messagesEligible: row.messages_eligible,
+        error: row.error,
+        updatedAt: row.updated_at,
+    };
+}
+
+function mapLevelImportMessage(row) {
+    if (!row) return null;
+    return {
+        jobId: row.job_id,
+        guildId: row.guild_id,
+        messageId: row.message_id,
+        userId: row.user_id,
+        userTag: row.user_tag,
+        channelId: row.channel_id,
+        createdAt: row.created_at,
+        xpAmount: row.xp_amount,
+        eligible: row.eligible !== 0,
+        skipReason: row.skip_reason,
+    };
+}
+
+function mapLevelRoleMapping(row) {
+    if (!row) return null;
+    return {
+        guildId: row.guild_id,
+        roleId: row.role_id,
+        minimumLevel: row.minimum_level,
+        createdBy: row.created_by,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+    };
+}
+
+function mapLevelReconciliation(row) {
+    if (!row) return null;
+    return {
+        id: row.id,
+        jobId: row.job_id,
+        guildId: row.guild_id,
+        userId: row.user_id,
+        userTag: row.user_tag,
+        existingXp: row.existing_xp,
+        messageEstimatedXp: row.message_estimated_xp,
+        messageEstimatedLevel: row.message_estimated_level,
+        roleMinLevel: row.role_min_level,
+        roleMinXp: row.role_min_xp,
+        finalXp: row.final_xp,
+        policy: row.policy,
+        dryRun: row.dry_run !== 0,
+        applied: row.applied !== 0,
+        metadata: parseJson(row.metadata_json, {}),
+        createdAt: row.created_at,
+    };
+}
+
+function mapLevelTestSession(row) {
+    if (!row) return null;
+    return {
+        id: row.id,
+        guildId: row.guild_id,
+        userId: row.user_id,
+        userTag: row.user_tag,
+        adminId: row.admin_id,
+        status: row.status,
+        previewOnly: row.preview_only !== 0,
+        previousTextXp: row.previous_text_xp,
+        previousVoiceXp: row.previous_voice_xp,
+        xpDelta: row.xp_delta,
+        xpType: row.xp_type,
+        managedRoleIds: parseJson(row.managed_role_ids_json, []),
+        addedRoleIds: parseJson(row.added_role_ids_json, []),
+        removedRoleIds: parseJson(row.removed_role_ids_json, []),
+        metadata: parseJson(row.metadata_json, {}),
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        rolledBackAt: row.rolled_back_at,
+    };
+}
+
 function readState(db) {
     return {
         cases: db.prepare('SELECT * FROM moderation_cases ORDER BY id ASC').all().map(mapCase),
@@ -175,6 +319,14 @@ function readState(db) {
         guildLevelRewards: listAllGuildLevelRewards(db),
         configAudit: listConfigAudit(db, null, { limit: 1000 }),
         limitedAccounts: honeypotLimitedAccountsRepository.listLimitedAccounts(db),
+        levelXpEvents: listLevelXpEvents(db, null, { limit: 1000 }),
+        levelImportJobs: listLevelImportJobs(db, null, { limit: 1000 }),
+        levelImportCheckpoints: listLevelImportCheckpoints(db),
+        levelImportMessages: listLevelImportMessages(db, null, { limit: 1000 }),
+        levelProcessedMessages: listLevelProcessedMessages(db, null, { limit: 1000 }),
+        levelRoleMappings: listLevelRoleMappings(db),
+        levelReconciliationRecords: listLevelReconciliationRecords(db, null, { limit: 1000 }),
+        levelTestSessions: listLevelTestSessions(db, null, { limit: 1000 }),
     };
 }
 
@@ -433,9 +585,590 @@ function getUserLevelRecord(db, guildId, userId) {
     return db.prepare('SELECT guild_id guildId, user_id userId, user_tag userTag, text_xp textXp, voice_xp voiceXp, last_text_xp_at lastTextXpAt, created_at createdAt, updated_at updatedAt FROM levels WHERE guild_id = ? AND user_id = ?').get(guildId, userId) || null;
 }
 
-function listLevelLeaderboard(db, guildId, limit = 10, mode = 'total') {
+function listLevelLeaderboard(db, guildId, limit = 10, mode = 'total', offset = 0) {
     const order = mode === 'text' ? 'text_xp' : (mode === 'voice' ? 'voice_xp' : '(text_xp + voice_xp)');
-    return db.prepare(`SELECT guild_id guildId, user_id userId, user_tag userTag, text_xp textXp, voice_xp voiceXp, last_text_xp_at lastTextXpAt, created_at createdAt, updated_at updatedAt FROM levels WHERE guild_id = ? AND ${order} > 0 ORDER BY ${order} DESC LIMIT ?`).all(guildId, limit);
+    const safeOffset = Math.max(0, Number(offset || 0));
+    return db.prepare(`SELECT guild_id guildId, user_id userId, user_tag userTag, text_xp textXp, voice_xp voiceXp, last_text_xp_at lastTextXpAt, created_at createdAt, updated_at updatedAt FROM levels WHERE guild_id = ? AND ${order} > 0 ORDER BY ${order} DESC, user_id ASC LIMIT ? OFFSET ?`).all(guildId, limit, safeOffset);
+}
+
+function getLevelScoreExpression(mode = 'total') {
+    if (mode === 'text') return 'text_xp';
+    if (mode === 'voice') return 'voice_xp';
+    return '(text_xp + voice_xp)';
+}
+
+function getLevelRank(db, guildId, userId, mode = 'total') {
+    const record = getUserLevelRecord(db, guildId, userId);
+    if (!record) return null;
+    const score = mode === 'text'
+        ? Number(record.textXp || 0)
+        : (mode === 'voice' ? Number(record.voiceXp || 0) : Number(record.textXp || 0) + Number(record.voiceXp || 0));
+    if (score <= 0) return null;
+
+    const expression = getLevelScoreExpression(mode);
+    const row = db.prepare(`SELECT COUNT(*) + 1 AS rank FROM levels WHERE guild_id = ? AND (${expression} > ? OR (${expression} = ? AND user_id < ?))`)
+        .get(guildId, score, score, userId);
+    return row?.rank || null;
+}
+
+function upsertLevelRecord(db, record) {
+    const timestamp = now();
+    const existing = getUserLevelRecord(db, record.guildId, record.userId);
+    const createdAt = record.createdAt || existing?.createdAt || timestamp;
+    db.prepare(`
+        INSERT INTO levels (guild_id, user_id, user_tag, text_xp, voice_xp, last_text_xp_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(guild_id, user_id) DO UPDATE SET
+            user_tag = excluded.user_tag,
+            text_xp = excluded.text_xp,
+            voice_xp = excluded.voice_xp,
+            last_text_xp_at = excluded.last_text_xp_at,
+            updated_at = excluded.updated_at
+    `).run(
+        record.guildId,
+        record.userId,
+        record.userTag || existing?.userTag || null,
+        Math.max(0, Math.floor(Number(record.textXp || 0))),
+        Math.max(0, Math.floor(Number(record.voiceXp || 0))),
+        Number(record.lastTextXpAt ?? existing?.lastTextXpAt ?? 0),
+        createdAt,
+        record.updatedAt || timestamp,
+    );
+    return getUserLevelRecord(db, record.guildId, record.userId);
+}
+
+function insertLevelXpEvent(db, event) {
+    const timestamp = event.createdAt || now();
+    const result = db.prepare(`
+        INSERT OR IGNORE INTO level_xp_events (
+            guild_id, user_id, user_tag, source, source_key, xp_type, amount,
+            previous_text_xp, previous_voice_xp, new_text_xp, new_voice_xp,
+            admin_id, job_id, metadata_json, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+        event.guildId,
+        event.userId,
+        event.userTag || null,
+        event.source,
+        event.sourceKey || null,
+        event.xpType || 'text',
+        Number(event.amount || 0),
+        Number(event.previousTextXp || 0),
+        Number(event.previousVoiceXp || 0),
+        Number(event.newTextXp || 0),
+        Number(event.newVoiceXp || 0),
+        event.adminId || null,
+        event.jobId || null,
+        stringify(event.metadata, {}),
+        timestamp,
+    );
+    if (!result.changes && event.sourceKey) return null;
+    return mapLevelXpEvent(db.prepare('SELECT * FROM level_xp_events WHERE id = ?').get(result.lastInsertRowid));
+}
+
+function adjustUserXp(db, record) {
+    return db.transaction(() => {
+        const timestamp = record.createdAt || now();
+        const previous = getUserLevelRecord(db, record.guildId, record.userId) || {
+            guildId: record.guildId,
+            userId: record.userId,
+            userTag: record.userTag || null,
+            textXp: 0,
+            voiceXp: 0,
+            lastTextXpAt: 0,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+        };
+        const amount = Math.trunc(Number(record.amount || 0));
+        const xpType = record.xpType === 'voice' ? 'voice' : 'text';
+        const next = {
+            ...previous,
+            userTag: record.userTag || previous.userTag || null,
+            textXp: Math.max(0, Number(previous.textXp || 0) + (xpType === 'text' ? amount : 0)),
+            voiceXp: Math.max(0, Number(previous.voiceXp || 0) + (xpType === 'voice' ? amount : 0)),
+            lastTextXpAt: record.lastTextXpAt ?? previous.lastTextXpAt ?? 0,
+            updatedAt: timestamp,
+        };
+
+        const updated = upsertLevelRecord(db, next);
+        insertLevelXpEvent(db, {
+            guildId: record.guildId,
+            userId: record.userId,
+            userTag: record.userTag || previous.userTag || null,
+            source: record.source || 'adjustment',
+            sourceKey: record.sourceKey || null,
+            xpType,
+            amount,
+            previousTextXp: previous.textXp,
+            previousVoiceXp: previous.voiceXp,
+            newTextXp: updated.textXp,
+            newVoiceXp: updated.voiceXp,
+            adminId: record.adminId || null,
+            jobId: record.jobId || null,
+            metadata: record.metadata || {},
+            createdAt: timestamp,
+        });
+        return updated;
+    })();
+}
+
+function setUserXp(db, record) {
+    return db.transaction(() => {
+        const timestamp = record.createdAt || now();
+        const previous = getUserLevelRecord(db, record.guildId, record.userId) || {
+            guildId: record.guildId,
+            userId: record.userId,
+            userTag: record.userTag || null,
+            textXp: 0,
+            voiceXp: 0,
+            lastTextXpAt: 0,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+        };
+        const next = {
+            ...previous,
+            userTag: record.userTag || previous.userTag || null,
+            textXp: Math.max(0, Math.floor(Number(record.textXp ?? previous.textXp ?? 0))),
+            voiceXp: Math.max(0, Math.floor(Number(record.voiceXp ?? previous.voiceXp ?? 0))),
+            lastTextXpAt: record.lastTextXpAt ?? previous.lastTextXpAt ?? 0,
+            updatedAt: timestamp,
+        };
+        const updated = upsertLevelRecord(db, next);
+        insertLevelXpEvent(db, {
+            guildId: record.guildId,
+            userId: record.userId,
+            userTag: record.userTag || previous.userTag || null,
+            source: record.source || 'set',
+            sourceKey: record.sourceKey || null,
+            xpType: record.xpType || 'combined',
+            amount: (Number(updated.textXp || 0) + Number(updated.voiceXp || 0)) - (Number(previous.textXp || 0) + Number(previous.voiceXp || 0)),
+            previousTextXp: previous.textXp,
+            previousVoiceXp: previous.voiceXp,
+            newTextXp: updated.textXp,
+            newVoiceXp: updated.voiceXp,
+            adminId: record.adminId || null,
+            jobId: record.jobId || null,
+            metadata: record.metadata || {},
+            createdAt: timestamp,
+        });
+        return updated;
+    })();
+}
+
+function setUserXpMinimum(db, record) {
+    const previous = getUserLevelRecord(db, record.guildId, record.userId);
+    const currentTotal = Number(previous?.textXp || 0) + Number(previous?.voiceXp || 0);
+    const minimumTotal = Math.max(0, Math.floor(Number(record.minimumTotalXp || 0)));
+    if (currentTotal >= minimumTotal) return previous;
+    return setUserXp(db, {
+        ...record,
+        textXp: minimumTotal,
+        voiceXp: 0,
+        source: record.source || 'minimum',
+        xpType: 'combined',
+        metadata: {
+            ...(record.metadata || {}),
+            previousTotalXp: currentTotal,
+            minimumTotalXp: minimumTotal,
+        },
+    });
+}
+
+function listLevelXpEvents(db, guildId = null, options = {}) {
+    const limit = Math.max(1, Math.min(5000, Number(options.limit || 100)));
+    const userId = options.userId || null;
+    if (guildId && userId) {
+        return db.prepare('SELECT * FROM level_xp_events WHERE guild_id = ? AND user_id = ? ORDER BY created_at DESC, id DESC LIMIT ?')
+            .all(guildId, userId, limit)
+            .map(mapLevelXpEvent);
+    }
+    if (guildId) {
+        return db.prepare('SELECT * FROM level_xp_events WHERE guild_id = ? ORDER BY created_at DESC, id DESC LIMIT ?')
+            .all(guildId, limit)
+            .map(mapLevelXpEvent);
+    }
+    return db.prepare('SELECT * FROM level_xp_events ORDER BY created_at DESC, id DESC LIMIT ?')
+        .all(limit)
+        .map(mapLevelXpEvent);
+}
+
+function createLevelImportJob(db, record) {
+    const timestamp = now();
+    const active = db.prepare("SELECT * FROM level_import_jobs WHERE guild_id = ? AND status IN ('queued', 'running', 'cancelling') ORDER BY updated_at DESC LIMIT 1").get(record.guildId);
+    if (active) return { ok: false, job: mapLevelImportJob(active), reason: 'active_job' };
+
+    const job = {
+        id: record.id || makeId(),
+        guildId: record.guildId,
+        targetUserId: record.targetUserId || null,
+        status: record.status || 'queued',
+        dryRun: record.dryRun !== false,
+        profileHash: record.profileHash,
+        profile: record.profile || {},
+        createdBy: record.createdBy || null,
+        provenance: record.provenance || {},
+        createdAt: record.createdAt || timestamp,
+    };
+    db.prepare(`
+        INSERT INTO level_import_jobs (
+            id, guild_id, target_user_id, status, dry_run, profile_hash, profile_json,
+            created_by, created_at, updated_at, provenance_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+        job.id,
+        job.guildId,
+        job.targetUserId,
+        job.status,
+        job.dryRun ? 1 : 0,
+        job.profileHash,
+        stringify(job.profile, {}),
+        job.createdBy,
+        job.createdAt,
+        timestamp,
+        stringify(job.provenance, {}),
+    );
+    return { ok: true, job: getLevelImportJob(db, job.id) };
+}
+
+function getLevelImportJob(db, id) {
+    return mapLevelImportJob(db.prepare('SELECT * FROM level_import_jobs WHERE id = ?').get(id));
+}
+
+function listLevelImportJobs(db, guildId = null, options = {}) {
+    const limit = Math.max(1, Math.min(1000, Number(options.limit || 50)));
+    const statuses = Array.isArray(options.statuses) ? options.statuses.filter(Boolean) : [];
+    if (guildId && statuses.length) {
+        const placeholders = statuses.map(() => '?').join(', ');
+        return db.prepare(`SELECT * FROM level_import_jobs WHERE guild_id = ? AND status IN (${placeholders}) ORDER BY updated_at DESC LIMIT ?`)
+            .all(guildId, ...statuses, limit)
+            .map(mapLevelImportJob);
+    }
+    if (guildId) {
+        return db.prepare('SELECT * FROM level_import_jobs WHERE guild_id = ? ORDER BY updated_at DESC LIMIT ?')
+            .all(guildId, limit)
+            .map(mapLevelImportJob);
+    }
+    if (statuses.length) {
+        const placeholders = statuses.map(() => '?').join(', ');
+        return db.prepare(`SELECT * FROM level_import_jobs WHERE status IN (${placeholders}) ORDER BY updated_at DESC LIMIT ?`)
+            .all(...statuses, limit)
+            .map(mapLevelImportJob);
+    }
+    return db.prepare('SELECT * FROM level_import_jobs ORDER BY updated_at DESC LIMIT ?').all(limit).map(mapLevelImportJob);
+}
+
+function updateLevelImportJob(db, id, patch = {}) {
+    const existing = getLevelImportJob(db, id);
+    if (!existing) return null;
+    const next = { ...existing, ...patch, updatedAt: patch.updatedAt || now() };
+    db.prepare(`
+        UPDATE level_import_jobs
+        SET status = ?, dry_run = ?, profile_hash = ?, profile_json = ?, updated_at = ?,
+            started_at = ?, completed_at = ?, current_channel_id = ?,
+            channels_total = ?, channels_scanned = ?, messages_seen = ?, messages_eligible = ?,
+            members_seen = ?, xp_estimated = ?, xp_applied = ?, skipped_channels_json = ?,
+            errors_json = ?, cancel_requested = ?, provenance_json = ?, result_json = ?
+        WHERE id = ?
+    `).run(
+        next.status,
+        next.dryRun ? 1 : 0,
+        next.profileHash,
+        stringify(next.profile, {}),
+        next.updatedAt,
+        next.startedAt || null,
+        next.completedAt || null,
+        next.currentChannelId || null,
+        Number(next.channelsTotal || 0),
+        Number(next.channelsScanned || 0),
+        Number(next.messagesSeen || 0),
+        Number(next.messagesEligible || 0),
+        Number(next.membersSeen || 0),
+        Number(next.xpEstimated || 0),
+        Number(next.xpApplied || 0),
+        stringify(next.skippedChannels, []),
+        stringify(next.errors, []),
+        next.cancelRequested ? 1 : 0,
+        stringify(next.provenance, {}),
+        stringify(next.result, {}),
+        id,
+    );
+    return getLevelImportJob(db, id);
+}
+
+function requestCancelLevelImportJob(db, id) {
+    const job = getLevelImportJob(db, id);
+    if (!job) return null;
+    const status = ['completed', 'cancelled', 'failed'].includes(job.status) ? job.status : 'cancelling';
+    return updateLevelImportJob(db, id, { status, cancelRequested: true });
+}
+
+function upsertLevelImportCheckpoint(db, record) {
+    const timestamp = record.updatedAt || now();
+    db.prepare(`
+        INSERT INTO level_import_checkpoints (
+            job_id, guild_id, channel_id, parent_channel_id, before_message_id,
+            oldest_message_id, status, messages_seen, messages_eligible, error, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(job_id, channel_id) DO UPDATE SET
+            parent_channel_id = excluded.parent_channel_id,
+            before_message_id = excluded.before_message_id,
+            oldest_message_id = excluded.oldest_message_id,
+            status = excluded.status,
+            messages_seen = excluded.messages_seen,
+            messages_eligible = excluded.messages_eligible,
+            error = excluded.error,
+            updated_at = excluded.updated_at
+    `).run(
+        record.jobId,
+        record.guildId,
+        record.channelId,
+        record.parentChannelId || null,
+        record.beforeMessageId || null,
+        record.oldestMessageId || null,
+        record.status || 'pending',
+        Number(record.messagesSeen || 0),
+        Number(record.messagesEligible || 0),
+        record.error || null,
+        timestamp,
+    );
+    return mapLevelImportCheckpoint(db.prepare('SELECT * FROM level_import_checkpoints WHERE job_id = ? AND channel_id = ?').get(record.jobId, record.channelId));
+}
+
+function listLevelImportCheckpoints(db, jobId = null) {
+    const rows = jobId
+        ? db.prepare('SELECT * FROM level_import_checkpoints WHERE job_id = ? ORDER BY updated_at DESC').all(jobId)
+        : db.prepare('SELECT * FROM level_import_checkpoints ORDER BY updated_at DESC LIMIT 1000').all();
+    return rows.map(mapLevelImportCheckpoint);
+}
+
+function insertLevelImportMessage(db, record) {
+    const result = db.prepare(`
+        INSERT OR IGNORE INTO level_import_messages (
+            job_id, guild_id, message_id, user_id, user_tag, channel_id,
+            created_at, xp_amount, eligible, skip_reason
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+        record.jobId,
+        record.guildId,
+        record.messageId,
+        record.userId,
+        record.userTag || null,
+        record.channelId,
+        Number(record.createdAt || 0),
+        Number(record.xpAmount || 0),
+        record.eligible === false ? 0 : 1,
+        record.skipReason || null,
+    );
+    return result.changes > 0;
+}
+
+function listLevelImportMessages(db, jobId = null, options = {}) {
+    const limit = Math.max(1, Math.min(100000, Number(options.limit || 10000)));
+    const userId = options.userId || null;
+    if (jobId && userId) {
+        return db.prepare('SELECT * FROM level_import_messages WHERE job_id = ? AND user_id = ? ORDER BY created_at ASC, message_id ASC LIMIT ?')
+            .all(jobId, userId, limit)
+            .map(mapLevelImportMessage);
+    }
+    if (jobId) {
+        return db.prepare('SELECT * FROM level_import_messages WHERE job_id = ? ORDER BY created_at ASC, message_id ASC LIMIT ?')
+            .all(jobId, limit)
+            .map(mapLevelImportMessage);
+    }
+    return db.prepare('SELECT * FROM level_import_messages ORDER BY created_at DESC LIMIT ?').all(limit).map(mapLevelImportMessage);
+}
+
+function countProcessedLevelMessage(db, guildId, messageId, profileHash) {
+    return db.prepare('SELECT COUNT(*) count FROM level_import_processed_messages WHERE guild_id = ? AND message_id = ? AND profile_hash = ?')
+        .get(guildId, messageId, profileHash).count;
+}
+
+function markLevelImportMessageProcessed(db, record) {
+    const result = db.prepare(`
+        INSERT OR IGNORE INTO level_import_processed_messages (
+            guild_id, message_id, profile_hash, job_id, user_id, channel_id, xp_amount, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+        record.guildId,
+        record.messageId,
+        record.profileHash,
+        record.jobId,
+        record.userId,
+        record.channelId,
+        Number(record.xpAmount || 0),
+        record.createdAt || now(),
+    );
+    return result.changes > 0;
+}
+
+function listLevelProcessedMessages(db, guildId = null, options = {}) {
+    const limit = Math.max(1, Math.min(100000, Number(options.limit || 10000)));
+    const rows = guildId
+        ? db.prepare('SELECT guild_id guildId, message_id messageId, profile_hash profileHash, job_id jobId, user_id userId, channel_id channelId, xp_amount xpAmount, created_at createdAt FROM level_import_processed_messages WHERE guild_id = ? ORDER BY created_at DESC LIMIT ?').all(guildId, limit)
+        : db.prepare('SELECT guild_id guildId, message_id messageId, profile_hash profileHash, job_id jobId, user_id userId, channel_id channelId, xp_amount xpAmount, created_at createdAt FROM level_import_processed_messages ORDER BY created_at DESC LIMIT ?').all(limit);
+    return rows;
+}
+
+function upsertLevelRoleMapping(db, record) {
+    const timestamp = now();
+    db.prepare(`
+        INSERT INTO level_role_level_mappings (guild_id, role_id, minimum_level, created_by, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(guild_id, role_id) DO UPDATE SET
+            minimum_level = excluded.minimum_level,
+            created_by = excluded.created_by,
+            updated_at = excluded.updated_at
+    `).run(record.guildId, record.roleId, Number(record.minimumLevel || 0), record.createdBy || null, record.createdAt || timestamp, timestamp);
+    return mapLevelRoleMapping(db.prepare('SELECT * FROM level_role_level_mappings WHERE guild_id = ? AND role_id = ?').get(record.guildId, record.roleId));
+}
+
+function removeLevelRoleMapping(db, guildId, roleId) {
+    return db.prepare('DELETE FROM level_role_level_mappings WHERE guild_id = ? AND role_id = ?').run(guildId, roleId).changes;
+}
+
+function listLevelRoleMappings(db, guildId = null) {
+    const rows = guildId
+        ? db.prepare('SELECT * FROM level_role_level_mappings WHERE guild_id = ? ORDER BY minimum_level ASC, role_id ASC').all(guildId)
+        : db.prepare('SELECT * FROM level_role_level_mappings ORDER BY guild_id ASC, minimum_level ASC, role_id ASC').all();
+    return rows.map(mapLevelRoleMapping);
+}
+
+function insertLevelReconciliationRecord(db, record) {
+    const timestamp = record.createdAt || now();
+    const result = db.prepare(`
+        INSERT INTO level_reconciliation_records (
+            job_id, guild_id, user_id, user_tag, existing_xp, message_estimated_xp,
+            message_estimated_level, role_min_level, role_min_xp, final_xp,
+            policy, dry_run, applied, metadata_json, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+        record.jobId || null,
+        record.guildId,
+        record.userId,
+        record.userTag || null,
+        Number(record.existingXp || 0),
+        Number(record.messageEstimatedXp || 0),
+        Number(record.messageEstimatedLevel || 0),
+        Number(record.roleMinLevel || 0),
+        Number(record.roleMinXp || 0),
+        Number(record.finalXp || 0),
+        record.policy || 'max',
+        record.dryRun === false ? 0 : 1,
+        record.applied ? 1 : 0,
+        stringify(record.metadata, {}),
+        timestamp,
+    );
+    return mapLevelReconciliation(db.prepare('SELECT * FROM level_reconciliation_records WHERE id = ?').get(result.lastInsertRowid));
+}
+
+function listLevelReconciliationRecords(db, jobId = null, options = {}) {
+    const limit = Math.max(1, Math.min(5000, Number(options.limit || 100)));
+    const rows = jobId
+        ? db.prepare('SELECT * FROM level_reconciliation_records WHERE job_id = ? ORDER BY created_at DESC, id DESC LIMIT ?').all(jobId, limit)
+        : db.prepare('SELECT * FROM level_reconciliation_records ORDER BY created_at DESC, id DESC LIMIT ?').all(limit);
+    return rows.map(mapLevelReconciliation);
+}
+
+function createLevelTestSession(db, record) {
+    const timestamp = record.createdAt || now();
+    const session = {
+        id: record.id || makeId(),
+        guildId: record.guildId,
+        userId: record.userId,
+        userTag: record.userTag || null,
+        adminId: record.adminId,
+        status: record.status || (record.previewOnly ? 'preview' : 'active'),
+        previewOnly: record.previewOnly !== false,
+        previousTextXp: Number(record.previousTextXp || 0),
+        previousVoiceXp: Number(record.previousVoiceXp || 0),
+        xpDelta: Number(record.xpDelta || 0),
+        xpType: record.xpType || 'text',
+        managedRoleIds: record.managedRoleIds || [],
+        addedRoleIds: record.addedRoleIds || [],
+        removedRoleIds: record.removedRoleIds || [],
+        metadata: record.metadata || {},
+        createdAt: timestamp,
+    };
+    db.prepare(`
+        INSERT INTO level_test_sessions (
+            id, guild_id, user_id, user_tag, admin_id, status, preview_only,
+            previous_text_xp, previous_voice_xp, xp_delta, xp_type,
+            managed_role_ids_json, added_role_ids_json, removed_role_ids_json,
+            metadata_json, created_at, updated_at, rolled_back_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+    `).run(
+        session.id,
+        session.guildId,
+        session.userId,
+        session.userTag,
+        session.adminId,
+        session.status,
+        session.previewOnly ? 1 : 0,
+        session.previousTextXp,
+        session.previousVoiceXp,
+        session.xpDelta,
+        session.xpType,
+        stringify(session.managedRoleIds, []),
+        stringify(session.addedRoleIds, []),
+        stringify(session.removedRoleIds, []),
+        stringify(session.metadata, {}),
+        session.createdAt,
+        timestamp,
+    );
+    return getLevelTestSession(db, session.id);
+}
+
+function getLevelTestSession(db, id) {
+    return mapLevelTestSession(db.prepare('SELECT * FROM level_test_sessions WHERE id = ?').get(id));
+}
+
+function listLevelTestSessions(db, guildId = null, options = {}) {
+    const limit = Math.max(1, Math.min(1000, Number(options.limit || 50)));
+    const userId = options.userId || null;
+    if (guildId && userId) {
+        return db.prepare('SELECT * FROM level_test_sessions WHERE guild_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT ?')
+            .all(guildId, userId, limit)
+            .map(mapLevelTestSession);
+    }
+    if (guildId) {
+        return db.prepare('SELECT * FROM level_test_sessions WHERE guild_id = ? ORDER BY created_at DESC LIMIT ?')
+            .all(guildId, limit)
+            .map(mapLevelTestSession);
+    }
+    return db.prepare('SELECT * FROM level_test_sessions ORDER BY created_at DESC LIMIT ?').all(limit).map(mapLevelTestSession);
+}
+
+function updateLevelTestSession(db, id, patch = {}) {
+    const existing = getLevelTestSession(db, id);
+    if (!existing) return null;
+    const next = { ...existing, ...patch, updatedAt: patch.updatedAt || now() };
+    db.prepare(`
+        UPDATE level_test_sessions
+        SET status = ?, preview_only = ?, xp_delta = ?, xp_type = ?,
+            managed_role_ids_json = ?, added_role_ids_json = ?, removed_role_ids_json = ?,
+            metadata_json = ?, updated_at = ?, rolled_back_at = ?
+        WHERE id = ?
+    `).run(
+        next.status,
+        next.previewOnly ? 1 : 0,
+        Number(next.xpDelta || 0),
+        next.xpType || 'text',
+        stringify(next.managedRoleIds, []),
+        stringify(next.addedRoleIds, []),
+        stringify(next.removedRoleIds, []),
+        stringify(next.metadata, {}),
+        next.updatedAt,
+        next.rolledBackAt || null,
+        id,
+    );
+    return getLevelTestSession(db, id);
 }
 
 function createScheduledMessage(db, record) {
@@ -738,7 +1471,13 @@ function replaceGuildLevelRewards(db, guildId, rewards = [], updatedBy = null) {
         guildId,
         section: 'leveling',
         key: 'roleRewards',
-        value: rewards.map(reward => ({ xp: Number(reward.xp || 0), roleId: reward.roleId })).filter(reward => reward.roleId),
+        value: rewards
+            .map(reward => ({
+                xp: Number(reward.xp || 0),
+                level: reward.level === undefined ? undefined : Number(reward.level || 0),
+                roleId: reward.roleId,
+            }))
+            .filter(reward => reward.roleId),
         updatedBy,
         createdAt: timestamp,
         updatedAt: timestamp,
@@ -884,6 +1623,14 @@ function importState(db, state = {}) {
     });
     count('configAudit', state.configAudit, record => addConfigAuditEntries(db, [record]));
     count('limitedAccounts', state.limitedAccounts, record => honeypotLimitedAccountsRepository.upsertLimitedAccount(db, record));
+    count('levelXpEvents', state.levelXpEvents, record => insertLevelXpEvent(db, record));
+    count('levelImportJobs', state.levelImportJobs, record => createLevelImportJob(db, record));
+    count('levelImportCheckpoints', state.levelImportCheckpoints, record => upsertLevelImportCheckpoint(db, record));
+    count('levelImportMessages', state.levelImportMessages, record => insertLevelImportMessage(db, record));
+    count('levelProcessedMessages', state.levelProcessedMessages, record => markLevelImportMessageProcessed(db, record));
+    count('levelRoleMappings', state.levelRoleMappings, record => upsertLevelRoleMapping(db, record));
+    count('levelReconciliationRecords', state.levelReconciliationRecords, record => insertLevelReconciliationRecord(db, record));
+    count('levelTestSessions', state.levelTestSessions, record => createLevelTestSession(db, record));
 
     return counts;
 }
@@ -893,9 +1640,13 @@ module.exports = {
     addModNote,
     addUserHistory,
     addUserXp,
+    adjustUserXp,
     appendVoiceActivity,
     clearWarningCases,
     countActiveModerationCases,
+    countProcessedLevelMessage,
+    createLevelImportJob,
+    createLevelTestSession,
     createModerationCase,
     createReminder,
     createScheduledMessage,
@@ -910,7 +1661,13 @@ module.exports = {
     getTempVoiceChannel,
     getTicketRecord,
     getTicketTranscript,
+    getLevelImportJob,
+    getLevelRank,
+    getLevelTestSession,
     getUserLevelRecord,
+    insertLevelImportMessage,
+    insertLevelReconciliationRecord,
+    insertLevelXpEvent,
     importState,
     listConfigAudit,
     listCommandStats,
@@ -925,6 +1682,14 @@ module.exports = {
     listGuildLogChannels,
     listGuildSettings,
     listLevelLeaderboard,
+    listLevelImportCheckpoints,
+    listLevelImportJobs,
+    listLevelImportMessages,
+    listLevelProcessedMessages,
+    listLevelReconciliationRecords,
+    listLevelRoleMappings,
+    listLevelTestSessions,
+    listLevelXpEvents,
     listModNotes,
     listReminders,
     listScheduledJobStatus,
@@ -941,13 +1706,22 @@ module.exports = {
     removeTempMute,
     removeTempRole,
     removeTempVoiceChannel,
+    removeLevelRoleMapping,
+    requestCancelLevelImportJob,
+    markLevelImportMessageProcessed,
     updateModerationCaseReason,
     updateReminderStatus,
     markScheduledJobFinish,
     markScheduledJobStart,
     saveGuildConfigurationSection,
+    setUserXp,
+    setUserXpMinimum,
+    updateLevelImportJob,
+    updateLevelTestSession,
     updateScheduledMessageStatus,
     upsertEmbedTemplate,
+    upsertLevelImportCheckpoint,
+    upsertLevelRoleMapping,
     upsertStarboardMessage,
     upsertTempBan,
     upsertTempMute,
