@@ -209,8 +209,28 @@ function validateConfig(config, options = {}) {
             if (config.leveling.mode !== undefined && !['text', 'voice', 'both'].includes(config.leveling.mode)) {
                 errors.push('leveling.mode must be "text", "voice", or "both".');
             }
+            if (config.leveling.progressionFormula !== undefined && !['legacy', 'linear', 'quadratic', 'exponential', 'probot_inspired'].includes(config.leveling.progressionFormula)) {
+                errors.push('leveling.progressionFormula must be "legacy", "linear", "quadratic", "exponential", or "probot_inspired".');
+            }
+            if (config.leveling.xpProfile !== undefined && !['legacy', 'probot_inspired', 'custom'].includes(config.leveling.xpProfile)) {
+                errors.push('leveling.xpProfile must be "legacy", "probot_inspired", or "custom".');
+            }
+            validateInteger(errors, config, 'leveling.textXpPerMessage', { min: 0, max: 1000 });
+            validateInteger(errors, config, 'leveling.textXpMin', { min: 0, max: 1000 });
+            validateInteger(errors, config, 'leveling.textXpMax', { min: 0, max: 1000 });
+            validateInteger(errors, config, 'leveling.voiceXpPerMinute', { min: 0, max: 1000 });
+            validateInteger(errors, config, 'leveling.cooldownSeconds', { min: 0, max: 86400 });
+            validateInteger(errors, config, 'leveling.xpPerLevelBase', { min: 1, max: 1000000 });
             if (config.leveling.roleRewards !== undefined && !Array.isArray(config.leveling.roleRewards)) {
                 errors.push('leveling.roleRewards must be an array.');
+            }
+            for (const key of ['ignoredChannelIds', 'ignoredRoleIds', 'ignoredUserIds', 'roleMultipliers', 'channelMultipliers']) {
+                if (config.leveling[key] !== undefined && !Array.isArray(config.leveling[key])) {
+                    errors.push(`leveling.${key} must be an array.`);
+                }
+            }
+            for (const key of ['antiFarm', 'voiceEligibility', 'roleSync', 'rankCard']) {
+                validateObject(errors, config, `leveling.${key}`);
             }
         }
     }

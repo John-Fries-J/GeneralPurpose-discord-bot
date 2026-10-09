@@ -25,6 +25,10 @@ const logChannelKeys = [
 
 const allowedSources = new Set(['dashboard', 'discord_setup', 'command', 'system']);
 
+function isPlainObject(value) {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
 const builtInSections = Object.freeze({
     welcome: Object.freeze({
         enabled: false,
@@ -60,14 +64,51 @@ const builtInSections = Object.freeze({
         enabled: false,
         mode: 'text',
         textXpPerMessage: 1,
+        textXpMin: 1,
+        textXpMax: 1,
         voiceXpPerMinute: 1,
         cooldownSeconds: 60,
+        progressionFormula: 'legacy',
+        xpProfile: 'legacy',
         roleRewards: [],
         ignoredChannelIds: [],
         ignoredRoleIds: [],
+        ignoredUserIds: [],
         roleMultipliers: [],
         channelMultipliers: [],
         xpPerLevelBase: 100,
+        xpCurveFactor: 1.18,
+        announceLevelUp: false,
+        announceLevelDown: false,
+        announceChannelId: '',
+        levelUpMessage: '{user} reached level {level}.',
+        levelDownMessage: '{user} dropped to level {level}.',
+        antiFarm: {
+            enabled: false,
+            minMessageLength: 0,
+            repeatedMessageWindowSeconds: 300,
+            maxMessagesPerWindow: 0,
+            windowSeconds: 60,
+        },
+        voiceEligibility: {
+            allowAfk: true,
+            allowDeafened: true,
+            allowSolo: true,
+        },
+        roleSync: {
+            enabled: true,
+            awardMissingRoles: true,
+            removeObsoleteRoles: false,
+            applyDuringMigration: false,
+            dryRun: false,
+            syncOnLevelUp: true,
+        },
+        rankCard: {
+            enabled: true,
+            theme: 'blue',
+            backgroundUrl: '',
+            leaderboardBackgroundUrl: '',
+        },
     }),
 });
 
@@ -76,7 +117,34 @@ const sectionKeys = {
     logging: new Set(['showUserAvatars']),
     tickets: new Set(['channelId', 'messageId', 'categoryId', 'supportRoleId', 'allowTranscripts', 'allowUserAdding', 'allowClaiming', 'closeInactivityDays', 'autoCloseDays']),
     joinToCreate: new Set(['enabled', 'triggerChannelId', 'categoryId', 'nameFormat', 'userLimitMax', 'emptyGraceMs']),
-    leveling: new Set(['enabled', 'mode', 'textXpPerMessage', 'voiceXpPerMinute', 'cooldownSeconds', 'roleRewards', 'ignoredChannelIds', 'ignoredRoleIds', 'roleMultipliers', 'channelMultipliers', 'xpPerLevelBase']),
+    leveling: new Set([
+        'enabled',
+        'mode',
+        'textXpPerMessage',
+        'textXpMin',
+        'textXpMax',
+        'voiceXpPerMinute',
+        'cooldownSeconds',
+        'progressionFormula',
+        'xpProfile',
+        'roleRewards',
+        'ignoredChannelIds',
+        'ignoredRoleIds',
+        'ignoredUserIds',
+        'roleMultipliers',
+        'channelMultipliers',
+        'xpPerLevelBase',
+        'xpCurveFactor',
+        'announceLevelUp',
+        'announceLevelDown',
+        'announceChannelId',
+        'levelUpMessage',
+        'levelDownMessage',
+        'antiFarm',
+        'voiceEligibility',
+        'roleSync',
+        'rankCard',
+    ]),
 };
 
 function clone(value) {
@@ -162,14 +230,29 @@ function applyGlobalConfig(sections, config = getConfig()) {
     sections.leveling.enabled = asBoolean(leveling.enabled, sections.leveling.enabled);
     sections.leveling.mode = ['text', 'voice', 'both'].includes(leveling.mode) ? leveling.mode : sections.leveling.mode;
     sections.leveling.textXpPerMessage = asNumber(leveling.textXpPerMessage, sections.leveling.textXpPerMessage);
+    sections.leveling.textXpMin = asNumber(firstDefined(leveling.textXpMin, leveling.textXpPerMessage), sections.leveling.textXpMin);
+    sections.leveling.textXpMax = asNumber(firstDefined(leveling.textXpMax, leveling.textXpPerMessage), sections.leveling.textXpMax);
     sections.leveling.voiceXpPerMinute = asNumber(leveling.voiceXpPerMinute, sections.leveling.voiceXpPerMinute);
     sections.leveling.cooldownSeconds = asNumber(leveling.cooldownSeconds, sections.leveling.cooldownSeconds);
+    sections.leveling.progressionFormula = asString(leveling.progressionFormula, sections.leveling.progressionFormula);
+    sections.leveling.xpProfile = asString(leveling.xpProfile, sections.leveling.xpProfile);
     sections.leveling.roleRewards = asArray(leveling.roleRewards, sections.leveling.roleRewards);
     sections.leveling.ignoredChannelIds = asArray(leveling.ignoredChannelIds, sections.leveling.ignoredChannelIds);
     sections.leveling.ignoredRoleIds = asArray(leveling.ignoredRoleIds, sections.leveling.ignoredRoleIds);
+    sections.leveling.ignoredUserIds = asArray(leveling.ignoredUserIds, sections.leveling.ignoredUserIds);
     sections.leveling.roleMultipliers = asArray(leveling.roleMultipliers, sections.leveling.roleMultipliers);
     sections.leveling.channelMultipliers = asArray(leveling.channelMultipliers, sections.leveling.channelMultipliers);
     sections.leveling.xpPerLevelBase = asNumber(leveling.xpPerLevelBase, sections.leveling.xpPerLevelBase);
+    sections.leveling.xpCurveFactor = asNumber(leveling.xpCurveFactor, sections.leveling.xpCurveFactor);
+    sections.leveling.announceLevelUp = asBoolean(leveling.announceLevelUp, sections.leveling.announceLevelUp);
+    sections.leveling.announceLevelDown = asBoolean(leveling.announceLevelDown, sections.leveling.announceLevelDown);
+    sections.leveling.announceChannelId = asString(leveling.announceChannelId, sections.leveling.announceChannelId);
+    sections.leveling.levelUpMessage = asString(leveling.levelUpMessage, sections.leveling.levelUpMessage);
+    sections.leveling.levelDownMessage = asString(leveling.levelDownMessage, sections.leveling.levelDownMessage);
+    sections.leveling.antiFarm = { ...sections.leveling.antiFarm, ...(isPlainObject(leveling.antiFarm) ? leveling.antiFarm : {}) };
+    sections.leveling.voiceEligibility = { ...sections.leveling.voiceEligibility, ...(isPlainObject(leveling.voiceEligibility) ? leveling.voiceEligibility : {}) };
+    sections.leveling.roleSync = { ...sections.leveling.roleSync, ...(isPlainObject(leveling.roleSync) ? leveling.roleSync : {}) };
+    sections.leveling.rankCard = { ...sections.leveling.rankCard, ...(isPlainObject(leveling.rankCard) ? leveling.rankCard : {}) };
 
     return sections;
 }
@@ -259,9 +342,13 @@ function resetGuildSettingsCache() {
 
 function normalizeLevelRewards(rewards = []) {
     return rewards
-        .map(reward => ({ xp: Math.max(0, Number(reward.xp || 0)), roleId: asString(reward.roleId) }))
+        .map(reward => ({
+            xp: Math.max(0, Number(reward.xp || 0)),
+            level: reward.level === undefined ? undefined : Math.max(0, Number(reward.level || 0)),
+            roleId: asString(reward.roleId),
+        }))
         .filter(reward => reward.roleId)
-        .sort((a, b) => a.xp - b.xp || a.roleId.localeCompare(b.roleId));
+        .sort((a, b) => Number(a.level ?? 0) - Number(b.level ?? 0) || a.xp - b.xp || a.roleId.localeCompare(b.roleId));
 }
 
 function normalizeGuildSettings(section, values = {}) {
@@ -332,11 +419,28 @@ function normalizeGuildSettings(section, values = {}) {
             else if (key === 'mode') {
                 if (!['text', 'voice', 'both'].includes(values[key])) throw new Error('Leveling mode must be text, voice, or both.');
                 assign(key, values[key]);
+            } else if (key === 'progressionFormula') {
+                if (!['legacy', 'linear', 'quadratic', 'exponential', 'probot_inspired'].includes(values[key])) {
+                    throw new Error('Leveling formula must be legacy, linear, quadratic, exponential, or probot_inspired.');
+                }
+                assign(key, values[key]);
+            } else if (key === 'xpProfile') {
+                if (!['legacy', 'probot_inspired', 'custom'].includes(values[key])) {
+                    throw new Error('Leveling XP profile must be legacy, probot_inspired, or custom.');
+                }
+                assign(key, values[key]);
             } else if (key === 'roleRewards') {
                 levelRewards = normalizeLevelRewards(values[key]);
                 assign(key, levelRewards);
-            } else if (['ignoredChannelIds', 'ignoredRoleIds', 'roleMultipliers', 'channelMultipliers'].includes(key)) {
+            } else if (['ignoredChannelIds', 'ignoredRoleIds', 'ignoredUserIds', 'roleMultipliers', 'channelMultipliers'].includes(key)) {
                 assign(key, asArray(values[key], []));
+            } else if (['announceLevelUp', 'announceLevelDown'].includes(key)) {
+                assign(key, values[key] === true);
+            } else if (['announceChannelId', 'levelUpMessage', 'levelDownMessage'].includes(key)) {
+                assign(key, asString(values[key]).trim());
+            } else if (['antiFarm', 'voiceEligibility', 'roleSync', 'rankCard'].includes(key)) {
+                if (!isPlainObject(values[key])) throw new Error(`${key} must be an object.`);
+                assign(key, clone(values[key]));
             } else {
                 assign(key, Number(values[key] || 0));
             }
