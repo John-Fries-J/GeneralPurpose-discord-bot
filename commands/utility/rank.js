@@ -4,10 +4,11 @@ const {
     formatXp,
     formatProgressBar,
     getGuildLevelingConfig,
+    getLevelRank,
     getLevelProgress,
     getUserLevelRecord,
-    listLevelLeaderboard,
 } = require('../../utils/leveling');
+const { createRankCardAttachment } = require('../../utils/rankCard');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -33,8 +34,7 @@ module.exports = {
         const settings = await getGuildLevelingConfig(interaction.guild.id);
         const progress = getLevelProgress(record, settings);
         const percent = Math.floor(progress.percent * 100);
-        const leaderboard = await listLevelLeaderboard(interaction.guild.id, 1000, 'total');
-        const placement = leaderboard.findIndex(item => item.userId === user.id);
+        const placement = await getLevelRank(interaction.guild.id, user.id, 'total');
         const textXp = Number(record.textXp || 0);
         const voiceXp = Number(record.voiceXp || 0);
         const total = Math.max(1, textXp + voiceXp);
@@ -47,7 +47,7 @@ module.exports = {
             thumbnail: user.displayAvatarURL({ extension: 'png', size: 128 }),
             description: [
                 `**Level ${progress.level}** with **${formatXp(progress.totalXp)} XP**`,
-                `Server placement: **${placement === -1 ? 'Unranked' : `#${placement + 1}`}**`,
+                `Server placement: **${placement ? `#${placement}` : 'Unranked'}**`,
             ].join('\n'),
             fields: [
                 { name: 'Next Level', value: `${formatXp(progress.progressXp)} / ${formatXp(progress.neededXp)} XP (${percent}%)`, inline: false },
@@ -70,6 +70,16 @@ module.exports = {
                 },
             ],
         });
+
+        if (settings.rankCard?.enabled !== false) {
+            const attachment = createRankCardAttachment({ user, progress, rank: placement, record, settings });
+            embed.setImage('attachment://rank-card.svg');
+            try {
+                return await interaction.reply({ embeds: [embed], files: [attachment] });
+            } catch (error) {
+                console.error('Failed to send graphical rank card, using embed fallback:', error);
+            }
+        }
 
         return interaction.reply({ embeds: [embed] });
     },

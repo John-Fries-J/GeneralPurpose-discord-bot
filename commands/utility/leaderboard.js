@@ -15,11 +15,19 @@ module.exports = {
                 { name: 'Total XP', value: 'total' },
                 { name: 'Text XP', value: 'text' },
                 { name: 'Voice XP', value: 'voice' },
-            )),
+            ))
+        .addIntegerOption(option => option
+            .setName('page')
+            .setDescription('Leaderboard page.')
+            .setMinValue(1)
+            .setMaxValue(100000)),
 
     async execute(interaction) {
         const type = interaction.options.getString('type') || 'total';
-        const records = await listLevelLeaderboard(interaction.guild.id, 10, type);
+        const page = interaction.options.getInteger('page') || 1;
+        const pageSize = 10;
+        const offset = (page - 1) * pageSize;
+        const records = await listLevelLeaderboard(interaction.guild.id, pageSize, type, offset);
 
         if (!records.length) {
             return interaction.reply({ content: `No ${type} XP has been recorded yet.`, flags: 64 });
@@ -35,8 +43,9 @@ module.exports = {
             title: `${type[0].toUpperCase()}${type.slice(1)} XP Leaderboard`,
             color: 'blue',
             description: records.map((record, index) => {
-                return `**${index + 1}.** <@${record.userId}> - **${formatXp(score(record))} XP** (${formatXp(record.textXp)} text, ${formatXp(record.voiceXp)} voice)`;
+                return `**${offset + index + 1}.** <@${record.userId}> - **${formatXp(score(record))} XP** (${formatXp(record.textXp)} text, ${formatXp(record.voiceXp)} voice)`;
             }).join('\n'),
+            footerText: `Page ${page}`,
         });
 
         return interaction.reply({ embeds: [embed] });
