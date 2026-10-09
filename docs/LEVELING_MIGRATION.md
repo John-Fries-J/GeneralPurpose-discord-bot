@@ -17,7 +17,7 @@
 - Existing `textXpPerMessage` remains supported. When no XP range is configured, it becomes both `textXpMin` and `textXpMax`.
 - Existing XP totals stay in the `levels` table; new provenance, import, role-recovery, and test records are stored beside it.
 - Reward roles are still managed only when explicitly registered as leveling rewards. Role removal defaults to disabled.
-- Historical message imports are estimates, not verified ProBot data. Deleted messages, inaccessible channels, unavailable threads, and historical voice activity cannot be reconstructed.
+- Historical message imports are estimates, not verified ProBot data. Deleted messages, inaccessible channels, unavailable threads, skipped or failed channel scans, and historical voice activity cannot be reconstructed.
 - Role recovery treats mapped roles as minimum level evidence. Multiple roles are not summed.
 - Voice XP no longer awards immediately on scheduler startup for users already in voice; this prevents restart catch-up or interruption over-awards.
 
@@ -27,7 +27,7 @@
 2. Run `/level role-recovery-preview` and review the affected member count.
 3. Run `/level import-preview include_roles:true` to dry-run accessible message history plus role minimums.
 4. Review `/level import-status`.
-5. Apply with `/level import-history apply:true include_roles:true confirm:APPLY`.
+5. Apply with `/level import-history apply:true include_roles:true confirm:APPLY`. If the dry run reported skipped channels, failed scans, or incomplete member fetching and you still accept the partial import, use `confirm:APPLY_INCOMPLETE`; apply jobs stop before changing XP when incomplete data is detected without that stronger confirmation.
 6. Use `/level test set`, `/level test xp`, and `/level test rollback` on a dedicated test account before enabling role removal.
 
 ## Required Bot Permissions
