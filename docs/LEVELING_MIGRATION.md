@@ -30,6 +30,14 @@
 5. Apply with `/level import-history apply:true include_roles:true confirm:APPLY`. If the dry run reported skipped channels, failed scans, or incomplete member fetching and you still accept the partial import, use `confirm:APPLY_INCOMPLETE`; apply jobs stop before changing XP when incomplete data is detected without that stronger confirmation.
 6. Use `/level test set`, `/level test xp`, and `/level test rollback` on a dedicated test account before enabling role removal.
 
+## Historical Calibration Preview
+
+- Use `/level calibration-preview job_id:<completed-job-id> profile:ProBot-inspired default` to replay stored historical import messages under a different XP profile without rescanning Discord and without changing XP or roles.
+- Use `/level calibration-preview job_id:<completed-job-id> profile:Custom options min_xp:<n> max_xp:<n> cooldown:<seconds> formula:<formula>` to test specific XP settings.
+- Use `/level calibration-fit job_id:<completed-job-id>` after configuring reward-role mappings to compare plausible profiles against role-derived minimum-level evidence. The command reports reconstructed levels from messages and protected levels that preserve confirmed role milestones.
+- Add `export:CSV` or `export:JSON` to calibration commands when detailed per-user preview output is needed.
+- Calibration is read-only: it streams `level_import_messages`, recalculates hypothetical XP from stored message IDs and timestamps, and does not write reconciliation records, processed-message rows, live XP balances, config, or Discord roles.
+
 ## Required Bot Permissions
 
 - `View Channel` and `Read Message History` for channels to scan.
