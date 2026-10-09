@@ -309,9 +309,9 @@ Music:
 
 Honeypot:
 
-- Messages in the configured honeypot channel are deleted with up to 10 recent messages from the same user across accessible server text channels.
-- A scam alert embed is sent to the alert channel with Softban, Ban, and Ignore buttons.
-- Softban and Ban use the reason `Scam`, check Discord hierarchy and bot permissions, and update the alert embed after success or failure.
+- Messages in the configured honeypot channel are deleted with up to 15 recent messages from the same user across accessible server text channels, with a delayed second cleanup pass.
+- A scam alert embed is sent to the alert channel with Limit User, Soft Ban, Time Out, and Ignore buttons.
+- Automatic and staff-triggered honeypot actions use the reason `Scam`, check Discord hierarchy and bot permissions, and update the alert embed after success or failure.
 
 Member Counters:
 

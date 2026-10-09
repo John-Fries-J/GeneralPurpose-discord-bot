@@ -12,6 +12,7 @@ const {
     createHoneypotButtons,
     customIds,
     deleteRecentUserMessages,
+    deleteRecentUserMessagesWithReport,
     getHoneypotConfig,
     getRemovableRoleIds,
     handleHoneypotButton,
@@ -260,6 +261,50 @@ test('deleteRecentUserMessages counts only successful deletes across guild chann
     });
 
     assert.equal(deleted, 2);
+});
+
+test('honeypot cleanup second pass catches new user messages without duplicate deletes', async () => {
+    const deletedIds = [];
+    const messages = new Map();
+    const permissions = { has: permission => permission === PermissionFlagsBits.ViewChannel || permission === PermissionFlagsBits.ReadMessageHistory || permission === PermissionFlagsBits.ManageMessages };
+    const channel = {
+        id: 'general',
+        type: ChannelType.GuildText,
+        viewable: true,
+        permissionsFor: () => permissions,
+        messages: { fetch: async () => new Map(messages) },
+    };
+    const makeTrackedMessage = (id, authorId, createdTimestamp) => ({
+        ...createMessage(id, authorId, createdTimestamp),
+        channel,
+        delete: async () => {
+            deletedIds.push(id);
+            messages.delete(id);
+        },
+    });
+    const first = makeTrackedMessage('first', 'user', 100);
+    messages.set(first.id, first);
+    const seenIds = new Set();
+    const context = {
+        guild: {
+            members: { me: {}, fetchMe: async () => ({}) },
+            channels: { fetch: async () => new Map([[channel.id, channel]]) },
+        },
+        userId: 'user',
+        extraMessages: new Map([[first.id, first]]),
+    };
+
+    const immediate = await deleteRecentUserMessagesWithReport(context, 15, { seenIds });
+    const duringCleanup = makeTrackedMessage('during-cleanup', 'user', 200);
+    const otherUser = makeTrackedMessage('other-user', 'other', 300);
+    messages.set(duringCleanup.id, duringCleanup);
+    messages.set(otherUser.id, otherUser);
+    const delayed = await deleteRecentUserMessagesWithReport(context, 15, { seenIds });
+
+    assert.equal(immediate.deletedCount, 1);
+    assert.equal(delayed.deletedCount, 1);
+    assert.deepEqual(deletedIds, ['first', 'during-cleanup']);
+    assert.equal(messages.has('other-user'), true);
 });
 
 test('sendHoneypotNotice sends the configured warning embed safely', async () => {

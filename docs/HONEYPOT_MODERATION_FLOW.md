@@ -9,6 +9,8 @@ The honeypot alert exposes four staff actions:
 
 Limit User stores a limited-account record before role changes. The record includes the user's restorable role IDs, the configured limited role, the recovery channel, who limited the user, timestamps, and status. The bot never removes `@everyone`, managed roles, or roles at or above the bot's highest role.
 
+When a honeypot message is detected, the bot immediately runs the first enabled moderation action in the configured action order: Limit User, Soft Ban, then Time Out. Message cleanup deletes up to 15 matching user messages immediately and runs one delayed second pass.
+
 ## Limited Account Recovery
 
 Use `/honeypot recovery-panel` after configuring `limited_role` and `recovery_channel`. The panel includes a persistent `Regain Access` button. A limited user can click it to restore still-existing unmanaged roles below the bot, remove the limited role, and mark the limited-account record restored.

@@ -8,6 +8,7 @@ const { bootstrapNameless } = require('../utils/namelessmc');
 const { initializeStorage } = require('../utils/store');
 const { resumeLevelImportJobs } = require('../utils/levelingImport');
 const { resumeLevelCalibrationJobs } = require('../utils/levelingCalibration');
+const { resumeHoneypotCleanupJobs } = require('../utils/honeypot');
 const { createScheduler } = require('../services/scheduler');
 const { reconcileJoinToCreate } = require('../utils/joinToCreate');
 const { logger } = require('../utils/logger');
@@ -44,6 +45,9 @@ module.exports = {
         });
         resumeLevelCalibrationJobs(client).catch(error => {
             readyLogger.error('Level calibration resume failed', { error });
+        });
+        resumeHoneypotCleanupJobs(client).catch(error => {
+            readyLogger.error('Honeypot cleanup resume failed', { error });
         });
         client.scheduler = createScheduler(client, { logger });
         client.scheduler.start();

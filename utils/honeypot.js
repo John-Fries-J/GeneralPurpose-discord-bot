@@ -10,17 +10,24 @@ const { getConfig, updateConfig } = require('./config');
 const { fetchMember } = require('./discord');
 const { actionRow, button, container, separator, textDisplay, v2Payload } = require('./discordUi');
 const { createEmbed } = require('./embeds');
+const { logger } = require('./logger');
 const { softbanUser } = require('./softban');
 const {
     addUserHistory,
     beginLimitedAccount,
     getLimitedAccount,
+    listGuildHistory,
     markLimitedAccountFailed,
     markLimitedAccountRestored,
 } = require('./store');
 
 const DEFAULT_TIMEOUT_DURATION_MS = 60 * 60 * 1000;
 const MAX_TIMEOUT_DURATION_MS = 28 * 24 * 60 * 60 * 1000;
+const DEFAULT_CLEANUP_DELAY_MS = 3000;
+const MAX_CLEANUP_DELAY_MS = 60 * 1000;
+const HONEYPOT_CLEANUP_LIMIT = 15;
+const BULK_DELETE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+const CLEANUP_RESUME_WINDOW_MS = 60 * 1000;
 const HONEYPOT_REASON = 'Scam';
 
 const customIds = {
@@ -33,12 +40,20 @@ const customIds = {
 };
 
 const actionLocks = new Map();
+const cleanupJobs = new Map();
 const terminalAlertActions = new Set();
+const honeypotLogger = logger.child({ component: 'honeypot' });
 
 function clampDurationMs(value, fallback = DEFAULT_TIMEOUT_DURATION_MS) {
     const number = Number(value);
     if (!Number.isInteger(number) || number <= 0) return fallback;
     return Math.min(number, MAX_TIMEOUT_DURATION_MS);
+}
+
+function clampCleanupDelayMs(value, fallback = DEFAULT_CLEANUP_DELAY_MS) {
+    const number = Number(value);
+    if (!Number.isInteger(number) || number < 0) return fallback;
+    return Math.min(number, MAX_CLEANUP_DELAY_MS);
 }
 
 function getHoneypotConfig(config = getConfig()) {
@@ -59,6 +74,7 @@ function getHoneypotConfig(config = getConfig()) {
             ignore: actions.ignore !== false,
         },
         timeoutDurationMs: clampDurationMs(honeypot.timeoutDurationMs),
+        cleanupDelayMs: clampCleanupDelayMs(honeypot.cleanupDelayMs),
         limitedAccount: {
             enabled: limitedAccount.enabled !== false,
             roleId: limitedAccount.roleId || '',
@@ -147,48 +163,396 @@ function canFetchMessages(channel, botMember) {
     if (!channel?.messages?.fetch || !channel.viewable) return false;
     const permissions = channel.permissionsFor?.(botMember);
     return permissions?.has(PermissionFlagsBits.ViewChannel)
-        && permissions?.has(PermissionFlagsBits.ReadMessageHistory)
-        && permissions?.has(PermissionFlagsBits.ManageMessages);
+        && permissions?.has(PermissionFlagsBits.ReadMessageHistory);
 }
 
-async function fetchRecentUserMessagesFromGuild(message, perChannelLimit = 25) {
-    const botMember = message.guild.members.me || await message.guild.members.fetchMe().catch(() => null);
-    const channels = await message.guild.channels.fetch().catch(() => null);
-    if (!channels?.size || !botMember) return [];
+function canBulkDeleteMessages(channel, botMember) {
+    if (!channel?.bulkDelete) return false;
+    const permissions = channel.permissionsFor?.(botMember);
+    return permissions?.has(PermissionFlagsBits.ManageMessages) === true;
+}
 
-    const supportedTypes = new Set([
+function contextUserId(context) {
+    return context.userId || context.author?.id || context.user?.id || null;
+}
+
+function contextUserTag(context) {
+    return context.userTag || context.author?.tag || context.user?.tag || contextUserId(context);
+}
+
+function isSupportedCleanupChannel(channel) {
+    return new Set([
+        ChannelType.AnnouncementThread,
         ChannelType.GuildAnnouncement,
         ChannelType.GuildText,
         ChannelType.PublicThread,
         ChannelType.PrivateThread,
-    ]);
+    ]).has(channel?.type);
+}
 
-    const batches = await Promise.allSettled([...channels.values()]
-        .filter(channel => supportedTypes.has(channel?.type))
+function channelCollectionValues(channels) {
+    if (!channels) return [];
+    if (typeof channels.values === 'function') return [...channels.values()];
+    return Object.values(channels);
+}
+
+function addCleanupEntry(entries, message, channel, userId) {
+    if (!message?.id || message.author?.id !== userId) return;
+    entries.set(message.id, {
+        id: message.id,
+        message,
+        channel: message.channel || channel,
+        createdTimestamp: Number(message.createdTimestamp || 0),
+    });
+}
+
+async function fetchRecentUserMessageEntriesFromGuild(context, perChannelLimit = 25) {
+    const userId = contextUserId(context);
+    const guild = context.guild;
+    const failures = [];
+    if (!guild || !userId) return { entries: [], failures: [{ scope: 'guild', reason: 'missing_context' }] };
+
+    const botMember = guild.members?.me || await guild.members?.fetchMe?.().catch(error => {
+        failures.push({ scope: 'guild', reason: 'fetch_bot_member_failed', error: formatError(error) });
+        return null;
+    });
+    const fetchedChannels = await guild.channels?.fetch?.().catch(error => {
+        failures.push({ scope: 'guild', reason: 'fetch_channels_failed', error: formatError(error) });
+        return null;
+    });
+    const channels = fetchedChannels || guild.channels?.cache;
+    if (!botMember) return { entries: [], failures };
+
+    const entries = new Map();
+    const fetches = channelCollectionValues(channels)
+        .filter(isSupportedCleanupChannel)
         .filter(channel => canFetchMessages(channel, botMember))
-        .map(channel => channel.messages.fetch({ limit: perChannelLimit })));
-
-    const seen = new Map();
-    for (const result of batches) {
-        if (result.status !== 'fulfilled') continue;
-        for (const item of result.value.values()) {
-            if (item.author?.id === message.author.id && item.deletable) {
-                seen.set(item.id, item);
+        .map(async channel => {
+            try {
+                const messages = await channel.messages.fetch({ limit: perChannelLimit });
+                for (const item of messages.values()) addCleanupEntry(entries, item, channel, userId);
+            } catch (error) {
+                failures.push({ scope: 'channel', channelId: channel.id, reason: 'fetch_messages_failed', error: formatError(error) });
             }
+        });
+    await Promise.all(fetches);
+
+    for (const item of context.extraMessages?.values?.() || []) {
+        addCleanupEntry(entries, item, item.channel || context.channel, userId);
+    }
+    addCleanupEntry(entries, context, context.channel, userId);
+
+    return {
+        entries: [...entries.values()].sort((a, b) => b.createdTimestamp - a.createdTimestamp),
+        failures,
+    };
+}
+
+async function fetchRecentUserMessagesFromGuild(context, perChannelLimit = 25) {
+    const { entries } = await fetchRecentUserMessageEntriesFromGuild(context, perChannelLimit);
+    return entries.map(entry => entry.message);
+}
+
+function isUnknownDeletedMessage(error) {
+    return error?.code === 10008;
+}
+
+function cleanupFailure(scope, entry, reason, error = null) {
+    return {
+        scope,
+        channelId: entry?.channel?.id || null,
+        messageId: entry?.id || null,
+        reason,
+        error: error ? formatError(error) : null,
+    };
+}
+
+function isRecentEnoughForBulkDelete(entry, now = Date.now()) {
+    return entry.createdTimestamp > 0 && now - entry.createdTimestamp < BULK_DELETE_MAX_AGE_MS;
+}
+
+async function deleteEntryIndividually(entry) {
+    const message = entry.message;
+    if (message.deletable === false || typeof message.delete !== 'function') {
+        return { deleted: 0, failures: [cleanupFailure('message', entry, 'not_deletable')] };
+    }
+
+    try {
+        await message.delete();
+        return { deleted: 1, failures: [] };
+    } catch (error) {
+        if (isUnknownDeletedMessage(error)) return { deleted: 0, failures: [] };
+        return { deleted: 0, failures: [cleanupFailure('message', entry, 'delete_failed', error)] };
+    }
+}
+
+async function deleteBulkEntries(channel, entries) {
+    try {
+        const deleted = await channel.bulkDelete(entries.map(entry => entry.message), true);
+        const deletedIds = new Set(deleted?.keys ? [...deleted.keys()] : entries.map(entry => entry.id));
+        return {
+            deleted: typeof deleted?.size === 'number' ? deleted.size : deletedIds.size,
+            deletedIds,
+            failures: [],
+        };
+    } catch (error) {
+        return {
+            deleted: 0,
+            deletedIds: new Set(),
+            failures: entries.map(entry => cleanupFailure('message', entry, 'bulk_delete_failed', error)),
+        };
+    }
+}
+
+async function deleteRecentUserMessagesWithReport(context, limit = HONEYPOT_CLEANUP_LIMIT, options = {}) {
+    const userId = contextUserId(context);
+    const botMember = context.guild?.members?.me || await context.guild?.members?.fetchMe?.().catch(() => null);
+    const seenIds = options.seenIds || new Set();
+    const { entries, failures } = await fetchRecentUserMessageEntriesFromGuild(context, 25);
+    const candidates = entries
+        .filter(entry => entry.message?.author?.id === userId)
+        .filter(entry => !seenIds.has(entry.id))
+        .slice(0, limit);
+
+    for (const entry of candidates) seenIds.add(entry.id);
+
+    let deletedCount = 0;
+    const deleteFailures = [...failures];
+    const byChannel = new Map();
+    for (const entry of candidates) {
+        const channelId = entry.channel?.id || 'unknown';
+        if (!byChannel.has(channelId)) byChannel.set(channelId, { channel: entry.channel, entries: [] });
+        byChannel.get(channelId).entries.push(entry);
+    }
+
+    for (const { channel, entries: channelEntries } of byChannel.values()) {
+        const recentBulkEntries = channelEntries.filter(entry => isRecentEnoughForBulkDelete(entry));
+        const individualEntries = channelEntries.filter(entry => !recentBulkEntries.includes(entry));
+
+        if (recentBulkEntries.length > 1 && canBulkDeleteMessages(channel, botMember)) {
+            const bulk = await deleteBulkEntries(channel, recentBulkEntries);
+            deletedCount += bulk.deleted;
+            deleteFailures.push(...bulk.failures);
+            individualEntries.push(...recentBulkEntries.filter(entry => !bulk.deletedIds.has(entry.id)));
+        } else {
+            individualEntries.push(...recentBulkEntries);
+        }
+
+        for (const entry of individualEntries) {
+            const result = await deleteEntryIndividually(entry);
+            deletedCount += result.deleted;
+            deleteFailures.push(...result.failures);
         }
     }
 
-    if (message.deletable) {
-        seen.set(message.id, message);
-    }
-
-    return [...seen.values()].sort((a, b) => b.createdTimestamp - a.createdTimestamp);
+    return {
+        deletedCount,
+        failures: deleteFailures,
+        consideredCount: candidates.length,
+        seenIds,
+    };
 }
 
-async function deleteRecentUserMessages(message, limit = 10) {
-    const deletable = (await fetchRecentUserMessagesFromGuild(message)).slice(0, limit);
-    const results = await Promise.allSettled(deletable.map(item => item.delete()));
-    return results.filter(result => result.status === 'fulfilled').length;
+async function deleteRecentUserMessages(context, limit = HONEYPOT_CLEANUP_LIMIT) {
+    const result = await deleteRecentUserMessagesWithReport(context, limit);
+    return result.deletedCount;
+}
+
+function cleanupJobKey(guildId, userId) {
+    return `${guildId}:${userId}`;
+}
+
+function cleanupIdFor(message) {
+    return `${message.guild.id}:${message.author.id}:${message.id}`;
+}
+
+function waitForCleanupDelay(delayMs) {
+    return new Promise(resolve => {
+        const timer = setTimeout(resolve, delayMs);
+        timer.unref?.();
+    });
+}
+
+function cleanupContextFromState(state) {
+    return {
+        guild: state.guild,
+        userId: state.userId,
+        userTag: state.userTag,
+        channelId: state.channelId,
+        extraMessages: state.extraMessages,
+    };
+}
+
+async function recordCleanupMarker(state, type, metadata = {}) {
+    await addUserHistory({
+        guildId: state.guild.id,
+        userId: state.userId,
+        userTag: state.userTag,
+        type,
+        summary: metadata.summary || type,
+        channelId: state.channelId,
+        metadata: {
+            cleanupId: state.cleanupId,
+            ...metadata,
+        },
+    }).catch(error => {
+        honeypotLogger.warn('Failed to record honeypot cleanup marker', {
+            guildId: state.guild.id,
+            userId: state.userId,
+            type,
+            error,
+        });
+    });
+}
+
+async function runCleanupPass(state, phase) {
+    const result = await deleteRecentUserMessagesWithReport(cleanupContextFromState(state), HONEYPOT_CLEANUP_LIMIT, {
+        seenIds: state.seenIds,
+    });
+    state.deletedCount += result.deletedCount;
+    state.failures.push(...result.failures);
+
+    honeypotLogger.info('Honeypot cleanup pass finished', {
+        guildId: state.guild.id,
+        userId: state.userId,
+        cleanupId: state.cleanupId,
+        phase,
+        deletedCount: result.deletedCount,
+        consideredCount: result.consideredCount,
+        failureCount: result.failures.length,
+    });
+
+    if (result.failures.length) {
+        honeypotLogger.warn('Honeypot cleanup pass had failures', {
+            guildId: state.guild.id,
+            userId: state.userId,
+            cleanupId: state.cleanupId,
+            phase,
+            failures: result.failures.slice(0, 10),
+        });
+    }
+
+    return result;
+}
+
+function startHoneypotCleanupJob(message, settings = getHoneypotConfig(), options = {}) {
+    const userId = contextUserId(message);
+    if (!message.guild || !userId) {
+        const empty = Promise.resolve({ deletedCount: 0, failures: [], consideredCount: 0, seenIds: new Set() });
+        return { firstPass: empty, done: empty };
+    }
+
+    const key = cleanupJobKey(message.guild.id, userId);
+    const existing = cleanupJobs.get(key);
+    if (existing) {
+        if (message.id) existing.state.extraMessages.set(message.id, message);
+        return { ...existing, existing: true };
+    }
+
+    const delayMs = clampCleanupDelayMs(settings.cleanupDelayMs);
+    const state = {
+        cleanupId: options.cleanupId || cleanupIdFor(message),
+        guild: message.guild,
+        userId,
+        userTag: contextUserTag(message),
+        channelId: message.channelId || message.channel?.id || null,
+        extraMessages: new Map(message.id ? [[message.id, message]] : []),
+        seenIds: new Set(),
+        deletedCount: 0,
+        failures: [],
+    };
+    const dueAt = options.dueAt || Date.now() + delayMs;
+    const firstPass = options.skipImmediate
+        ? Promise.resolve({ deletedCount: 0, failures: [], consideredCount: 0, seenIds: state.seenIds })
+        : runCleanupPass(state, 'immediate');
+    const job = {
+        state,
+        firstPass,
+        existing: false,
+        done: (async () => {
+            if (options.recordPending !== false) {
+                await recordCleanupMarker(state, 'honeypot:cleanup:pending', {
+                    summary: 'Honeypot cleanup pending second pass.',
+                    dueAt,
+                    delayMs,
+                });
+            }
+            await firstPass.catch(() => null);
+            await waitForCleanupDelay(Math.max(0, dueAt - Date.now()));
+            await runCleanupPass(state, 'delayed').catch(error => {
+                state.failures.push({ scope: 'job', reason: 'delayed_pass_failed', error: formatError(error) });
+                honeypotLogger.warn('Honeypot delayed cleanup failed', {
+                    guildId: state.guild.id,
+                    userId: state.userId,
+                    cleanupId: state.cleanupId,
+                    error,
+                });
+            });
+            await recordCleanupMarker(state, 'honeypot:cleanup:completed', {
+                summary: `Honeypot cleanup completed. Deleted ${state.deletedCount} message(s).`,
+                deletedCount: state.deletedCount,
+                failureCount: state.failures.length,
+                failures: state.failures.slice(0, 10),
+            });
+            honeypotLogger.info('Honeypot cleanup job completed', {
+                guildId: state.guild.id,
+                userId: state.userId,
+                cleanupId: state.cleanupId,
+                deletedCount: state.deletedCount,
+                failureCount: state.failures.length,
+            });
+            return state;
+        })().finally(() => {
+            if (cleanupJobs.get(key)?.state === state) cleanupJobs.delete(key);
+        }),
+    };
+
+    cleanupJobs.set(key, job);
+    return job;
+}
+
+async function resumeHoneypotCleanupJobs(client) {
+    const guilds = channelCollectionValues(client.guilds?.cache);
+    const settings = getHoneypotConfig();
+    const now = Date.now();
+    let resumed = 0;
+
+    for (const guild of guilds) {
+        const history = await listGuildHistory(guild.id, 200).catch(error => {
+            honeypotLogger.warn('Failed to inspect honeypot cleanup history for resume', {
+                guildId: guild.id,
+                error,
+            });
+            return [];
+        });
+        const completed = new Set(history
+            .filter(entry => entry.type === 'honeypot:cleanup:completed')
+            .map(entry => entry.metadata?.cleanupId)
+            .filter(Boolean));
+        const pending = history
+            .filter(entry => entry.type === 'honeypot:cleanup:pending')
+            .filter(entry => entry.metadata?.cleanupId && !completed.has(entry.metadata.cleanupId))
+            .filter(entry => Number(entry.metadata?.dueAt || 0) + CLEANUP_RESUME_WINDOW_MS >= now)
+            .sort((a, b) => Number(a.metadata?.dueAt || 0) - Number(b.metadata?.dueAt || 0));
+
+        for (const entry of pending) {
+            const job = startHoneypotCleanupJob({
+                guild,
+                userId: entry.userId,
+                userTag: entry.userTag,
+                channelId: entry.channelId,
+            }, settings, {
+                cleanupId: entry.metadata.cleanupId,
+                dueAt: Number(entry.metadata.dueAt || now),
+                recordPending: false,
+                skipImmediate: true,
+            });
+            if (!job.existing) resumed += 1;
+        }
+    }
+
+    if (resumed) honeypotLogger.info('Resumed pending honeypot cleanup jobs', { resumed });
+    return resumed;
 }
 
 function buildAlertMention(settings) {
@@ -247,18 +611,46 @@ async function handleHoneypotMessage(message) {
         return false;
     }
 
-    const deletedCount = await deleteRecentUserMessages(message, 10);
+    const cleanupJob = startHoneypotCleanupJob(message, settings);
+    if (cleanupJob.existing) return true;
+
+    const [cleanupResult, actionResult] = await Promise.all([
+        cleanupJob.firstPass.catch(error => {
+            honeypotLogger.warn('Immediate honeypot cleanup failed', {
+                guildId: message.guild.id,
+                userId: message.author.id,
+                error,
+            });
+            return { deletedCount: 0, failures: [{ scope: 'job', reason: 'immediate_pass_failed', error: formatError(error) }] };
+        }),
+        runAutomaticHoneypotAction(message, settings),
+    ]);
+    const deletedCount = cleanupResult.deletedCount || 0;
     const alertChannel = await message.client.channels.fetch(settings.alertChannelId).catch(() => null);
+    const review = actionResult?.action
+        ? {
+            action: actionResult.action,
+            failed: !actionResult.ok,
+            status: actionResult.ok ? 'Automatic action completed' : `${getActionName(actionResult.action)} failed`,
+            moderator: message.client.user ? `${message.client.user.tag} (${message.client.user.id})` : 'Bot automation',
+            outcome: actionResult.outcome,
+        }
+        : {};
 
     await addUserHistory({
         guildId: message.guild.id,
         userId: message.author.id,
         userTag: message.author.tag,
         type: 'honeypot:trigger',
-        summary: `Triggered honeypot. Deleted ${deletedCount} recent messages.`,
+        summary: `Triggered honeypot. Deleted ${deletedCount} recent message(s) immediately.`,
         channelId: message.channelId,
         metadata: {
             deletedCount,
+            cleanupDelayMs: settings.cleanupDelayMs,
+            cleanupDueAt: Date.now() + settings.cleanupDelayMs,
+            cleanupFailureCount: cleanupResult.failures?.length || 0,
+            action: actionResult?.action || null,
+            actionOk: actionResult?.ok === true,
             triggerMessage: message.content || '',
         },
     }).catch(error => console.error('Failed to record honeypot history:', error));
@@ -266,8 +658,8 @@ async function handleHoneypotMessage(message) {
     if (alertChannel?.send) {
         await alertChannel.send({
             ...buildAlertMention(settings),
-            embeds: [buildAlertEmbed(message, deletedCount)],
-            components: createHoneypotButtons(message.author.id, false, settings),
+            embeds: [buildAlertEmbed(message, deletedCount, review)],
+            components: createHoneypotButtons(message.author.id, actionResult?.ok === true, settings),
         });
     }
 
@@ -650,6 +1042,72 @@ async function ignoreHoneypotUser(interaction, userId, user = null) {
     return { user, outcome: summary };
 }
 
+function getConfiguredAutoAction(settings) {
+    return ['limit', 'softban', 'timeout'].find(action => settings.actions[action]) || null;
+}
+
+async function runAutomaticHoneypotAction(message, settings = getHoneypotConfig()) {
+    const action = getConfiguredAutoAction(settings);
+    if (!action) return { action: null, ok: false, outcome: 'No moderation action is enabled.' };
+
+    const userId = message.author.id;
+    const key = `auto:${message.guild.id}:${userId}:${action}`;
+    return withActionLock(key, async () => {
+        const botMember = await fetchBotMember(message.guild);
+        const botUser = botMember?.user || message.client?.user || { id: message.client?.user?.id || 'bot', tag: 'Bot' };
+        const interaction = {
+            guild: message.guild,
+            guildId: message.guild.id,
+            channelId: message.channelId,
+            client: message.client || message.guild.client,
+            user: botUser,
+            member: botMember,
+            memberPermissions: botMember?.permissions,
+        };
+
+        try {
+            let result;
+            if (action === 'limit') {
+                result = await limitHoneypotUser(interaction, userId, settings);
+            } else if (action === 'softban') {
+                result = await softbanHoneypotUser(interaction, userId);
+            } else {
+                result = await timeoutHoneypotUser(interaction, userId, settings);
+            }
+
+            honeypotLogger.info('Automatic honeypot action completed', {
+                guildId: message.guild.id,
+                userId,
+                action,
+            });
+            return { action, ok: true, user: result.user, outcome: result.outcome };
+        } catch (error) {
+            const outcome = `${getActionName(action)} failed automatically: ${formatError(error)}`;
+            await addUserHistory({
+                guildId: message.guild.id,
+                userId,
+                userTag: message.author.tag,
+                type: `honeypot:${action}:failed`,
+                summary: outcome,
+                channelId: message.channelId,
+                moderatorId: botUser.id,
+            }).catch(historyError => honeypotLogger.warn('Failed to record automatic honeypot action failure', {
+                guildId: message.guild.id,
+                userId,
+                action,
+                error: historyError,
+            }));
+            honeypotLogger.warn('Automatic honeypot action failed', {
+                guildId: message.guild.id,
+                userId,
+                action,
+                error,
+            });
+            return { action, ok: false, outcome };
+        }
+    });
+}
+
 async function updateHoneypotAlert(interaction, userId, action, outcome, { disabled = false, failed = false } = {}) {
     const existingEmbed = interaction.message.embeds?.[0];
     const updatedEmbed = buildUpdatedAlertEmbed(existingEmbed, userId, {
@@ -875,7 +1333,9 @@ async function handleHoneypotButton(interaction) {
 }
 
 module.exports = {
+    DEFAULT_CLEANUP_DELAY_MS,
     DEFAULT_TIMEOUT_DURATION_MS,
+    HONEYPOT_CLEANUP_LIMIT,
     MAX_TIMEOUT_DURATION_MS,
     buildAlertEmbed,
     buildHoneypotNoticeEmbed,
@@ -883,6 +1343,7 @@ module.exports = {
     createHoneypotButtons,
     customIds,
     deleteRecentUserMessages,
+    deleteRecentUserMessagesWithReport,
     fetchRecentUserMessagesFromGuild,
     filterRestorableRoleIds,
     getHoneypotConfig,
@@ -892,6 +1353,7 @@ module.exports = {
     limitHoneypotUser,
     moderatorCanUseHoneypotAction,
     postOrRefreshLimitedAccountRecoveryPanel,
+    resumeHoneypotCleanupJobs,
     restoreLimitedAccount,
     sendHoneypotNotice,
     timeoutHoneypotUser,

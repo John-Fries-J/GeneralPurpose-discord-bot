@@ -139,6 +139,7 @@ function validateConfig(config, options = {}) {
                 errors.push('honeypot.mentionType must be "user", "role", or an empty string.');
             }
             validateInteger(errors, config, 'honeypot.timeoutDurationMs', { min: 1_000, max: 2_419_200_000 });
+            validateInteger(errors, config, 'honeypot.cleanupDelayMs', { min: 0, max: 60_000 });
 
             if (validateObject(errors, config, 'honeypot.actions') && config.honeypot.actions) {
                 validateBoolean(errors, config, 'honeypot.actions.limit');
