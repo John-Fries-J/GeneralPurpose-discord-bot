@@ -187,4 +187,31 @@ module.exports = [
             CREATE INDEX IF NOT EXISTS idx_levels_guild_total_xp ON levels(guild_id, (text_xp + voice_xp) DESC);
         `,
     },
+    {
+        version: 6,
+        name: 'level_calibration_jobs',
+        sql: `
+            CREATE TABLE IF NOT EXISTS level_calibration_jobs (
+                id TEXT PRIMARY KEY,
+                guild_id TEXT NOT NULL,
+                import_job_id TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_by TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                started_at INTEGER,
+                completed_at INTEGER,
+                profile_json TEXT NOT NULL DEFAULT '{}',
+                options_json TEXT NOT NULL DEFAULT '{}',
+                progress_json TEXT NOT NULL DEFAULT '{}',
+                result_json TEXT NOT NULL DEFAULT '{}',
+                error TEXT,
+                cancel_requested INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_level_calibration_jobs_guild_status ON level_calibration_jobs(guild_id, status, updated_at);
+            CREATE INDEX IF NOT EXISTS idx_level_calibration_jobs_import ON level_calibration_jobs(import_job_id, updated_at);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_level_calibration_jobs_active_import ON level_calibration_jobs(guild_id, import_job_id) WHERE status IN ('queued', 'running', 'cancelling');
+        `,
+    },
 ];

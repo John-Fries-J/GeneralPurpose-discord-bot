@@ -2,6 +2,7 @@ const crypto = require('node:crypto');
 const { setImmediate: yieldImmediate } = require('node:timers/promises');
 const {
     deterministicHistoricalXp,
+    getGuildLevelingConfig,
     getLevelProgress,
     getLevelingConfig,
     getProfileDefaults,
@@ -10,8 +11,13 @@ const {
 } = require('./leveling');
 const {
     getLevelImportJob,
+    createLevelCalibrationJob,
+    getLevelCalibrationJob,
     getUserLevelRecord,
+    listLevelCalibrationJobs,
     listLevelRoleMappings,
+    requestCancelLevelCalibrationJob,
+    updateLevelCalibrationJob,
 } = require('./store');
 const {
     fetchMembersForRoleRecovery,
@@ -77,6 +83,23 @@ function profileKey(profile) {
     ].join(':');
 }
 
+function replayScenarioKey(profile) {
+    const compact = compactProfile(profile.settings || profile);
+    const settings = profile.settings || profile;
+    const channelMultipliers = Array.isArray(settings.channelMultipliers)
+        ? settings.channelMultipliers
+            .map(item => `${String(item.channelId)}=${number(item.multiplier, 1, { min: 0, max: 1000 })}`)
+            .sort()
+            .join(',')
+        : '';
+    return [
+        compact.textXpMin,
+        compact.textXpMax,
+        compact.cooldownSeconds,
+        channelMultipliers,
+    ].join(':');
+}
+
 function channelMultiplier(channelId, settings = {}) {
     const multipliers = Array.isArray(settings.channelMultipliers) ? settings.channelMultipliers : [];
     return multipliers
@@ -104,6 +127,27 @@ function createReplayState(profile) {
     };
 }
 
+function getReplayUserRecord(message, state, createdAt) {
+    const current = state.users.get(message.userId) || {
+        userId: message.userId,
+        userTag: message.userTag || null,
+        reconstructedXp: 0,
+        accessibleMessages: 0,
+        awardedMessages: 0,
+        cooldownAdjustedMessages: 0,
+        firstObservedAt: createdAt,
+        lastObservedAt: createdAt,
+        firstAwardedAt: null,
+        lastAwardedAt: null,
+    };
+    current.userTag = message.userTag || current.userTag;
+    current.accessibleMessages += 1;
+    current.firstObservedAt = Math.min(current.firstObservedAt, createdAt);
+    current.lastObservedAt = Math.max(current.lastObservedAt, createdAt);
+    state.users.set(message.userId, current);
+    return current;
+}
+
 function applyReplayMessage(message, state, options = {}) {
     if (!message?.eligible) return false;
     const userFilter = options.userFilter || null;
@@ -111,6 +155,7 @@ function applyReplayMessage(message, state, options = {}) {
     state.eligibleStored += 1;
 
     const createdAt = Number(message.createdAt || 0);
+    const current = getReplayUserRecord(message, state, createdAt);
     const cooldownMs = Math.max(0, Number(state.profile.settings.cooldownSeconds || 0) * 1000);
     const previousAt = state.lastAwardedAt.get(message.userId);
     if (previousAt !== undefined && cooldownMs && createdAt - previousAt < cooldownMs) return false;
@@ -119,19 +164,11 @@ function applyReplayMessage(message, state, options = {}) {
     if (amount <= 0) return false;
 
     state.lastAwardedAt.set(message.userId, createdAt);
-    const current = state.users.get(message.userId) || {
-        userId: message.userId,
-        userTag: message.userTag || null,
-        reconstructedXp: 0,
-        awardedMessages: 0,
-        firstAwardedAt: createdAt,
-        lastAwardedAt: createdAt,
-    };
-    current.userTag = message.userTag || current.userTag;
     current.reconstructedXp += amount;
     current.awardedMessages += 1;
-    current.firstAwardedAt = Math.min(current.firstAwardedAt, createdAt);
-    current.lastAwardedAt = Math.max(current.lastAwardedAt, createdAt);
+    current.cooldownAdjustedMessages = current.awardedMessages;
+    current.firstAwardedAt = current.firstAwardedAt === null ? createdAt : Math.min(current.firstAwardedAt, createdAt);
+    current.lastAwardedAt = current.lastAwardedAt === null ? createdAt : Math.max(current.lastAwardedAt, createdAt);
     state.users.set(message.userId, current);
     state.awardedMessages += 1;
     state.xpEstimated += amount;
@@ -179,21 +216,35 @@ async function replayImportJobProfiles(jobOrId, profiles = [], options = {}) {
     const job = typeof jobOrId === 'string' ? await getLevelImportJob(jobOrId) : jobOrId;
     if (!job) throw new Error('Level import job was not found.');
     const normalized = profiles.map(normalizeCandidateProfile);
-    const states = normalized.map(createReplayState);
+    const scenarioStates = new Map();
+    const scenarioByProfile = new Map();
+    for (const profile of normalized) {
+        const key = replayScenarioKey(profile);
+        if (!scenarioStates.has(key)) scenarioStates.set(key, createReplayState(profile));
+        scenarioByProfile.set(profile.profileHash, scenarioStates.get(key));
+    }
     const pageSize = integer(options.pageSize, 5000, { min: 100, max: 10000 });
     const yieldEvery = integer(options.yieldEvery, 25000, { min: 1000, max: 250000 });
     let visited = 0;
 
     await forEachImportMessage(job.id, async message => {
         visited += 1;
-        for (const state of states) {
+        for (const state of scenarioStates.values()) {
             applyReplayMessage(message, state, options);
         }
-        if (visited % yieldEvery === 0) await yieldImmediate();
+        if (visited % yieldEvery === 0) {
+            if (options.shouldCancel) await options.shouldCancel();
+            await yieldImmediate();
+        }
     }, { pageSize, userId: options.userId || null });
 
-    return states.map(state => ({
-        ...finalizeReplayState(state),
+    if (options.shouldCancel) await options.shouldCancel();
+
+    return normalized.map(profile => ({
+        ...finalizeReplayState({
+            ...scenarioByProfile.get(profile.profileHash),
+            profile,
+        }),
         jobId: job.id,
         guildId: job.guildId,
         messagesVisited: visited,
@@ -289,7 +340,10 @@ async function buildRoleEvidence(guild, settings, options = {}) {
         };
     }
 
-    const fetched = await fetchMembersForRoleRecovery(guild, options.targetUserId || null);
+    const targetUserIds = options.targetUserIds
+        ? new Set([...options.targetUserIds].map(String))
+        : (options.targetUserId ? new Set([String(options.targetUserId)]) : null);
+    const fetched = await fetchMembersForRoleRecovery(guild, targetUserIds || null);
     const evidence = new Map();
     for (const member of fetched.members) {
         if (member.user?.bot) continue;
@@ -325,10 +379,18 @@ function splitEvidenceIds(evidenceMap, holdoutPercent = 20) {
     };
 }
 
+function percentile(values = [], percent = 50) {
+    const sorted = values.filter(value => Number.isFinite(value)).sort((a, b) => a - b);
+    if (!sorted.length) return 0;
+    const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil((percent / 100) * sorted.length) - 1));
+    return sorted[index];
+}
+
 function scoreSimulationAgainstEvidence(simulation, evidenceMap, options = {}) {
     const ids = options.userIds || [...evidenceMap.keys()];
     const recordsByUser = simulation.recordsByUser || new Map((simulation.records || []).map(record => [record.userId, record]));
     const discrepancies = [];
+    const absLevelErrors = [];
     let intervalAgreement = 0;
     let minimumViolations = 0;
     let tentativeOverestimations = 0;
@@ -344,8 +406,10 @@ function scoreSimulationAgainstEvidence(simulation, evidenceMap, options = {}) {
         const reconstructedLevel = record?.reconstructedLevel || 0;
         const minGap = Math.max(0, evidence.roleMinLevel - reconstructedLevel);
         const upperGap = evidence.upperBoundLevel ? Math.max(0, reconstructedLevel - evidence.upperBoundLevel + 1) : 0;
+        const levelError = minGap > 0 ? -minGap : (upperGap > 0 ? upperGap : 0);
         const hasMinimum = minGap === 0;
         const insideTentativeInterval = hasMinimum && (!evidence.upperBoundLevel || reconstructedLevel < evidence.upperBoundLevel);
+        absLevelErrors.push(Math.abs(levelError));
 
         if (insideTentativeInterval) intervalAgreement += 1;
         if (minGap > 0) {
@@ -372,6 +436,8 @@ function scoreSimulationAgainstEvidence(simulation, evidenceMap, options = {}) {
             upperBoundLevel: evidence.upperBoundLevel,
             minimumGap: minGap,
             upperGap,
+            levelError,
+            absLevelError: Math.abs(levelError),
         });
     }
 
@@ -385,6 +451,9 @@ function scoreSimulationAgainstEvidence(simulation, evidenceMap, options = {}) {
         significantOverestimations,
         totalMinimumGap,
         totalUpperGap,
+        medianAbsLevelError: percentile(absLevelErrors, 50),
+        p75AbsLevelError: percentile(absLevelErrors, 75),
+        p90AbsLevelError: percentile(absLevelErrors, 90),
         penalty,
         discrepancies: discrepancies.sort((a, b) => {
             return b.minimumGap - a.minimumGap
@@ -395,15 +464,59 @@ function scoreSimulationAgainstEvidence(simulation, evidenceMap, options = {}) {
     };
 }
 
+function toUserIdSet(value) {
+    if (!value) return new Set();
+    if (value instanceof Set) return new Set([...value].map(String));
+    if (Array.isArray(value)) return new Set(value.map(String));
+    return new Set([String(value)]);
+}
+
+function observedSpanDays(record) {
+    if (record?.firstObservedAt === null || record?.firstObservedAt === undefined || record?.lastObservedAt === null || record?.lastObservedAt === undefined) return 0;
+    return Math.max(0, (Number(record.lastObservedAt) - Number(record.firstObservedAt)) / 86_400_000);
+}
+
+function confidenceWarningsForRecord(record, evidence, options = {}) {
+    const warnings = [];
+    const importWarnings = options.importWarnings || [];
+    if (importWarnings.length) warnings.push('import_has_incomplete_channel_coverage');
+    if (options.evidenceComplete === false) warnings.push('member_fetch_was_partial');
+    if (evidence?.notes?.includes('replacement_style_or_missing_lower_roles')) warnings.push('replacement_style_reward_roles');
+    if (evidence?.upperBoundLevel) warnings.push('next_milestone_is_tentative');
+    if (record.roleMinLevel > 0 && record.accessibleMessages === 0) warnings.push('no_surviving_messages_for_role_member');
+    if (record.roleMinLevel >= 30 && record.accessibleMessages > 0 && observedSpanDays(record) < 1) warnings.push('very_short_observed_history_window');
+    if (record.roleMinLevel >= 30 && record.cooldownAdjustedMessages < 10) warnings.push('sparse_surviving_history_compared_with_role_minimum');
+    if (!record.roleMinLevel && options.restrictToUserIds?.has?.(String(record.userId))) warnings.push('no_current_role_evidence_for_requested_user');
+    return [...new Set(warnings)];
+}
+
+function coverageGroupForRecord(record) {
+    const spanDays = observedSpanDays(record);
+    if (record.accessibleMessages === 0) return 'questionable_history_coverage';
+    if (record.confidenceWarnings?.some(warning => [
+        'import_has_incomplete_channel_coverage',
+        'member_fetch_was_partial',
+        'very_short_observed_history_window',
+    ].includes(warning))) {
+        return 'questionable_history_coverage';
+    }
+    if ((record.accessibleMessages >= 250 || record.cooldownAdjustedMessages >= 100) && spanDays >= 7) {
+        return 'substantial_surviving_history';
+    }
+    return 'all_role_evidence';
+}
+
 function buildProtectedRecords(simulation, evidenceMap = new Map(), options = {}) {
     const baseline = options.baseline || null;
     const baselineByUser = baseline?.recordsByUser || new Map((baseline?.records || []).map(record => [record.userId, record]));
-    const userIds = new Set([
-        ...simulation.recordsByUser.keys(),
-        ...baselineByUser.keys(),
-        ...evidenceMap.keys(),
-        ...(options.userIds || []),
-    ]);
+    const restrictToUserIds = toUserIdSet(options.restrictToUserIds || options.userIds);
+    const userIds = restrictToUserIds.size
+        ? restrictToUserIds
+        : new Set([
+            ...simulation.recordsByUser.keys(),
+            ...baselineByUser.keys(),
+            ...evidenceMap.keys(),
+        ]);
     const records = [];
 
     for (const userId of userIds) {
@@ -415,23 +528,48 @@ function buildProtectedRecords(simulation, evidenceMap = new Map(), options = {}
         const reconstructedXp = reconstructed?.reconstructedXp || 0;
         const protectedLevel = Math.max(reconstructedLevel, roleMinLevel);
         const protectedXp = Math.max(reconstructedXp, roleMinLevel > 0 ? getXpForLevel(roleMinLevel, simulation.profile.settings) : 0);
-        records.push({
+        const levelDeltaFromMinimum = roleMinLevel > 0 ? reconstructedLevel - roleMinLevel : null;
+        const insideTentativeInterval = roleMinLevel > 0
+            && reconstructedLevel >= roleMinLevel
+            && (!evidence?.upperBoundLevel || reconstructedLevel < evidence.upperBoundLevel);
+        const record = {
             userId,
             userTag: reconstructed?.userTag || baselineRecord?.userTag || evidence?.userTag || null,
             reconstructedLevel,
             reconstructedXp,
             protectedLevel,
             protectedXp,
+            baselineReconstructedLevel: baselineRecord?.reconstructedLevel ?? null,
+            baselineReconstructedXp: baselineRecord?.reconstructedXp ?? null,
             currentPreviewLevel: baselineRecord?.reconstructedLevel ?? null,
             currentPreviewXp: baselineRecord?.reconstructedXp ?? null,
+            currentStoredLevel: null,
+            currentStoredXp: null,
             roleMinLevel,
             roleMinRoleId: evidence?.roleMinRoleId || null,
             upperBoundLevel: evidence?.upperBoundLevel || null,
+            tentativeNextMilestone: evidence?.upperBoundLevel || null,
             upperBoundReliable: evidence?.upperBoundReliable === true,
             minimumViolation: roleMinLevel > 0 && reconstructedLevel < roleMinLevel,
             tentativeOverestimate: Boolean(evidence?.upperBoundLevel && reconstructedLevel >= evidence.upperBoundLevel),
+            accessibleMessages: reconstructed?.accessibleMessages || 0,
+            cooldownAdjustedMessages: reconstructed?.cooldownAdjustedMessages ?? reconstructed?.awardedMessages ?? 0,
             awardedMessages: reconstructed?.awardedMessages || 0,
+            firstObservedAt: reconstructed?.firstObservedAt ?? null,
+            lastObservedAt: reconstructed?.lastObservedAt ?? null,
+            firstAwardedAt: reconstructed?.firstAwardedAt ?? null,
+            lastAwardedAt: reconstructed?.lastAwardedAt ?? null,
+            levelDeltaFromMinimum,
+            insideTentativeInterval,
+            heldRoleIds: evidence?.heldRoleIds || [],
+            evidenceNotes: evidence?.notes || [],
+        };
+        record.confidenceWarnings = confidenceWarningsForRecord(record, evidence, {
+            ...options,
+            restrictToUserIds,
         });
+        record.coverageGroup = coverageGroupForRecord(record);
+        records.push(record);
     }
 
     return records.sort((a, b) => {
@@ -455,7 +593,7 @@ function addCandidate(candidates, seen, candidate) {
 function buildDefaultCalibrationProfiles(currentSettings, jobProfile = {}, options = {}) {
     const candidates = [];
     const seen = new Set();
-    const maxProfiles = integer(options.maxProfiles, 32, { min: 1, max: 100 });
+    const maxProfiles = integer(options.maxProfiles, 96, { min: 1, max: 250 });
     const storedSettings = settingsFromJobProfile(currentSettings, jobProfile || {});
     const probotDefaults = getProfileDefaults('probot_inspired');
 
@@ -483,35 +621,86 @@ function buildDefaultCalibrationProfiles(currentSettings, jobProfile = {}, optio
     });
 
     const xpRanges = options.xpRanges || [
+        [5, 5],
+        [10, 10],
+        [15, 15],
+        [20, 20],
+        [25, 25],
+        [30, 30],
+        [40, 40],
+        [5, 15],
         [10, 20],
         [15, 25],
         [20, 30],
         [25, 35],
+        [30, 45],
         [35, 55],
+        [50, 75],
     ];
-    const cooldowns = options.cooldowns || [30, 60, 90];
-    const formulas = options.formulas || ['legacy', 'probot_inspired'];
+    const cooldowns = options.cooldowns || [0, 15, 30, 45, 60, 90, 120, 180];
+    const formulaProfiles = options.formulaProfiles || [
+        { progressionFormula: 'legacy', xpPerLevelBase: 50 },
+        { progressionFormula: 'legacy', xpPerLevelBase: 75 },
+        { progressionFormula: 'legacy', xpPerLevelBase: 100 },
+        { progressionFormula: 'legacy', xpPerLevelBase: 125 },
+        { progressionFormula: 'legacy', xpPerLevelBase: 150 },
+        { progressionFormula: 'legacy', xpPerLevelBase: 200 },
+        { progressionFormula: 'linear', xpPerLevelBase: 1000 },
+        { progressionFormula: 'linear', xpPerLevelBase: 1500 },
+        { progressionFormula: 'quadratic', xpPerLevelBase: 5 },
+        { progressionFormula: 'quadratic', xpPerLevelBase: 10 },
+        { progressionFormula: 'quadratic', xpPerLevelBase: 25 },
+        { progressionFormula: 'probot_inspired', xpPerLevelBase: 50 },
+        { progressionFormula: 'probot_inspired', xpPerLevelBase: 100 },
+        { progressionFormula: 'probot_inspired', xpPerLevelBase: 150 },
+        { progressionFormula: 'exponential', xpPerLevelBase: 50, xpCurveFactor: 1.08 },
+        { progressionFormula: 'exponential', xpPerLevelBase: 100, xpCurveFactor: 1.08 },
+        { progressionFormula: 'exponential', xpPerLevelBase: 100, xpCurveFactor: 1.12 },
+        { progressionFormula: 'exponential', xpPerLevelBase: 150, xpCurveFactor: 1.12 },
+    ];
 
+    const generated = [];
     for (const [textXpMin, textXpMax] of xpRanges) {
         for (const cooldownSeconds of cooldowns) {
-            for (const progressionFormula of formulas) {
-                addCandidate(candidates, seen, {
-                    label: `${textXpMin}-${textXpMax} XP, ${cooldownSeconds}s, ${progressionFormula}`,
-                    source: 'grid',
-                    settings: {
-                        ...currentSettings,
-                        xpProfile: progressionFormula === 'probot_inspired' ? 'probot_inspired' : 'custom',
-                        textXpMin,
-                        textXpMax,
-                        cooldownSeconds,
-                        progressionFormula,
-                        xpPerLevelBase: 100,
-                    },
+            for (const formula of formulaProfiles) {
+                generated.push({
+                    textXpMin,
+                    textXpMax,
+                    cooldownSeconds,
+                    ...formula,
                 });
-                if (candidates.length >= maxProfiles) return candidates;
             }
         }
     }
+
+    generated
+        .sort((a, b) => {
+            const aMid = (a.textXpMin + a.textXpMax) / 2;
+            const bMid = (b.textXpMin + b.textXpMax) / 2;
+            const formulaRank = formula => ({ legacy: 0, probot_inspired: 1, linear: 2, quadratic: 3, exponential: 4 }[formula] ?? 9);
+            return Math.abs(aMid - 20) - Math.abs(bMid - 20)
+                || Math.abs(a.cooldownSeconds - 30) - Math.abs(b.cooldownSeconds - 30)
+                || Math.abs(a.xpPerLevelBase - 100) - Math.abs(b.xpPerLevelBase - 100)
+                || formulaRank(a.progressionFormula) - formulaRank(b.progressionFormula)
+                || (a.textXpMax - a.textXpMin) - (b.textXpMax - b.textXpMin);
+        })
+        .some(candidate => {
+            addCandidate(candidates, seen, {
+                label: `${candidate.textXpMin}-${candidate.textXpMax} XP, ${candidate.cooldownSeconds}s, ${candidate.progressionFormula}, base ${candidate.xpPerLevelBase}`,
+                source: 'bounded_search',
+                settings: {
+                    ...currentSettings,
+                    xpProfile: candidate.progressionFormula === 'probot_inspired' ? 'probot_inspired' : 'custom',
+                    textXpMin: candidate.textXpMin,
+                    textXpMax: candidate.textXpMax,
+                    cooldownSeconds: candidate.cooldownSeconds,
+                    progressionFormula: candidate.progressionFormula,
+                    xpPerLevelBase: candidate.xpPerLevelBase,
+                    xpCurveFactor: candidate.xpCurveFactor ?? currentSettings.xpCurveFactor ?? 1.18,
+                },
+            });
+            return candidates.length >= maxProfiles;
+        });
 
     return candidates.slice(0, maxProfiles);
 }
@@ -531,12 +720,13 @@ async function fitCalibrationProfiles(job, profiles, evidenceMap, options = {}) 
             simulation,
             training,
             validation,
-            score: training.penalty,
+            score: training.penalty + (validation.evaluated ? validation.penalty : 0),
         };
     }).sort((a, b) => {
         return a.score - b.score
             || a.validation.penalty - b.validation.penalty
             || b.training.intervalAgreementRate - a.training.intervalAgreementRate
+            || a.training.medianAbsLevelError - b.training.medianAbsLevelError
             || a.profile.label.localeCompare(b.profile.label);
     });
 
@@ -546,7 +736,27 @@ async function fitCalibrationProfiles(job, profiles, evidenceMap, options = {}) 
         validationCount: split.validationIds.length,
         results,
         best: results[0] || null,
+        warnings: nonIdentifiabilityWarnings(results),
     };
+}
+
+function nonIdentifiabilityWarnings(results = []) {
+    if (results.length < 2) return [];
+    const best = results[0];
+    const nearBest = results.filter(result => {
+        const scoreClose = result.score <= best.score * 1.05 + 10;
+        const agreementClose = Math.abs(result.training.intervalAgreementRate - best.training.intervalAgreementRate) <= 0.02;
+        return scoreClose && agreementClose;
+    });
+    if (nearBest.length < 3) return [];
+    const signatures = new Set(nearBest.map(result => {
+        const profile = compactProfile(result.profile.settings);
+        return `${profile.textXpMin}-${profile.textXpMax}/${profile.cooldownSeconds}/${profile.progressionFormula}/${profile.xpPerLevelBase}`;
+    }));
+    if (signatures.size < 3) return [];
+    return [
+        'Multiple materially different profiles score almost the same; role evidence does not identify a unique XP model.',
+    ];
 }
 
 function importCompleteness(job) {
@@ -576,21 +786,378 @@ async function loadExistingRecords(guildId, userIds = []) {
     return records;
 }
 
+function totalXp(record) {
+    return Number(record?.textXp || 0) + Number(record?.voiceXp || 0);
+}
+
+async function attachCurrentStoredLevels(records, guildId, settings) {
+    for (const record of records) {
+        const current = await getUserLevelRecord(guildId, record.userId);
+        const xp = totalXp(current);
+        const progress = getLevelProgress({ textXp: xp, voiceXp: 0 }, settings);
+        record.currentStoredXp = current ? xp : 0;
+        record.currentStoredLevel = current ? progress.level : 0;
+    }
+    return records;
+}
+
+function buildSimulatedLeaderboard(simulation, evidenceMap = new Map(), limit = 25) {
+    const byUser = new Map();
+    for (const record of simulation.records || []) {
+        byUser.set(record.userId, {
+            userId: record.userId,
+            userTag: record.userTag || null,
+            reconstructedXp: record.reconstructedXp || 0,
+            reconstructedLevel: record.reconstructedLevel || 0,
+            accessibleMessages: record.accessibleMessages || 0,
+            cooldownAdjustedMessages: record.cooldownAdjustedMessages ?? record.awardedMessages ?? 0,
+        });
+    }
+    for (const evidence of evidenceMap.values()) {
+        if (!byUser.has(evidence.userId)) {
+            byUser.set(evidence.userId, {
+                userId: evidence.userId,
+                userTag: evidence.userTag || null,
+                reconstructedXp: 0,
+                reconstructedLevel: 0,
+                accessibleMessages: 0,
+                cooldownAdjustedMessages: 0,
+            });
+        }
+    }
+    for (const record of byUser.values()) {
+        const evidence = evidenceMap.get(record.userId);
+        const roleMinLevel = evidence?.roleMinLevel || 0;
+        const roleMinXp = roleMinLevel > 0 ? getXpForLevel(roleMinLevel, simulation.profile.settings) : 0;
+        record.roleMinLevel = roleMinLevel;
+        record.protectedXp = Math.max(record.reconstructedXp, roleMinXp);
+        record.protectedLevel = getLevelProgress({ textXp: record.protectedXp, voiceXp: 0 }, simulation.profile.settings).level;
+    }
+    return [...byUser.values()]
+        .sort((a, b) => b.protectedXp - a.protectedXp || String(a.userId).localeCompare(String(b.userId)))
+        .slice(0, limit)
+        .map((record, index) => ({ rank: index + 1, ...record }));
+}
+
+function summarizeEvidenceQuality(records = []) {
+    const withRoleEvidence = records.filter(record => record.roleMinLevel > 0);
+    const substantial = withRoleEvidence.filter(record => record.coverageGroup === 'substantial_surviving_history');
+    const questionable = withRoleEvidence.filter(record => record.coverageGroup === 'questionable_history_coverage');
+    return {
+        allRoleEvidence: withRoleEvidence.length,
+        substantialSurvivingHistory: substantial.length,
+        questionableHistoryCoverage: questionable.length,
+        criteria: {
+            substantialSurvivingHistory: 'At least 250 accessible stored messages or 100 cooldown-adjusted messages, with observed history spanning at least 7 days.',
+            questionableHistoryCoverage: 'No surviving messages, a very short observed history window for a high milestone, partial member evidence, or incomplete import channel coverage.',
+        },
+    };
+}
+
+function compactScoreMetrics(metrics) {
+    if (!metrics) return null;
+    const { discrepancies, ...summary } = metrics;
+    return summary;
+}
+
+function compactCalibrationError(error) {
+    return error?.message || String(error || 'Unknown error');
+}
+
+class CalibrationCancelledError extends Error {
+    constructor(message = 'Calibration job was cancelled.') {
+        super(message);
+        this.name = 'CalibrationCancelledError';
+    }
+}
+
+const calibrationJobs = new Map();
+
+function isTerminalCalibrationStatus(status) {
+    return ['completed', 'cancelled', 'failed'].includes(status);
+}
+
+async function assertCalibrationNotCancelled(jobId) {
+    const job = await getLevelCalibrationJob(jobId);
+    if (!job || job.cancelRequested || job.status === 'cancelling') throw new CalibrationCancelledError();
+    return job;
+}
+
+async function updateCalibrationProgress(jobId, progress) {
+    const job = await getLevelCalibrationJob(jobId);
+    if (!job) return null;
+    return updateLevelCalibrationJob(jobId, {
+        progress: {
+            ...(job.progress || {}),
+            ...progress,
+            updatedAt: Date.now(),
+        },
+    });
+}
+
+function parseJobUserIds(job) {
+    return toUserIdSet(job.options?.userIds || []);
+}
+
+async function buildPreviewCalibrationResult(guild, importJob, calibrationJob, currentSettings) {
+    const userIds = parseJobUserIds(calibrationJob);
+    const target = {
+        label: calibrationJob.profile?.label || 'Calibration profile',
+        settings: getLevelingConfig({ leveling: calibrationJob.profile?.settings || calibrationJob.profile || {} }),
+    };
+    const baseline = {
+        label: 'Stored import preview',
+        settings: settingsFromJobProfile(currentSettings, importJob.profile || {}),
+    };
+    const completeness = importCompleteness(importJob);
+
+    await updateCalibrationProgress(calibrationJob.id, { phase: 'role_evidence', percent: 15 });
+    const evidence = await buildRoleEvidence(guild, currentSettings, {
+        targetUserIds: userIds.size ? userIds : null,
+    });
+    await assertCalibrationNotCancelled(calibrationJob.id);
+
+    await updateCalibrationProgress(calibrationJob.id, { phase: 'message_replay', percent: 35 });
+    const simulations = await replayImportJobProfiles(importJob, [baseline, target], {
+        userFilter: userIds.size ? userIds : null,
+        shouldCancel: () => assertCalibrationNotCancelled(calibrationJob.id),
+    });
+    const records = buildProtectedRecords(simulations[1], evidence.evidence, {
+        baseline: simulations[0],
+        restrictToUserIds: userIds.size ? userIds : null,
+        importWarnings: completeness.warnings,
+        evidenceComplete: evidence.complete,
+    });
+    await attachCurrentStoredLevels(records, guild.id, currentSettings);
+
+    await updateCalibrationProgress(calibrationJob.id, { phase: 'summarizing', percent: 85 });
+    return {
+        kind: 'preview',
+        importJobId: importJob.id,
+        profile: compactProfile(target.settings),
+        profileLabel: target.label,
+        scopedUserIds: [...userIds],
+        completeness,
+        evidence: {
+            mappings: evidence.mappings.length,
+            membersWithRoleEvidence: evidence.evidence.size,
+            membersFetched: evidence.membersFetched,
+            complete: evidence.complete,
+            error: evidence.error,
+        },
+        replay: {
+            storedAwardedMessages: simulations[0].awardedMessages,
+            calibratedAwardedMessages: simulations[1].awardedMessages,
+            calibratedXp: simulations[1].xpEstimated,
+            usersReconstructed: simulations[1].usersReconstructed,
+            messagesVisited: simulations[1].messagesVisited,
+        },
+        quality: summarizeEvidenceQuality(records),
+        records,
+        simulatedLeaderboard: buildSimulatedLeaderboard(simulations[1], evidence.evidence, 25),
+    };
+}
+
+async function buildFitCalibrationResult(guild, importJob, calibrationJob, currentSettings) {
+    const maxProfiles = integer(calibrationJob.options?.maxProfiles, 96, { min: 1, max: 250 });
+    const completeness = importCompleteness(importJob);
+
+    await updateCalibrationProgress(calibrationJob.id, { phase: 'role_evidence', percent: 10 });
+    const evidence = await buildRoleEvidence(guild, currentSettings);
+    await assertCalibrationNotCancelled(calibrationJob.id);
+    if (!evidence.evidence.size) {
+        return {
+            kind: 'fit',
+            importJobId: importJob.id,
+            evidence: {
+                mappings: evidence.mappings.length,
+                membersWithRoleEvidence: 0,
+                membersFetched: evidence.membersFetched,
+                complete: evidence.complete,
+                error: evidence.error,
+            },
+            completeness,
+            results: [],
+            best: null,
+            records: [],
+            simulatedLeaderboard: [],
+            warnings: ['No current members have mapped reward roles, so there is no role evidence to fit against.'],
+        };
+    }
+
+    await updateCalibrationProgress(calibrationJob.id, { phase: 'bounded_model_search', percent: 25 });
+    const profiles = buildDefaultCalibrationProfiles(currentSettings, importJob.profile || {}, { maxProfiles });
+    const fit = await fitCalibrationProfiles(importJob, profiles, evidence.evidence, {
+        shouldCancel: () => assertCalibrationNotCancelled(calibrationJob.id),
+    });
+    await assertCalibrationNotCancelled(calibrationJob.id);
+
+    const baseline = fit.results.find(result => result.profile.source === 'stored_import')?.simulation || null;
+    const bestRecords = fit.best ? buildProtectedRecords(fit.best.simulation, evidence.evidence, {
+        baseline,
+        importWarnings: completeness.warnings,
+        evidenceComplete: evidence.complete,
+    }) : [];
+    await attachCurrentStoredLevels(bestRecords, guild.id, currentSettings);
+
+    const ranked = fit.results.slice(0, 25).map(result => ({
+        label: result.profile.label,
+        source: result.profile.source,
+        profile: compactProfile(result.profile.settings),
+        score: result.score,
+        training: compactScoreMetrics(result.training),
+        validation: compactScoreMetrics(result.validation),
+    }));
+    return {
+        kind: 'fit',
+        importJobId: importJob.id,
+        candidateProfiles: fit.results.length,
+        trainingCount: fit.trainingCount,
+        validationCount: fit.validationCount,
+        evidence: {
+            mappings: evidence.mappings.length,
+            membersWithRoleEvidence: evidence.evidence.size,
+            membersFetched: evidence.membersFetched,
+            complete: evidence.complete,
+            error: evidence.error,
+        },
+        completeness,
+        best: fit.best ? ranked[0] : null,
+        ranked,
+        quality: summarizeEvidenceQuality(bestRecords),
+        records: bestRecords,
+        simulatedLeaderboard: fit.best ? buildSimulatedLeaderboard(fit.best.simulation, evidence.evidence, 25) : [],
+        warnings: fit.warnings,
+    };
+}
+
+async function processLevelCalibrationJob(client, jobId) {
+    let calibrationJob = await getLevelCalibrationJob(jobId);
+    if (!calibrationJob || isTerminalCalibrationStatus(calibrationJob.status)) return calibrationJob;
+    if (calibrationJob.cancelRequested || calibrationJob.status === 'cancelling') {
+        return updateLevelCalibrationJob(jobId, { status: 'cancelled', completedAt: Date.now() });
+    }
+
+    calibrationJob = await updateLevelCalibrationJob(jobId, {
+        status: 'running',
+        startedAt: calibrationJob.startedAt || Date.now(),
+        progress: { phase: 'starting', percent: 1, updatedAt: Date.now() },
+    });
+
+    try {
+        const importJob = await getLevelImportJob(calibrationJob.importJobId);
+        if (!importJob) throw new Error('Level import job was not found.');
+        if (importJob.guildId !== calibrationJob.guildId) throw new Error('Level import job belongs to a different guild.');
+        if (importJob.status !== 'completed') throw new Error(`Level import job is ${importJob.status}; calibration requires a completed import.`);
+
+        const guild = client.guilds.cache.get(calibrationJob.guildId) || await client.guilds.fetch(calibrationJob.guildId);
+        const currentSettings = await getGuildLevelingConfig(guild.id);
+        await assertCalibrationNotCancelled(jobId);
+
+        const result = calibrationJob.kind === 'fit'
+            ? await buildFitCalibrationResult(guild, importJob, calibrationJob, currentSettings)
+            : await buildPreviewCalibrationResult(guild, importJob, calibrationJob, currentSettings);
+
+        await assertCalibrationNotCancelled(jobId);
+        return updateLevelCalibrationJob(jobId, {
+            status: 'completed',
+            completedAt: Date.now(),
+            progress: { phase: 'completed', percent: 100, updatedAt: Date.now() },
+            result,
+        });
+    } catch (error) {
+        if (error instanceof CalibrationCancelledError) {
+            return updateLevelCalibrationJob(jobId, {
+                status: 'cancelled',
+                completedAt: Date.now(),
+                progress: { phase: 'cancelled', percent: calibrationJob.progress?.percent || 0, updatedAt: Date.now() },
+            });
+        }
+        return updateLevelCalibrationJob(jobId, {
+            status: 'failed',
+            completedAt: Date.now(),
+            error: compactCalibrationError(error),
+            progress: { phase: 'failed', percent: calibrationJob.progress?.percent || 0, updatedAt: Date.now() },
+        });
+    }
+}
+
+function runLevelCalibrationJob(client, jobId) {
+    if (calibrationJobs.has(jobId)) return false;
+    const promise = processLevelCalibrationJob(client, jobId)
+        .finally(() => {
+            calibrationJobs.delete(jobId);
+        });
+    calibrationJobs.set(jobId, promise);
+    return true;
+}
+
+async function startLevelCalibrationJob(client, guild, options = {}) {
+    const created = await createLevelCalibrationJob({
+        guildId: guild.id,
+        importJobId: options.importJobId,
+        kind: options.kind || 'preview',
+        profile: options.profile || {},
+        options: {
+            userIds: [...toUserIdSet(options.userIds)],
+            maxProfiles: options.maxProfiles,
+            exportFormat: options.exportFormat || 'none',
+        },
+        createdBy: options.createdBy || null,
+    });
+    if (created.ok) runLevelCalibrationJob(client, created.job.id);
+    return created;
+}
+
+async function resumeLevelCalibrationJobs(client) {
+    const jobs = await listLevelCalibrationJobs(null, { statuses: ['queued', 'running', 'cancelling'], limit: 100 });
+    for (const job of jobs) {
+        if (job.cancelRequested || job.status === 'cancelling') {
+            await updateLevelCalibrationJob(job.id, { status: 'cancelled', completedAt: Date.now() });
+        } else {
+            await updateLevelCalibrationJob(job.id, { status: 'queued' });
+            runLevelCalibrationJob(client, job.id);
+        }
+    }
+    return jobs.length;
+}
+
+async function cancelLevelCalibration(jobId) {
+    return requestCancelLevelCalibrationJob(jobId);
+}
+
+async function getLevelCalibrationStatus(jobId) {
+    return getLevelCalibrationJob(jobId);
+}
+
+async function latestLevelCalibrationJob(guildId) {
+    return (await listLevelCalibrationJobs(guildId, { limit: 1 }))[0] || null;
+}
+
 module.exports = {
+    attachCurrentStoredLevels,
     buildDefaultCalibrationProfiles,
     buildProtectedRecords,
     buildRoleEvidence,
+    buildSimulatedLeaderboard,
+    cancelLevelCalibration,
     compactProfile,
     deriveRoleEvidenceForMember,
     fitCalibrationProfiles,
+    getLevelCalibrationStatus,
     hypotheticalMessageXp,
     importCompleteness,
+    latestLevelCalibrationJob,
     loadExistingRecords,
     normalizeCalibrationRoleMappings,
+    processLevelCalibrationJob,
     replayImportJobProfiles,
     replayMessagesForProfiles,
+    resumeLevelCalibrationJobs,
     scoreSimulationAgainstEvidence,
     settingsFromJobProfile,
+    startLevelCalibrationJob,
+    summarizeEvidenceQuality,
     splitEvidenceIds,
     xpDistributionProfile,
 };

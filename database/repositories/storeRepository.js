@@ -236,6 +236,28 @@ function mapLevelImportMessage(row) {
     };
 }
 
+function mapLevelCalibrationJob(row) {
+    if (!row) return null;
+    return {
+        id: row.id,
+        guildId: row.guild_id,
+        importJobId: row.import_job_id,
+        kind: row.kind,
+        status: row.status,
+        createdBy: row.created_by,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        startedAt: row.started_at,
+        completedAt: row.completed_at,
+        profile: parseJson(row.profile_json, {}),
+        options: parseJson(row.options_json, {}),
+        progress: parseJson(row.progress_json, {}),
+        result: parseJson(row.result_json, {}),
+        error: row.error,
+        cancelRequested: row.cancel_requested !== 0,
+    };
+}
+
 function mapLevelRoleMapping(row) {
     if (!row) return null;
     return {
@@ -323,6 +345,7 @@ function readState(db) {
         levelImportJobs: listLevelImportJobs(db, null, { limit: 1000 }),
         levelImportCheckpoints: listLevelImportCheckpoints(db),
         levelImportMessages: listLevelImportMessages(db, null, { limit: 1000 }),
+        levelCalibrationJobs: listLevelCalibrationJobs(db, null, { limit: 1000 }),
         levelProcessedMessages: listLevelProcessedMessages(db, null, { limit: 1000 }),
         levelRoleMappings: listLevelRoleMappings(db),
         levelReconciliationRecords: listLevelReconciliationRecords(db, null, { limit: 1000 }),
@@ -916,6 +939,139 @@ function requestCancelLevelImportJob(db, id) {
     if (!job) return null;
     const status = ['completed', 'cancelled', 'failed', 'needs_confirmation'].includes(job.status) ? job.status : 'cancelling';
     return updateLevelImportJob(db, id, { status, cancelRequested: true });
+}
+
+function getActiveLevelCalibrationJob(db, guildId, importJobId = null) {
+    if (importJobId) {
+        return mapLevelCalibrationJob(db.prepare(`
+            SELECT * FROM level_calibration_jobs
+            WHERE guild_id = ? AND import_job_id = ? AND status IN ('queued', 'running', 'cancelling')
+            ORDER BY updated_at DESC
+            LIMIT 1
+        `).get(guildId, importJobId));
+    }
+    return mapLevelCalibrationJob(db.prepare(`
+        SELECT * FROM level_calibration_jobs
+        WHERE guild_id = ? AND status IN ('queued', 'running', 'cancelling')
+        ORDER BY updated_at DESC
+        LIMIT 1
+    `).get(guildId));
+}
+
+function createLevelCalibrationJob(db, record) {
+    const timestamp = now();
+    try {
+        return db.transaction(() => {
+            const active = getActiveLevelCalibrationJob(db, record.guildId, record.importJobId);
+            if (active) return { ok: false, job: active, reason: 'active_job' };
+
+            const job = {
+                id: record.id || makeId(),
+                guildId: record.guildId,
+                importJobId: record.importJobId,
+                kind: record.kind || 'preview',
+                status: record.status || 'queued',
+                createdBy: record.createdBy || null,
+                createdAt: record.createdAt || timestamp,
+                profile: record.profile || {},
+                options: record.options || {},
+                progress: record.progress || {},
+                result: record.result || {},
+            };
+            db.prepare(`
+                INSERT INTO level_calibration_jobs (
+                    id, guild_id, import_job_id, kind, status, created_by,
+                    created_at, updated_at, started_at, completed_at,
+                    profile_json, options_json, progress_json, result_json, error, cancel_requested
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, NULL, 0)
+            `).run(
+                job.id,
+                job.guildId,
+                job.importJobId,
+                job.kind,
+                job.status,
+                job.createdBy,
+                job.createdAt,
+                timestamp,
+                stringify(job.profile, {}),
+                stringify(job.options, {}),
+                stringify(job.progress, {}),
+                stringify(job.result, {}),
+            );
+            return { ok: true, job: getLevelCalibrationJob(db, job.id) };
+        })();
+    } catch (error) {
+        if (error?.code === 'SQLITE_CONSTRAINT_UNIQUE' || error?.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') {
+            const active = getActiveLevelCalibrationJob(db, record.guildId, record.importJobId);
+            if (active) return { ok: false, job: active, reason: 'active_job' };
+        }
+        throw error;
+    }
+}
+
+function getLevelCalibrationJob(db, id) {
+    return mapLevelCalibrationJob(db.prepare('SELECT * FROM level_calibration_jobs WHERE id = ?').get(id));
+}
+
+function listLevelCalibrationJobs(db, guildId = null, options = {}) {
+    const limit = Math.max(1, Math.min(1000, Number(options.limit || 50)));
+    const statuses = Array.isArray(options.statuses) ? options.statuses.filter(Boolean) : [];
+    const importJobId = options.importJobId || null;
+    const clauses = [];
+    const params = [];
+
+    if (guildId) {
+        clauses.push('guild_id = ?');
+        params.push(guildId);
+    }
+    if (importJobId) {
+        clauses.push('import_job_id = ?');
+        params.push(importJobId);
+    }
+    if (statuses.length) {
+        clauses.push(`status IN (${statuses.map(() => '?').join(', ')})`);
+        params.push(...statuses);
+    }
+
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    return db.prepare(`SELECT * FROM level_calibration_jobs ${where} ORDER BY updated_at DESC LIMIT ?`)
+        .all(...params, limit)
+        .map(mapLevelCalibrationJob);
+}
+
+function updateLevelCalibrationJob(db, id, patch = {}) {
+    const existing = getLevelCalibrationJob(db, id);
+    if (!existing) return null;
+    const next = { ...existing, ...patch, updatedAt: patch.updatedAt || now() };
+    db.prepare(`
+        UPDATE level_calibration_jobs
+        SET kind = ?, status = ?, updated_at = ?, started_at = ?, completed_at = ?,
+            profile_json = ?, options_json = ?, progress_json = ?, result_json = ?,
+            error = ?, cancel_requested = ?
+        WHERE id = ?
+    `).run(
+        next.kind,
+        next.status,
+        next.updatedAt,
+        next.startedAt || null,
+        next.completedAt || null,
+        stringify(next.profile, {}),
+        stringify(next.options, {}),
+        stringify(next.progress, {}),
+        stringify(next.result, {}),
+        next.error || null,
+        next.cancelRequested ? 1 : 0,
+        id,
+    );
+    return getLevelCalibrationJob(db, id);
+}
+
+function requestCancelLevelCalibrationJob(db, id) {
+    const job = getLevelCalibrationJob(db, id);
+    if (!job) return null;
+    const status = ['completed', 'cancelled', 'failed'].includes(job.status) ? job.status : 'cancelling';
+    return updateLevelCalibrationJob(db, id, { status, cancelRequested: true });
 }
 
 function upsertLevelImportCheckpoint(db, record) {
@@ -1687,6 +1843,7 @@ function importState(db, state = {}) {
     count('levelImportJobs', state.levelImportJobs, record => createLevelImportJob(db, record));
     count('levelImportCheckpoints', state.levelImportCheckpoints, record => upsertLevelImportCheckpoint(db, record));
     count('levelImportMessages', state.levelImportMessages, record => insertLevelImportMessage(db, record));
+    count('levelCalibrationJobs', state.levelCalibrationJobs, record => createLevelCalibrationJob(db, record));
     count('levelProcessedMessages', state.levelProcessedMessages, record => markLevelImportMessageProcessed(db, record));
     count('levelRoleMappings', state.levelRoleMappings, record => upsertLevelRoleMapping(db, record));
     count('levelReconciliationRecords', state.levelReconciliationRecords, record => insertLevelReconciliationRecord(db, record));
@@ -1705,6 +1862,7 @@ module.exports = {
     clearWarningCases,
     countActiveModerationCases,
     countProcessedLevelMessage,
+    createLevelCalibrationJob,
     createLevelImportJob,
     createLevelTestSession,
     createModerationCase,
@@ -1721,6 +1879,7 @@ module.exports = {
     getTempVoiceChannel,
     getTicketRecord,
     getTicketTranscript,
+    getLevelCalibrationJob,
     getLevelImportJob,
     getLevelRank,
     getLevelTestSession,
@@ -1742,6 +1901,7 @@ module.exports = {
     listGuildLogChannels,
     listGuildSettings,
     listLevelLeaderboard,
+    listLevelCalibrationJobs,
     listLevelImportCheckpoints,
     listLevelImportJobs,
     listLevelImportMessages,
@@ -1769,6 +1929,7 @@ module.exports = {
     removeTempVoiceChannel,
     removeLevelRoleMapping,
     requestCancelLevelImportJob,
+    requestCancelLevelCalibrationJob,
     markLevelImportMessageProcessed,
     updateModerationCaseReason,
     updateReminderStatus,
@@ -1778,6 +1939,7 @@ module.exports = {
     setUserXp,
     setUserXpMinimum,
     updateLevelImportJob,
+    updateLevelCalibrationJob,
     updateLevelTestSession,
     updateScheduledMessageStatus,
     upsertEmbedTemplate,

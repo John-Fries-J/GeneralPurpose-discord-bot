@@ -44,6 +44,7 @@ function createEmptyState() {
         levelImportJobs: [],
         levelImportCheckpoints: [],
         levelImportMessages: [],
+        levelCalibrationJobs: [],
         levelProcessedMessages: [],
         levelRoleMappings: [],
         levelReconciliationRecords: [],
@@ -263,6 +264,7 @@ function clearNormalizedState(db) {
         DELETE FROM level_import_messages;
         DELETE FROM level_import_checkpoints;
         DELETE FROM level_import_processed_messages;
+        DELETE FROM level_calibration_jobs;
         DELETE FROM level_import_jobs;
         DELETE FROM level_role_level_mappings;
         DELETE FROM level_reconciliation_records;
@@ -1091,6 +1093,91 @@ async function requestCancelLevelImportJob(id) {
     });
 }
 
+async function createLevelCalibrationJob(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.createLevelCalibrationJob(await getSqliteDb(), record);
+    const timestamp = Date.now();
+    let result = null;
+    await useLegacyStateMutation(state => {
+        state.levelCalibrationJobs ||= [];
+        const active = state.levelCalibrationJobs.find(item => (
+            item.guildId === record.guildId
+            && item.importJobId === record.importJobId
+            && ['queued', 'running', 'cancelling'].includes(item.status)
+        ));
+        if (active) {
+            result = { ok: false, job: active, reason: 'active_job' };
+            return state;
+        }
+        const job = {
+            id: record.id || makeId(),
+            guildId: record.guildId,
+            importJobId: record.importJobId,
+            kind: record.kind || 'preview',
+            status: record.status || 'queued',
+            createdBy: record.createdBy || null,
+            createdAt: record.createdAt || timestamp,
+            updatedAt: timestamp,
+            startedAt: null,
+            completedAt: null,
+            profile: record.profile || {},
+            options: record.options || {},
+            progress: record.progress || {},
+            result: record.result || {},
+            error: null,
+            cancelRequested: false,
+        };
+        state.levelCalibrationJobs.push(job);
+        result = { ok: true, job };
+        return state;
+    });
+    return result;
+}
+
+async function getLevelCalibrationJob(id) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.getLevelCalibrationJob(await getSqliteDb(), id);
+    return ((await readState()).levelCalibrationJobs || []).find(item => item.id === id) || null;
+}
+
+async function listLevelCalibrationJobs(guildId = null, options = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listLevelCalibrationJobs(await getSqliteDb(), guildId, options);
+    const limit = Math.max(1, Number(options.limit || 50));
+    const statuses = Array.isArray(options.statuses) ? new Set(options.statuses) : null;
+    return ((await readState()).levelCalibrationJobs || [])
+        .filter(item => !guildId || item.guildId === guildId)
+        .filter(item => !options.importJobId || item.importJobId === options.importJobId)
+        .filter(item => !statuses || statuses.has(item.status))
+        .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0))
+        .slice(0, limit);
+}
+
+async function updateLevelCalibrationJob(id, patch = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.updateLevelCalibrationJob(await getSqliteDb(), id, patch);
+    let updated = null;
+    await useLegacyStateMutation(state => {
+        const job = (state.levelCalibrationJobs || []).find(item => item.id === id);
+        if (!job) return state;
+        Object.assign(job, patch, { updatedAt: patch.updatedAt || Date.now() });
+        updated = { ...job };
+        return state;
+    });
+    return updated;
+}
+
+async function requestCancelLevelCalibrationJob(id) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.requestCancelLevelCalibrationJob(await getSqliteDb(), id);
+    const job = await getLevelCalibrationJob(id);
+    if (!job) return null;
+    return updateLevelCalibrationJob(id, {
+        status: ['completed', 'cancelled', 'failed'].includes(job.status) ? job.status : 'cancelling',
+        cancelRequested: true,
+    });
+}
+
 async function upsertLevelImportCheckpoint(record) {
     const settings = getStorageSettings();
     if (settings.provider === 'sqlite') return repository.upsertLevelImportCheckpoint(await getSqliteDb(), record);
@@ -1879,6 +1966,7 @@ module.exports = {
     clearWarningCases,
     countActiveModerationCases,
     countProcessedLevelMessage,
+    createLevelCalibrationJob,
     createLevelImportJob,
     createLevelTestSession,
     createModerationCase,
@@ -1893,6 +1981,7 @@ module.exports = {
     getTempMute,
     getModerationCase,
     getGuildConfigurationOverrides,
+    getLevelCalibrationJob,
     getLevelImportJob,
     getLevelRank,
     getLevelTestSession,
@@ -1921,6 +2010,7 @@ module.exports = {
     listTicketTranscripts,
     listTempVoiceChannelsForGuild,
     listGuildHistory,
+    listLevelCalibrationJobs,
     listLevelImportCheckpoints,
     listLevelImportJobs,
     listLevelImportMessages,
@@ -1940,12 +2030,14 @@ module.exports = {
     removeTempRole,
     removeTempVoiceChannel,
     recordCommandUsage,
+    requestCancelLevelCalibrationJob,
     requestCancelLevelImportJob,
     saveGuildConfigurationSection,
     setUserXp,
     setUserXpMinimum,
     updateReminderStatus,
     updateLevelImportJob,
+    updateLevelCalibrationJob,
     updateLevelTestSession,
     markScheduledJobFinish,
     markScheduledJobStart,
