@@ -423,6 +423,83 @@ test('calibration jobs reject concurrent runs for the same completed import', as
     });
 });
 
+test('starting calibration job defers replay so command replies can stay responsive', async () => {
+    await withIsolatedStore(async ({ store }) => {
+        const { startLevelCalibrationJob } = require('../utils/levelingCalibration');
+        const created = await store.createLevelImportJob({
+            guildId: 'guild',
+            status: 'completed',
+            dryRun: true,
+            profileHash: 'legacy',
+            profile: { textXpMin: 1, textXpMax: 1, cooldownSeconds: 0, progressionFormula: 'legacy', xpPerLevelBase: 100 },
+        });
+        await store.insertLevelImportMessage({
+            jobId: created.job.id,
+            guildId: 'guild',
+            messageId: 'message',
+            userId: 'user',
+            channelId: 'channel',
+            createdAt: 0,
+            xpAmount: 1,
+            eligible: true,
+        });
+
+        const started = await startLevelCalibrationJob(fakeClient(fakeGuild([])), fakeGuild([]), {
+            importJobId: created.job.id,
+            kind: 'preview',
+            profile: {
+                label: 'fixed',
+                settings: { textXpMin: 10, textXpMax: 10, cooldownSeconds: 0, progressionFormula: 'legacy', xpPerLevelBase: 100 },
+            },
+        });
+        const queued = await store.getLevelCalibrationJob(started.job.id);
+        const finished = await waitForCalibrationJob(store, started.job.id);
+
+        assert.equal(started.ok, true);
+        assert.equal(queued.status, 'queued');
+        assert.equal(finished.status, 'completed');
+    });
+});
+
+test('calibration fit defaults to ten candidate profiles', async () => {
+    await withIsolatedStore(async ({ store }) => {
+        const { processLevelCalibrationJob } = require('../utils/levelingCalibration');
+        const created = await store.createLevelImportJob({
+            guildId: 'guild',
+            status: 'completed',
+            dryRun: true,
+            profileHash: 'legacy',
+            profile: { textXpMin: 1, textXpMax: 1, cooldownSeconds: 0, progressionFormula: 'legacy', xpPerLevelBase: 100 },
+        });
+        await store.insertLevelImportMessage({
+            jobId: created.job.id,
+            guildId: 'guild',
+            messageId: 'message',
+            userId: 'user',
+            channelId: 'channel',
+            createdAt: 0,
+            xpAmount: 1,
+            eligible: true,
+        });
+        await store.upsertLevelRoleMapping({
+            guildId: 'guild',
+            roleId: 'level-1',
+            minimumLevel: 1,
+            createdBy: 'admin',
+        });
+        const calibration = await store.createLevelCalibrationJob({
+            guildId: 'guild',
+            importJobId: created.job.id,
+            kind: 'fit',
+        });
+
+        const result = await processLevelCalibrationJob(fakeClient(fakeGuild([fakeMember('user', ['level-1'])])), calibration.job.id);
+
+        assert.equal(result.status, 'completed');
+        assert.equal(result.result.candidateProfiles, 10);
+    });
+});
+
 test('calibration resume recovers queued or running jobs after restart', async () => {
     await withIsolatedStore(async ({ store }) => {
         const { resumeLevelCalibrationJobs } = require('../utils/levelingCalibration');

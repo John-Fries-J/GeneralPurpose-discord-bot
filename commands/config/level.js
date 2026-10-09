@@ -601,7 +601,7 @@ module.exports = {
             if (status.job.guildId !== interaction.guild.id) return interaction.reply({ content: 'That import job belongs to a different server.', flags: 64 });
             if (status.job.status !== 'completed') return interaction.reply({ content: `Job \`${status.job.id}\` is ${status.job.status}; calibration fitting requires a completed import job.`, flags: 64 });
 
-            const maxProfiles = interaction.options.getInteger('max_profiles') || 96;
+            const maxProfiles = interaction.options.getInteger('max_profiles') || 10;
             const created = await startLevelCalibrationJob(interaction.client, interaction.guild, {
                 importJobId: status.job.id,
                 kind: 'fit',

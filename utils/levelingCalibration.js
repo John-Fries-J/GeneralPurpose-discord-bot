@@ -224,7 +224,8 @@ async function replayImportJobProfiles(jobOrId, profiles = [], options = {}) {
         scenarioByProfile.set(profile.profileHash, scenarioStates.get(key));
     }
     const pageSize = integer(options.pageSize, 5000, { min: 100, max: 10000 });
-    const yieldEvery = integer(options.yieldEvery, 25000, { min: 1000, max: 250000 });
+    const defaultYieldEvery = Math.max(100, Math.floor(10000 / Math.max(1, scenarioStates.size)));
+    const yieldEvery = integer(options.yieldEvery, defaultYieldEvery, { min: 100, max: 250000 });
     let visited = 0;
 
     await forEachImportMessage(job.id, async message => {
@@ -959,7 +960,7 @@ async function buildPreviewCalibrationResult(guild, importJob, calibrationJob, c
 }
 
 async function buildFitCalibrationResult(guild, importJob, calibrationJob, currentSettings) {
-    const maxProfiles = integer(calibrationJob.options?.maxProfiles, 96, { min: 1, max: 250 });
+    const maxProfiles = integer(calibrationJob.options?.maxProfiles, 10, { min: 1, max: 250 });
     const completeness = importCompleteness(importJob);
 
     await updateCalibrationProgress(calibrationJob.id, { phase: 'role_evidence', percent: 10 });
@@ -1084,7 +1085,8 @@ async function processLevelCalibrationJob(client, jobId) {
 
 function runLevelCalibrationJob(client, jobId) {
     if (calibrationJobs.has(jobId)) return false;
-    const promise = processLevelCalibrationJob(client, jobId)
+    const promise = yieldImmediate()
+        .then(() => processLevelCalibrationJob(client, jobId))
         .finally(() => {
             calibrationJobs.delete(jobId);
         });
