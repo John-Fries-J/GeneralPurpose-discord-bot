@@ -560,6 +560,7 @@ module.exports = {
     applyLevelRoles,
     awardTextXp,
     awardVoiceXp,
+    canManageRole,
     deterministicHistoricalXp,
     formatProgressBar,
     formatXp,

@@ -73,9 +73,9 @@ test('historical XP uses a stable profile-based pseudo-random amount', () => {
 test('historical message estimates are calculated chronologically across channels', () => {
     const messages = [
         { userId: 'user', messageId: 'later', channelId: 'b', createdAt: 60_000, xpAmount: 10, eligible: true },
-        { userId: 'user', messageId: 'early', channelId: 'a', createdAt: 0, xpAmount: 10, eligible: true },
         { userId: 'user', messageId: 'cooldown', channelId: 'a', createdAt: 30_000, xpAmount: 10, eligible: true },
-    ].sort((a, b) => a.createdAt - b.createdAt);
+        { userId: 'user', messageId: 'early', channelId: 'a', createdAt: 0, xpAmount: 10, eligible: true },
+    ];
     const estimates = calculateMessageEstimates(messages, { cooldownSeconds: 60 });
 
     assert.equal(estimates.get('user').xp, 20);

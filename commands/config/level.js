@@ -23,19 +23,26 @@ const policyChoices = [
 
 function requireApplyConfirmation(interaction) {
     const confirm = interaction.options.getString('confirm') || '';
-    return confirm.toUpperCase() === 'APPLY';
+    const normalized = confirm.toUpperCase();
+    return {
+        apply: normalized === 'APPLY' || normalized === 'APPLY_INCOMPLETE',
+        allowIncomplete: normalized === 'APPLY_INCOMPLETE',
+    };
 }
 
 function summarizeJob(job) {
     const status = job.status[0].toUpperCase() + job.status.slice(1);
+    const incomplete = job.result?.incomplete === true || (job.skippedChannels?.length || 0) > 0 || (job.errors?.length || 0) > 0;
     return [
         `Job: \`${job.id}\``,
         `Status: **${status}**`,
         `Mode: **${job.dryRun ? 'dry run' : 'apply'}**`,
+        `Incomplete: **${incomplete ? 'yes' : 'no'}**`,
         `Channels: **${job.channelsScanned}/${job.channelsTotal}**`,
         `Messages: **${job.messagesEligible}/${job.messagesSeen} eligible**`,
         `Estimated XP: **${formatXp(job.xpEstimated)}**`,
         `Applied XP: **${formatXp(job.xpApplied)}**`,
+        job.status === 'needs_confirmation' ? 'No XP was applied. Re-run with `confirm:APPLY_INCOMPLETE` only if the missing history is acceptable.' : null,
         job.currentChannelId ? `Current channel: <#${job.currentChannelId}>` : null,
     ].filter(Boolean).join('\n');
 }
@@ -48,6 +55,20 @@ function topRows(records = []) {
 
 async function latestGuildJob(guildId) {
     return (await listLevelImportJobs(guildId, { limit: 1 }))[0] || null;
+}
+
+function channelRows(channels = []) {
+    return channels.slice(0, 5).map(channel => {
+        const target = channel.parentId ? `<#${channel.parentId}>/${channel.name || channel.channelId}` : `<#${channel.channelId}>`;
+        return `${target} - ${channel.reason || 'skipped'}`;
+    }).join('\n') || 'None';
+}
+
+function errorRows(errors = []) {
+    return errors.slice(0, 5).map(error => {
+        const channel = error.channel?.id ? `<#${error.channel.id}>` : 'unknown channel';
+        return `${channel} - ${error.error || error.reason || 'failed'}`;
+    }).join('\n') || 'None';
 }
 
 module.exports = {
@@ -65,7 +86,7 @@ module.exports = {
                 .addBooleanOption(option => option.setName('apply').setDescription('Apply imported XP. Defaults to a dry run.'))
                 .addBooleanOption(option => option.setName('include_roles').setDescription('Use configured role-to-level recovery mappings.'))
                 .addStringOption(option => option.setName('policy').setDescription('How to reconcile message and role estimates.').addChoices(...policyChoices))
-                .addStringOption(option => option.setName('confirm').setDescription('Type APPLY when apply:true is used.')))
+                .addStringOption(option => option.setName('confirm').setDescription('Type APPLY, or APPLY_INCOMPLETE after reviewing skipped/failed scans.')))
         .addSubcommand(subcommand =>
             subcommand
                 .setName('import-preview')
@@ -163,8 +184,9 @@ module.exports = {
 
         if (subcommand === 'import-history' || subcommand === 'import-preview') {
             const apply = subcommand === 'import-history' && interaction.options.getBoolean('apply') === true;
-            if (apply && !requireApplyConfirmation(interaction)) {
-                return interaction.reply({ content: 'Type `APPLY` in the confirm option before applying imported XP. Run without `apply:true` for a dry run.', flags: 64 });
+            const confirmation = requireApplyConfirmation(interaction);
+            if (apply && !confirmation.apply) {
+                return interaction.reply({ content: 'Type `APPLY` in the confirm option before applying imported XP. Use `APPLY_INCOMPLETE` only after reviewing a dry run with skipped or failed scans.', flags: 64 });
             }
             const user = interaction.options.getUser('user');
             const created = await startLevelImport(interaction.client, interaction.guild, {
@@ -172,6 +194,7 @@ module.exports = {
                 dryRun: !apply,
                 includeRoleRecovery: interaction.options.getBoolean('include_roles') === true,
                 policy: interaction.options.getString('policy') || 'max',
+                allowIncompleteApply: confirmation.allowIncomplete,
                 createdBy: interaction.user.id,
             });
             if (!created.ok) {
@@ -181,8 +204,9 @@ module.exports = {
                 content: [
                     `Started ${apply ? 'applying' : 'dry-run'} historical XP import \`${created.job.id}\`.`,
                     'The scan runs in the background and only uses accessible Discord message history.',
+                    apply && !confirmation.allowIncomplete ? 'If the scan is incomplete, it will stop before applying XP and ask for explicit incomplete-import confirmation.' : null,
                     'Use `/level import-status` to monitor progress.',
-                ].join('\n'),
+                ].filter(Boolean).join('\n'),
                 flags: 64,
             });
         }
@@ -194,12 +218,14 @@ module.exports = {
             if (!status?.job) return interaction.reply({ content: 'That level import job was not found.', flags: 64 });
             const embed = createEmbed({
                 title: 'Level Import Status',
-                color: status.job.status === 'completed' ? 'green' : (status.job.status === 'failed' ? 'red' : 'blue'),
+                color: ['failed', 'needs_confirmation'].includes(status.job.status) ? 'red' : (status.job.status === 'completed' ? 'green' : 'blue'),
                 description: summarizeJob(status.job),
                 fields: [
                     { name: 'Skipped channels', value: `${status.job.skippedChannels?.length || 0}`, inline: true },
                     { name: 'Errors', value: `${status.job.errors?.length || 0}`, inline: true },
                     { name: 'Checkpoints', value: `${status.checkpoints.length}`, inline: true },
+                    { name: 'Skipped detail', value: channelRows(status.job.skippedChannels || []), inline: false },
+                    { name: 'Error detail', value: errorRows(status.job.errors || []), inline: false },
                     { name: 'Top Preview', value: topRows(status.job.result?.top || []), inline: false },
                 ],
             });
@@ -248,7 +274,7 @@ module.exports = {
 
         if (subcommand === 'role-recovery-preview' || subcommand === 'role-recovery-apply') {
             const apply = subcommand === 'role-recovery-apply';
-            if (apply && !requireApplyConfirmation(interaction)) {
+            if (apply && !requireApplyConfirmation(interaction).apply) {
                 return interaction.reply({ content: 'Type `APPLY` in the confirm option before applying role-derived minimum XP.', flags: 64 });
             }
             await interaction.deferReply({ flags: 64 });
@@ -258,6 +284,15 @@ module.exports = {
                 apply,
                 adminId: interaction.user.id,
             });
+            if (!result.complete) {
+                return interaction.editReply({
+                    content: [
+                        'Guild members could not be fetched completely, so role recovery results may be partial.',
+                        result.error || 'Check the Guild Members intent and bot permissions, then retry.',
+                        apply ? 'No role-derived XP was applied.' : null,
+                    ].filter(Boolean).join('\n'),
+                });
+            }
             return interaction.editReply({
                 embeds: [createEmbed({
                     title: apply ? 'Role Recovery Applied' : 'Role Recovery Preview',
@@ -349,7 +384,9 @@ module.exports = {
                         `Rolled back level test session \`${result.session.id}\`.`,
                         `Current XP after rollback: **${formatXp(progress.totalXp)}** (level **${progress.level}**).`,
                         `Role rollback: +${result.roleChanges.added.length} / -${result.roleChanges.removed.length}.`,
-                    ].join('\n'),
+                        result.roleChanges.skipped?.length ? `Role skips: **${result.roleChanges.skipped.length}**.` : null,
+                        result.roleChanges.errors?.length ? `Role errors: **${result.roleChanges.errors.length}**.` : null,
+                    ].filter(Boolean).join('\n'),
                     flags: 64,
                 });
             }

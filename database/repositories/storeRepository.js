@@ -793,43 +793,57 @@ function listLevelXpEvents(db, guildId = null, options = {}) {
         .map(mapLevelXpEvent);
 }
 
+function getActiveLevelImportJob(db, guildId) {
+    return mapLevelImportJob(db.prepare("SELECT * FROM level_import_jobs WHERE guild_id = ? AND status IN ('queued', 'running', 'cancelling') ORDER BY updated_at DESC LIMIT 1").get(guildId));
+}
+
 function createLevelImportJob(db, record) {
     const timestamp = now();
-    const active = db.prepare("SELECT * FROM level_import_jobs WHERE guild_id = ? AND status IN ('queued', 'running', 'cancelling') ORDER BY updated_at DESC LIMIT 1").get(record.guildId);
-    if (active) return { ok: false, job: mapLevelImportJob(active), reason: 'active_job' };
+    try {
+        return db.transaction(() => {
+            const active = getActiveLevelImportJob(db, record.guildId);
+            if (active) return { ok: false, job: active, reason: 'active_job' };
 
-    const job = {
-        id: record.id || makeId(),
-        guildId: record.guildId,
-        targetUserId: record.targetUserId || null,
-        status: record.status || 'queued',
-        dryRun: record.dryRun !== false,
-        profileHash: record.profileHash,
-        profile: record.profile || {},
-        createdBy: record.createdBy || null,
-        provenance: record.provenance || {},
-        createdAt: record.createdAt || timestamp,
-    };
-    db.prepare(`
-        INSERT INTO level_import_jobs (
-            id, guild_id, target_user_id, status, dry_run, profile_hash, profile_json,
-            created_by, created_at, updated_at, provenance_json
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-        job.id,
-        job.guildId,
-        job.targetUserId,
-        job.status,
-        job.dryRun ? 1 : 0,
-        job.profileHash,
-        stringify(job.profile, {}),
-        job.createdBy,
-        job.createdAt,
-        timestamp,
-        stringify(job.provenance, {}),
-    );
-    return { ok: true, job: getLevelImportJob(db, job.id) };
+            const job = {
+                id: record.id || makeId(),
+                guildId: record.guildId,
+                targetUserId: record.targetUserId || null,
+                status: record.status || 'queued',
+                dryRun: record.dryRun !== false,
+                profileHash: record.profileHash,
+                profile: record.profile || {},
+                createdBy: record.createdBy || null,
+                provenance: record.provenance || {},
+                createdAt: record.createdAt || timestamp,
+            };
+            db.prepare(`
+                INSERT INTO level_import_jobs (
+                    id, guild_id, target_user_id, status, dry_run, profile_hash, profile_json,
+                    created_by, created_at, updated_at, provenance_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+                job.id,
+                job.guildId,
+                job.targetUserId,
+                job.status,
+                job.dryRun ? 1 : 0,
+                job.profileHash,
+                stringify(job.profile, {}),
+                job.createdBy,
+                job.createdAt,
+                timestamp,
+                stringify(job.provenance, {}),
+            );
+            return { ok: true, job: getLevelImportJob(db, job.id) };
+        })();
+    } catch (error) {
+        if (error?.code === 'SQLITE_CONSTRAINT_UNIQUE' || error?.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') {
+            const active = getActiveLevelImportJob(db, record.guildId);
+            if (active) return { ok: false, job: active, reason: 'active_job' };
+        }
+        throw error;
+    }
 }
 
 function getLevelImportJob(db, id) {
@@ -900,7 +914,7 @@ function updateLevelImportJob(db, id, patch = {}) {
 function requestCancelLevelImportJob(db, id) {
     const job = getLevelImportJob(db, id);
     if (!job) return null;
-    const status = ['completed', 'cancelled', 'failed'].includes(job.status) ? job.status : 'cancelling';
+    const status = ['completed', 'cancelled', 'failed', 'needs_confirmation'].includes(job.status) ? job.status : 'cancelling';
     return updateLevelImportJob(db, id, { status, cancelRequested: true });
 }
 
@@ -967,7 +981,8 @@ function insertLevelImportMessage(db, record) {
 }
 
 function listLevelImportMessages(db, jobId = null, options = {}) {
-    const limit = Math.max(1, Math.min(100000, Number(options.limit || 10000)));
+    const requestedLimit = Number(options.limit || 10000);
+    const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.floor(requestedLimit)) : 10000;
     const userId = options.userId || null;
     if (jobId && userId) {
         return db.prepare('SELECT * FROM level_import_messages WHERE job_id = ? AND user_id = ? ORDER BY created_at ASC, message_id ASC LIMIT ?')
@@ -980,6 +995,51 @@ function listLevelImportMessages(db, jobId = null, options = {}) {
             .map(mapLevelImportMessage);
     }
     return db.prepare('SELECT * FROM level_import_messages ORDER BY created_at DESC LIMIT ?').all(limit).map(mapLevelImportMessage);
+}
+
+function listLevelImportMessagesPage(db, jobId, options = {}) {
+    const requestedLimit = Number(options.limit || 1000);
+    const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(10000, Math.floor(requestedLimit))) : 1000;
+    const afterCreatedAt = options.afterCreatedAt === undefined ? null : Number(options.afterCreatedAt);
+    const afterMessageId = options.afterMessageId || '';
+    const userId = options.userId || null;
+
+    if (userId && afterCreatedAt !== null) {
+        return db.prepare(`
+            SELECT * FROM level_import_messages
+            WHERE job_id = ?
+                AND user_id = ?
+                AND (created_at > ? OR (created_at = ? AND message_id > ?))
+            ORDER BY created_at ASC, message_id ASC
+            LIMIT ?
+        `).all(jobId, userId, afterCreatedAt, afterCreatedAt, afterMessageId, limit).map(mapLevelImportMessage);
+    }
+
+    if (userId) {
+        return db.prepare(`
+            SELECT * FROM level_import_messages
+            WHERE job_id = ? AND user_id = ?
+            ORDER BY created_at ASC, message_id ASC
+            LIMIT ?
+        `).all(jobId, userId, limit).map(mapLevelImportMessage);
+    }
+
+    if (afterCreatedAt !== null) {
+        return db.prepare(`
+            SELECT * FROM level_import_messages
+            WHERE job_id = ?
+                AND (created_at > ? OR (created_at = ? AND message_id > ?))
+            ORDER BY created_at ASC, message_id ASC
+            LIMIT ?
+        `).all(jobId, afterCreatedAt, afterCreatedAt, afterMessageId, limit).map(mapLevelImportMessage);
+    }
+
+    return db.prepare(`
+        SELECT * FROM level_import_messages
+        WHERE job_id = ?
+        ORDER BY created_at ASC, message_id ASC
+        LIMIT ?
+    `).all(jobId, limit).map(mapLevelImportMessage);
 }
 
 function countProcessedLevelMessage(db, guildId, messageId, profileHash) {
@@ -1685,6 +1745,7 @@ module.exports = {
     listLevelImportCheckpoints,
     listLevelImportJobs,
     listLevelImportMessages,
+    listLevelImportMessagesPage,
     listLevelProcessedMessages,
     listLevelReconciliationRecords,
     listLevelRoleMappings,

@@ -16,6 +16,7 @@ module.exports = {
     listLevelImportCheckpoints: repository.listLevelImportCheckpoints,
     listLevelImportJobs: repository.listLevelImportJobs,
     listLevelImportMessages: repository.listLevelImportMessages,
+    listLevelImportMessagesPage: repository.listLevelImportMessagesPage,
     listLevelLeaderboard: repository.listLevelLeaderboard,
     listLevelProcessedMessages: repository.listLevelProcessedMessages,
     listLevelReconciliationRecords: repository.listLevelReconciliationRecords,

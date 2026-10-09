@@ -3,6 +3,7 @@ const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { ChannelType } = require('discord.js');
 
 function purgeRuntimeModules() {
     for (const modulePath of [
@@ -48,20 +49,48 @@ async function withIsolatedStore(callback) {
     }
 }
 
-function fakeMember(guildId = 'guild', userId = 'user') {
-    const roleCache = new Map();
+function fakeMember(guildId = 'guild', userId = 'user', options = {}) {
+    const roleCache = new Map((options.roleIds || []).map(roleId => [roleId, { id: roleId }]));
+    const guildRoles = new Map((options.guildRoleIds || options.roleIds || []).map((roleId, index) => [roleId, { id: roleId, position: index + 1 }]));
     return {
         id: userId,
         user: { id: userId, tag: 'User#0001', username: 'User', bot: false },
         guild: {
             id: guildId,
-            roles: { cache: new Map() },
-            members: { me: { permissions: { has: () => true }, roles: { highest: { position: 100 } } } },
+            roles: { cache: guildRoles },
+            members: { me: { permissions: { has: () => options.canManageRoles !== false }, roles: { highest: { position: 100 } } } },
         },
         roles: {
             cache: roleCache,
             add: async roleId => roleCache.set(roleId, { id: roleId }),
             remove: async roleId => roleCache.delete(roleId),
+        },
+    };
+}
+
+function fakeImportClient(guild) {
+    return {
+        guilds: {
+            cache: new Map([[guild.id, guild]]),
+            fetch: async () => guild,
+        },
+    };
+}
+
+function fakeGuild(channels = [], options = {}) {
+    const cache = new Map(channels.map(channel => [channel.id, channel]));
+    return {
+        id: options.guildId || 'guild',
+        memberCount: options.memberCount || 0,
+        channels: {
+            cache,
+            fetch: async () => cache,
+        },
+        roles: { cache: options.roles || new Map() },
+        members: {
+            cache: options.members || new Map(),
+            me: options.botMember || { permissions: { has: () => true }, roles: { highest: { position: 100 } } },
+            fetch: options.fetchMembers || (async () => options.members || new Map()),
         },
     };
 }
@@ -134,6 +163,124 @@ test('duplicate historical import messages are ignored by job and profile', asyn
     });
 });
 
+test('only one active historical import job can be created per guild', async () => {
+    await withIsolatedStore(async ({ store }) => {
+        const first = await store.createLevelImportJob({
+            guildId: 'guild',
+            profileHash: 'profile-a',
+            profile: { textXpMin: 1, textXpMax: 1 },
+        });
+        const second = await store.createLevelImportJob({
+            guildId: 'guild',
+            profileHash: 'profile-b',
+            profile: { textXpMin: 1, textXpMax: 1 },
+        });
+
+        assert.equal(first.ok, true);
+        assert.equal(second.ok, false);
+        assert.equal(second.reason, 'active_job');
+        assert.equal(second.job.id, first.job.id);
+    });
+});
+
+test('historical import reconciliation streams beyond one hundred thousand messages', async () => {
+    await withIsolatedStore(async ({ database, store, sqlitePath }) => {
+        const repository = require('../database/repositories/storeRepository');
+        const { processLevelImportJob } = require('../utils/levelingImport');
+        const db = await database.openDatabase(sqlitePath);
+        const created = repository.createLevelImportJob(db, {
+            guildId: 'guild',
+            dryRun: true,
+            profileHash: 'profile-large',
+            profile: { textXpMin: 1, textXpMax: 1, cooldownSeconds: 0, reconciliationPolicy: 'max' },
+        });
+        const insert = db.prepare(`
+            INSERT INTO level_import_messages (
+                job_id, guild_id, message_id, user_id, user_tag, channel_id,
+                created_at, xp_amount, eligible, skip_reason
+            )
+            VALUES (?, ?, ?, ?, NULL, ?, ?, 1, 1, NULL)
+        `);
+        db.transaction(() => {
+            for (let index = 0; index < 100_001; index += 1) {
+                insert.run(created.job.id, 'guild', `message-${String(index).padStart(6, '0')}`, 'user', 'channel', index * 60_000);
+            }
+        })();
+
+        const guild = fakeGuild([], { guildId: 'guild' });
+        const job = await processLevelImportJob(fakeImportClient(guild), created.job.id);
+
+        assert.equal(job.status, 'completed');
+        assert.equal(job.result.messagesStored, 100_001);
+        assert.equal(job.result.usersReconciled, 1);
+        assert.equal(job.xpEstimated, 100_001);
+        assert.equal((await store.listLevelReconciliationRecords(created.job.id, { limit: 10 }))[0].messageEstimatedXp, 100_001);
+    });
+});
+
+test('historical import blocks apply when channel scans are skipped or failed', async () => {
+    await withIsolatedStore(async ({ store }) => {
+        const { processLevelImportJob } = require('../utils/levelingImport');
+        const inaccessible = {
+            id: 'hidden',
+            name: 'hidden',
+            type: ChannelType.GuildText,
+            messages: { fetch: async () => new Map() },
+            permissionsFor: () => ({ has: () => false }),
+        };
+        const failing = {
+            id: 'failing',
+            name: 'failing',
+            type: ChannelType.GuildText,
+            messages: { fetch: async () => { throw new Error('Discord API unavailable'); } },
+            permissionsFor: () => ({ has: () => true }),
+        };
+        const guild = fakeGuild([inaccessible, failing], { guildId: 'guild' });
+        const created = await store.createLevelImportJob({
+            guildId: 'guild',
+            dryRun: false,
+            profileHash: 'profile-incomplete',
+            profile: { textXpMin: 1, textXpMax: 1, cooldownSeconds: 0, reconciliationPolicy: 'max' },
+        });
+
+        const job = await processLevelImportJob(fakeImportClient(guild), created.job.id);
+
+        assert.equal(job.status, 'needs_confirmation');
+        assert.equal(job.xpApplied, 0);
+        assert.equal(job.skippedChannels.length, 1);
+        assert.equal(job.errors.length, 1);
+        assert.equal(job.result.incomplete, true);
+        assert.equal(job.result.requiresConfirmation, true);
+    });
+});
+
+test('role recovery refuses to apply partial guild-member fetch results', async () => {
+    await withIsolatedStore(async ({ store }) => {
+        const { previewRoleRecovery } = require('../utils/levelingImport');
+        await store.upsertLevelRoleMapping({
+            guildId: 'guild',
+            roleId: 'level-5',
+            minimumLevel: 5,
+            createdBy: 'admin',
+        });
+        const member = fakeMember('guild', 'user', { roleIds: ['level-5'] });
+        const members = new Map([[member.id, member]]);
+        const guild = fakeGuild([], {
+            guildId: 'guild',
+            memberCount: 2,
+            members,
+            fetchMembers: async () => members,
+        });
+
+        const result = await previewRoleRecovery(guild, { apply: true, adminId: 'admin' });
+
+        assert.equal(result.complete, false);
+        assert.equal(result.applied, 0);
+        assert.match(result.error, /Fetched 1 of 2/);
+        assert.equal(await store.getUserLevelRecord('guild', 'user'), null);
+    });
+});
+
 test('level test rollback subtracts only the test delta and preserves earned XP', async () => {
     await withIsolatedStore(async ({ store }) => {
         const { createXpTest, rollbackLevelTest } = require('../utils/levelingTests');
@@ -168,6 +315,50 @@ test('level test rollback subtracts only the test delta and preserves earned XP'
         assert.equal(testSession.session.xpDelta, 500);
         assert.equal(rollback.ok, true);
         assert.equal(record.textXp, 125);
+    });
+});
+
+test('level test rollback preserves roles still earned after concurrent XP', async () => {
+    await withIsolatedStore(async ({ store }) => {
+        const { updateLevelingSettings } = require('../utils/guildConfig');
+        const { createXpTest, rollbackLevelTest } = require('../utils/levelingTests');
+        await updateLevelingSettings('guild', {
+            roleRewards: [{ level: 1, roleId: 'level-1' }],
+        }, { actorId: 'admin' });
+        const member = fakeMember('guild', 'user', { guildRoleIds: ['level-1'] });
+        await store.setUserXp({
+            guildId: 'guild',
+            userId: 'user',
+            userTag: 'User#0001',
+            textXp: 90,
+            voiceXp: 0,
+            source: 'seed',
+        });
+
+        const testSession = await createXpTest(member, {
+            adminId: 'admin',
+            amount: 20,
+            previewOnly: false,
+            applyRoles: true,
+            awardMissingRoles: true,
+        });
+        await store.adjustUserXp({
+            guildId: 'guild',
+            userId: 'user',
+            userTag: 'User#0001',
+            xpType: 'text',
+            amount: 10,
+            source: 'live_message',
+        });
+
+        const rollback = await rollbackLevelTest(member, { adminId: 'admin' });
+        const record = await store.getUserLevelRecord('guild', 'user');
+
+        assert.equal(testSession.roleChanges.added.includes('level-1'), true);
+        assert.equal(rollback.ok, true);
+        assert.equal(record.textXp, 100);
+        assert.equal(member.roles.cache.has('level-1'), true);
+        assert.deepEqual(rollback.roleChanges.removed, []);
     });
 });
 

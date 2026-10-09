@@ -8,7 +8,7 @@ const {
     insertLevelReconciliationRecord,
     listLevelImportCheckpoints,
     listLevelImportJobs,
-    listLevelImportMessages,
+    listLevelImportMessagesPage,
     listLevelRoleMappings,
     markLevelImportMessageProcessed,
     requestCancelLevelImportJob,
@@ -123,6 +123,7 @@ function buildImportProfile(settings, options = {}) {
         ...historicalProfileFromSettings(settings),
         includeRoleRecovery: options.includeRoleRecovery === true,
         reconciliationPolicy: options.policy || 'max',
+        allowIncompleteApply: options.allowIncompleteApply === true,
         version: 1,
     };
 }
@@ -287,47 +288,131 @@ async function scanChannelMessages(job, channel, settings) {
     };
 }
 
-function calculateMessageEstimates(messages, settings) {
-    const cooldownMs = Math.max(0, Number(settings.cooldownSeconds || 0) * 1000);
-    const lastAwardedAt = new Map();
-    const estimates = new Map();
+function orderedMessages(messages = []) {
+    return [...messages].sort((a, b) => {
+        return Number(a.createdAt || 0) - Number(b.createdAt || 0)
+            || String(a.messageId).localeCompare(String(b.messageId));
+    });
+}
 
-    for (const message of messages.filter(item => item.eligible)) {
-        const previousAt = lastAwardedAt.get(message.userId);
-        if (previousAt !== undefined && cooldownMs && message.createdAt - previousAt < cooldownMs) continue;
-        lastAwardedAt.set(message.userId, message.createdAt);
-        const current = estimates.get(message.userId) || {
-            userId: message.userId,
-            userTag: message.userTag,
-            xp: 0,
-            messages: 0,
-            messageIds: [],
-        };
-        current.userTag = message.userTag || current.userTag;
-        current.xp += Number(message.xpAmount || 0);
-        current.messages += 1;
-        current.messageIds.push(message.messageId);
-        estimates.set(message.userId, current);
+function addMessageEstimate(message, settings, state, options = {}) {
+    if (!message.eligible) return false;
+    const cooldownMs = Math.max(0, Number(settings.cooldownSeconds || 0) * 1000);
+    const previousAt = state.lastAwardedAt.get(message.userId);
+    if (previousAt !== undefined && cooldownMs && Number(message.createdAt || 0) - previousAt < cooldownMs) return false;
+    state.lastAwardedAt.set(message.userId, Number(message.createdAt || 0));
+    const current = state.estimates.get(message.userId) || {
+        userId: message.userId,
+        userTag: message.userTag,
+        xp: 0,
+        messages: 0,
+        messageIds: options.trackMessageIds === false ? undefined : [],
+    };
+    current.userTag = message.userTag || current.userTag;
+    current.xp += Number(message.xpAmount || 0);
+    current.messages += 1;
+    if (current.messageIds) current.messageIds.push(message.messageId);
+    state.estimates.set(message.userId, current);
+    return true;
+}
+
+function calculateMessageEstimates(messages, settings, options = {}) {
+    const state = {
+        lastAwardedAt: new Map(),
+        estimates: new Map(),
+    };
+
+    for (const message of orderedMessages(messages)) {
+        addMessageEstimate(message, settings, state, options);
     }
 
-    return estimates;
+    return state.estimates;
+}
+
+async function forEachImportMessage(jobId, callback, options = {}) {
+    const requestedPageSize = Number(options.pageSize || 1000);
+    const pageSize = Number.isFinite(requestedPageSize) ? Math.max(1, Math.min(10000, Math.floor(requestedPageSize))) : 1000;
+    let afterCreatedAt = null;
+    let afterMessageId = '';
+    let count = 0;
+
+    while (true) {
+        const page = await listLevelImportMessagesPage(jobId, {
+            limit: pageSize,
+            afterCreatedAt,
+            afterMessageId,
+            userId: options.userId || null,
+        });
+        if (!page.length) break;
+        for (const message of page) {
+            await callback(message);
+            count += 1;
+        }
+        const last = page[page.length - 1];
+        afterCreatedAt = Number(last.createdAt || 0);
+        afterMessageId = last.messageId;
+    }
+
+    return count;
+}
+
+async function calculateStoredMessageEstimates(jobId, settings) {
+    const cooldownMs = Math.max(0, Number(settings.cooldownSeconds || 0) * 1000);
+    const state = {
+        lastAwardedAt: new Map(),
+        estimates: new Map(),
+    };
+    let eligibleStored = 0;
+    let awardedMessages = 0;
+
+    await forEachImportMessage(jobId, message => {
+        if (message.eligible) eligibleStored += 1;
+        if (addMessageEstimate(message, { ...settings, cooldownSeconds: cooldownMs / 1000 }, state, { trackMessageIds: false })) {
+            awardedMessages += 1;
+        }
+    });
+
+    return {
+        estimates: state.estimates,
+        eligibleStored,
+        awardedMessages,
+    };
 }
 
 async function fetchMembersForRoleRecovery(guild, targetUserId = null) {
     if (targetUserId) {
         const member = await guild.members.fetch(targetUserId).catch(() => guild.members.cache.get(targetUserId) || null);
-        return member ? [member] : [];
+        return {
+            complete: Boolean(member),
+            members: member ? [member] : [],
+            error: member ? null : `Target member ${targetUserId} could not be fetched.`,
+        };
     }
 
-    await guild.members.fetch().catch(() => null);
-    return [...guild.members.cache.values()];
+    try {
+        const fetched = await guild.members.fetch();
+        const members = [...(fetched?.values?.() || guild.members.cache.values())];
+        const expected = Number(guild.memberCount || 0);
+        const complete = !expected || members.length >= expected;
+        return {
+            complete,
+            members,
+            error: complete ? null : `Fetched ${members.length} of ${expected} guild members.`,
+        };
+    } catch (error) {
+        return {
+            complete: false,
+            members: [],
+            error: `Guild member fetch failed: ${compactError(error)}`,
+        };
+    }
 }
 
 async function buildRoleEstimates(guild, mappings, targetUserId = null) {
-    if (!mappings.length) return new Map();
-    const members = await fetchMembersForRoleRecovery(guild, targetUserId);
+    if (!mappings.length) return { estimates: new Map(), complete: true, error: null, membersFetched: 0 };
+    const fetched = await fetchMembersForRoleRecovery(guild, targetUserId);
     const estimates = new Map();
-    for (const member of members) {
+    for (const member of fetched.members) {
         if (member.user?.bot) continue;
         const roleMinLevel = inferLevelFromRoles(member, mappings);
         if (roleMinLevel <= 0) continue;
@@ -338,14 +423,36 @@ async function buildRoleEstimates(guild, mappings, targetUserId = null) {
             roleMinLevel,
         });
     }
-    return estimates;
+    return {
+        estimates,
+        complete: fetched.complete,
+        error: fetched.error,
+        membersFetched: fetched.members.length,
+    };
 }
 
 async function reconcileImport(job, guild, settings) {
-    const messages = await listLevelImportMessages(job.id, { limit: 100000 });
-    const messageEstimates = calculateMessageEstimates(messages, settings);
+    const messageResult = await calculateStoredMessageEstimates(job.id, settings);
+    const messageEstimates = messageResult.estimates;
     const mappings = job.profile.includeRoleRecovery ? await listLevelRoleMappings(job.guildId) : [];
-    const roleEstimates = await buildRoleEstimates(guild, mappings, job.targetUserId);
+    const roleResult = await buildRoleEstimates(guild, mappings, job.targetUserId);
+    const roleEstimates = roleResult.estimates;
+    const incompleteWarnings = [];
+    if (!roleResult.complete) {
+        incompleteWarnings.push({
+            type: 'role_recovery_members',
+            reason: roleResult.error || 'Guild members could not be fetched completely.',
+            membersFetched: roleResult.membersFetched,
+        });
+    }
+    if (!job.dryRun && incompleteWarnings.length && job.profile.allowIncompleteApply !== true) {
+        return {
+            blocked: true,
+            incompleteWarnings,
+            roleMappings: mappings.length,
+            roleMembersFetched: roleResult.membersFetched,
+        };
+    }
     const userIds = new Set([...messageEstimates.keys(), ...roleEstimates.keys()]);
     const records = [];
     let xpEstimated = 0;
@@ -402,7 +509,8 @@ async function reconcileImport(job, guild, settings) {
     }
 
     if (!job.dryRun) {
-        for (const message of messages.filter(item => item.eligible)) {
+        await forEachImportMessage(job.id, async message => {
+            if (!message.eligible) return;
             await markLevelImportMessageProcessed({
                 guildId: job.guildId,
                 messageId: message.messageId,
@@ -413,30 +521,46 @@ async function reconcileImport(job, guild, settings) {
                 xpAmount: message.xpAmount,
                 createdAt: Date.now(),
             });
-        }
+        });
 
         if (settings.roleSync.applyDuringMigration && !settings.roleSync.dryRun) {
+            const roleSync = { added: 0, removed: 0, skipped: [], errors: [] };
             for (const record of records) {
                 const member = roleEstimates.get(record.userId)?.member
                     || await guild.members.fetch(record.userId).catch(() => null);
                 const levelRecord = await getUserLevelRecord(job.guildId, record.userId);
                 if (member && levelRecord) {
-                    await syncRewardRoles(member, levelRecord, settings, {
+                    const result = await syncRewardRoles(member, levelRecord, settings, {
                         awardMissingRoles: settings.roleSync.awardMissingRoles,
                         removeObsoleteRoles: settings.roleSync.removeObsoleteRoles,
                         dryRun: false,
                     });
+                    roleSync.added += result.added.length;
+                    roleSync.removed += result.removed.length;
+                    roleSync.skipped.push(...result.skipped.map(item => ({ ...item, userId: record.userId })));
+                    roleSync.errors.push(...result.errors.map(item => ({ ...item, userId: record.userId })));
                 }
+            }
+            if (roleSync.skipped.length || roleSync.errors.length) {
+                incompleteWarnings.push({
+                    type: 'role_sync',
+                    reason: 'Some migration role-sync changes could not be applied.',
+                    skipped: roleSync.skipped.slice(0, 25),
+                    errors: roleSync.errors.slice(0, 25),
+                });
             }
         }
     }
 
     return {
-        messagesStored: messages.length,
+        messagesStored: messageResult.eligibleStored,
+        messagesAwarded: messageResult.awardedMessages,
         usersReconciled: records.length,
         xpEstimated,
         xpApplied,
         roleMappings: mappings.length,
+        roleMembersFetched: roleResult.membersFetched,
+        incompleteWarnings,
         top: records
             .sort((a, b) => b.finalXp - a.finalXp)
             .slice(0, 10)
@@ -451,9 +575,37 @@ async function reconcileImport(job, guild, settings) {
     };
 }
 
+function incompleteScanWarnings(job) {
+    const warnings = [];
+    for (const channel of job.skippedChannels || []) {
+        warnings.push({
+            type: 'skipped_channel',
+            channel,
+            reason: channel.reason || 'skipped',
+        });
+    }
+    for (const error of job.errors || []) {
+        warnings.push({
+            type: 'failed_channel_scan',
+            channel: error.channel || null,
+            reason: error.error || 'Channel scan failed.',
+        });
+    }
+    return warnings;
+}
+
+function mergeResultWarnings(result, warnings) {
+    return {
+        ...(result || {}),
+        incomplete: warnings.length > 0,
+        incompleteWarnings: warnings,
+        requiresConfirmation: warnings.length > 0,
+    };
+}
+
 async function processLevelImportJob(client, jobId) {
     let job = await getLevelImportJob(jobId);
-    if (!job || ['completed', 'cancelled', 'failed'].includes(job.status)) return job;
+    if (!job || ['completed', 'cancelled', 'failed', 'needs_confirmation'].includes(job.status)) return job;
 
     const guild = client.guilds.cache.get(job.guildId) || await client.guilds.fetch(job.guildId);
     const currentSettings = await getGuildLevelingConfig(job.guildId);
@@ -509,7 +661,32 @@ async function processLevelImportJob(client, jobId) {
     }
 
     job = await getLevelImportJob(job.id);
+    const scanWarnings = incompleteScanWarnings(job);
+    if (!job.dryRun && scanWarnings.length && job.profile.allowIncompleteApply !== true) {
+        return updateLevelImportJob(job.id, {
+            status: 'needs_confirmation',
+            completedAt: Date.now(),
+            currentChannelId: null,
+            result: mergeResultWarnings({
+                messagesStored: Number(job.messagesEligible || 0),
+                usersReconciled: 0,
+                xpEstimated: 0,
+                xpApplied: 0,
+            }, scanWarnings),
+        });
+    }
+
     const result = await reconcileImport(job, guild, settings);
+    if (result.blocked) {
+        const warnings = [...scanWarnings, ...(result.incompleteWarnings || [])];
+        return updateLevelImportJob(job.id, {
+            status: 'needs_confirmation',
+            completedAt: Date.now(),
+            currentChannelId: null,
+            result: mergeResultWarnings(result, warnings),
+        });
+    }
+    const warnings = [...scanWarnings, ...(result.incompleteWarnings || [])];
     return updateLevelImportJob(job.id, {
         status: 'completed',
         completedAt: Date.now(),
@@ -517,7 +694,7 @@ async function processLevelImportJob(client, jobId) {
         membersSeen: result.usersReconciled,
         xpEstimated: result.xpEstimated,
         xpApplied: result.xpApplied,
-        result,
+        result: mergeResultWarnings(result, warnings),
     });
 }
 
@@ -548,7 +725,19 @@ async function getLevelImportStatus(jobId) {
 async function previewRoleRecovery(guild, options = {}) {
     const settings = await getGuildLevelingConfig(guild.id);
     const mappings = await listLevelRoleMappings(guild.id);
-    const roleEstimates = await buildRoleEstimates(guild, mappings, options.targetUserId || null);
+    const roleResult = await buildRoleEstimates(guild, mappings, options.targetUserId || null);
+    if (options.apply && !roleResult.complete) {
+        return {
+            mappings: mappings.length,
+            membersMatched: 0,
+            wouldChange: 0,
+            applied: 0,
+            complete: false,
+            error: roleResult.error,
+            records: [],
+        };
+    }
+    const roleEstimates = roleResult.estimates;
     const records = [];
 
     for (const estimate of roleEstimates.values()) {
@@ -586,6 +775,9 @@ async function previewRoleRecovery(guild, options = {}) {
         membersMatched: records.length,
         wouldChange: records.filter(record => record.wouldChange).length,
         applied: options.apply ? records.filter(record => record.wouldChange).length : 0,
+        complete: roleResult.complete,
+        error: roleResult.error,
+        membersFetched: roleResult.membersFetched,
         records: records.sort((a, b) => b.finalXp - a.finalXp),
     };
 }
@@ -595,6 +787,7 @@ module.exports = {
     cancelLevelImport,
     collectImportChannels,
     getLevelImportStatus,
+    incompleteScanWarnings,
     previewRoleRecovery,
     processLevelImportJob,
     resumeLevelImportJobs,

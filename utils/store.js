@@ -1086,7 +1086,7 @@ async function requestCancelLevelImportJob(id) {
     const job = await getLevelImportJob(id);
     if (!job) return null;
     return updateLevelImportJob(id, {
-        status: ['completed', 'cancelled', 'failed'].includes(job.status) ? job.status : 'cancelling',
+        status: ['completed', 'cancelled', 'failed', 'needs_confirmation'].includes(job.status) ? job.status : 'cancelling',
         cancelRequested: true,
     });
 }
@@ -1158,6 +1158,23 @@ async function listLevelImportMessages(jobId = null, options = {}) {
     return ((await readState()).levelImportMessages || [])
         .filter(item => !jobId || item.jobId === jobId)
         .filter(item => !options.userId || item.userId === options.userId)
+        .sort((a, b) => Number(a.createdAt || 0) - Number(b.createdAt || 0) || String(a.messageId).localeCompare(String(b.messageId)))
+        .slice(0, limit);
+}
+
+async function listLevelImportMessagesPage(jobId, options = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listLevelImportMessagesPage(await getSqliteDb(), jobId, options);
+    const requestedLimit = Number(options.limit || 1000);
+    const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(10000, Math.floor(requestedLimit))) : 1000;
+    const afterCreatedAt = options.afterCreatedAt === undefined ? null : Number(options.afterCreatedAt);
+    const afterMessageId = options.afterMessageId || '';
+    return ((await readState()).levelImportMessages || [])
+        .filter(item => item.jobId === jobId)
+        .filter(item => !options.userId || item.userId === options.userId)
+        .filter(item => afterCreatedAt === null
+            || Number(item.createdAt || 0) > afterCreatedAt
+            || (Number(item.createdAt || 0) === afterCreatedAt && String(item.messageId).localeCompare(afterMessageId) > 0))
         .sort((a, b) => Number(a.createdAt || 0) - Number(b.createdAt || 0) || String(a.messageId).localeCompare(String(b.messageId)))
         .slice(0, limit);
 }
@@ -1907,6 +1924,7 @@ module.exports = {
     listLevelImportCheckpoints,
     listLevelImportJobs,
     listLevelImportMessages,
+    listLevelImportMessagesPage,
     listLevelProcessedMessages,
     listLevelReconciliationRecords,
     listLevelRoleMappings,
