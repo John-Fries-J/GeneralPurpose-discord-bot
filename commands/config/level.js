@@ -128,8 +128,8 @@ module.exports = {
             subcommand
                 .setName('role-recovery-apply')
                 .setDescription('Apply minimum XP recovery from existing reward roles.')
-                .addUserOption(option => option.setName('user').setDescription('Limit recovery to one member.'))
-                .addStringOption(option => option.setName('confirm').setDescription('Type APPLY to confirm.').setRequired(true)))
+                .addStringOption(option => option.setName('confirm').setDescription('Type APPLY to confirm.').setRequired(true))
+                .addUserOption(option => option.setName('user').setDescription('Limit recovery to one member.')))
         .addSubcommandGroup(group =>
             group
                 .setName('test')
