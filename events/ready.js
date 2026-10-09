@@ -8,6 +8,7 @@ const { bootstrapNameless } = require('../utils/namelessmc');
 const { initializeStorage } = require('../utils/store');
 const { resumeLevelImportJobs } = require('../utils/levelingImport');
 const { resumeLevelCalibrationJobs } = require('../utils/levelingCalibration');
+const { resumeProbotScanJobs } = require('../utils/probotRecovery');
 const { resumeHoneypotCleanupJobs } = require('../utils/honeypot');
 const { createScheduler } = require('../services/scheduler');
 const { reconcileJoinToCreate } = require('../utils/joinToCreate');
@@ -45,6 +46,9 @@ module.exports = {
         });
         resumeLevelCalibrationJobs(client).catch(error => {
             readyLogger.error('Level calibration resume failed', { error });
+        });
+        resumeProbotScanJobs(client).catch(error => {
+            readyLogger.error('ProBot recovery scan resume failed', { error });
         });
         resumeHoneypotCleanupJobs(client).catch(error => {
             readyLogger.error('Honeypot cleanup resume failed', { error });
