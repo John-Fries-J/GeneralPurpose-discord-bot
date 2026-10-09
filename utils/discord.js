@@ -33,6 +33,10 @@ async function safeDm(user, payload) {
     }
 }
 
+function isInteractionResponseUnavailable(error) {
+    return error?.code === 10062 || error?.code === 40060;
+}
+
 async function safeReply(interaction, payload) {
     try {
         if (interaction.replied) {
@@ -45,7 +49,7 @@ async function safeReply(interaction, payload) {
 
         return interaction.reply(payload);
     } catch (error) {
-        if (error?.code === 10062 || error?.code === 40060) {
+        if (isInteractionResponseUnavailable(error)) {
             console.warn(`Interaction response skipped: ${error.message}`);
             return null;
         }
@@ -93,6 +97,7 @@ module.exports = {
     findSendableChannel,
     formatInteractionCommand,
     isGuildTextChannel,
+    isInteractionResponseUnavailable,
     safeDm,
     safeReply,
     truncate,

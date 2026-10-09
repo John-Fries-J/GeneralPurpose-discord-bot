@@ -32,11 +32,22 @@
 
 ## Historical Calibration Preview
 
-- Use `/level calibration-preview job_id:<completed-job-id> profile:ProBot-inspired default` to replay stored historical import messages under a different XP profile without rescanning Discord and without changing XP or roles.
-- Use `/level calibration-preview job_id:<completed-job-id> profile:Custom options min_xp:<n> max_xp:<n> cooldown:<seconds> formula:<formula>` to test specific XP settings.
-- Use `/level calibration-fit job_id:<completed-job-id>` after configuring reward-role mappings to compare plausible profiles against role-derived minimum-level evidence. The command reports reconstructed levels from messages and protected levels that preserve confirmed role milestones.
-- Add `export:CSV` or `export:JSON` to calibration commands when detailed per-user preview output is needed.
+- Use `/level calibration-preview job_id:<completed-job-id> profile:ProBot-inspired default` to create a background replay job under a different XP profile without rescanning Discord and without changing XP or roles.
+- Use `/level calibration-preview job_id:<completed-job-id> profile:Custom options min_xp:<n> max_xp:<n> cooldown:<seconds> formula:<formula>` to test specific XP settings. Add `users:<ids-or-mentions>` to restrict the report to those users only.
+- Use `/level calibration-fit job_id:<completed-job-id>` after configuring reward-role mappings to compare bounded candidate profiles against role-derived minimum-level evidence. The command reports training and held-out validation agreement, minimum violations, tentative upper-bound overestimates, and median/p90 interval error.
+- Use `/level calibration-status job_id:<calibration-job-id>` to inspect progress or completed results. Add `export:CSV` or `export:JSON` to status for private detailed output. Use `/level calibration-cancel job_id:<calibration-job-id>` to request safe cancellation.
+- Calibration jobs are persistent and restart-resumable. Only one active calibration job can run for the same completed import at a time.
 - Calibration is read-only: it streams `level_import_messages`, recalculates hypothetical XP from stored message IDs and timestamps, and does not write reconciliation records, processed-message rows, live XP balances, config, or Discord roles.
+
+## Calibration Audit Notes
+
+- Stored import messages are replayed globally by `created_at, message_id`, so per-user cooldowns cross channel boundaries in chronological order.
+- Text cooldowns are per user. Bot and webhook messages are excluded from live text XP and historical imports.
+- Alternative calibration profiles recalculate XP from the stored message ID and proposed XP range; they do not reuse the original stored `xp_amount`.
+- Current leveling configuration is used to discover role mappings and ignored import context, but each preview job stores the proposed calibration settings separately so current XP values do not override the proposed XP range, cooldown, formula, or base.
+- Mapped reward roles are interpreted as confirmed minimum levels. The next mapped milestone is reported only as a tentative upper bound because historical replacement-style roles, manual role edits, and changed mappings can break a strict interval.
+- Evidence-quality groups are diagnostic only. "Substantial surviving history" means at least 250 accessible messages or 100 cooldown-adjusted messages spanning at least 7 days. "Questionable history coverage" means no surviving messages, a very short observed history window for a high milestone, partial member evidence, or incomplete import channel coverage. Low-message users are still shown and are not discarded.
+- If multiple materially different profiles score nearly the same, the result explicitly warns that the role evidence does not identify a unique XP model.
 
 ## Required Bot Permissions
 

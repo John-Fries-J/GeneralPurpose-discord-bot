@@ -2,14 +2,12 @@ const { AttachmentBuilder, InteractionContextType, ApplicationIntegrationType, P
 const { createEmbed } = require('../../utils/embeds');
 const { formatXp, getGuildLevelingConfig, getLevelProgress, getLevelingConfig, getProfileDefaults } = require('../../utils/leveling');
 const {
-    buildDefaultCalibrationProfiles,
-    buildProtectedRecords,
-    buildRoleEvidence,
+    cancelLevelCalibration,
     compactProfile,
-    fitCalibrationProfiles,
-    importCompleteness,
-    replayImportJobProfiles,
+    getLevelCalibrationStatus,
+    latestLevelCalibrationJob,
     settingsFromJobProfile,
+    startLevelCalibrationJob,
 } = require('../../utils/levelingCalibration');
 const {
     cancelLevelImport,
@@ -174,9 +172,13 @@ function buildCalibrationSettings(interaction, currentSettings, job) {
 
 function calibrationRecordRows(records = [], limit = 10) {
     return records.slice(0, limit).map(record => {
-        const current = record.currentPreviewLevel === null ? '?' : record.currentPreviewLevel;
-        const role = record.roleMinLevel ? `, role min ${record.roleMinLevel}` : '';
-        return `<@${record.userId}> - current **${current}**, reconstructed **${record.reconstructedLevel}**, protected **${record.protectedLevel}**${role}`;
+        const role = record.roleMinLevel ? `min **${record.roleMinLevel}**` : 'no role min';
+        const stored = record.currentStoredLevel === null || record.currentStoredLevel === undefined ? '?' : record.currentStoredLevel;
+        const delta = record.levelDeltaFromMinimum === null || record.levelDeltaFromMinimum === undefined
+            ? 'n/a'
+            : (record.levelDeltaFromMinimum >= 0 ? `+${record.levelDeltaFromMinimum}` : `${record.levelDeltaFromMinimum}`);
+        const warnings = record.confidenceWarnings?.length ? `; ${record.confidenceWarnings.slice(0, 2).join(', ')}` : '';
+        return `<@${record.userId}> - ${role}, recon **${record.reconstructedLevel}** (${formatXp(record.reconstructedXp)} XP), protected **${record.protectedLevel}**, stored **${stored}**, Δ **${delta}**, activity **${formatXp(record.accessibleMessages)}/${formatXp(record.cooldownAdjustedMessages)}**${warnings}`;
     }).join('\n') || 'No matching users found in the stored import data.';
 }
 
@@ -187,18 +189,37 @@ function metricSummary(metrics) {
         `Minimum violations: **${metrics.minimumViolations}**`,
         `Tentative overestimates: **${metrics.tentativeOverestimations}**`,
         `Significant overestimates: **${metrics.significantOverestimations}**`,
+        `Median / p90 error: **${metrics.medianAbsLevelError}/${metrics.p90AbsLevelError}** levels`,
     ].join('\n');
 }
 
-function fitRows(results = []) {
+function resultFitRows(results = []) {
     return results.slice(0, 5).map((result, index) => {
-        const profile = compactProfile(result.profile.settings);
+        const profile = compactProfile(result.profile);
         return [
-            `${index + 1}. **${result.profile.label}**`,
-            `${profile.textXpMin}-${profile.textXpMax} XP, ${profile.cooldownSeconds}s, ${profile.progressionFormula}`,
-            `agreement ${percent(result.training.intervalAgreementRate)}, min violations ${result.training.minimumViolations}, over ${result.training.tentativeOverestimations}`,
+            `${index + 1}. **${result.label}**`,
+            `${profile.textXpMin}-${profile.textXpMax} XP, ${profile.cooldownSeconds}s, ${profile.progressionFormula}, base ${profile.xpPerLevelBase}`,
+            `train ${percent(result.training.intervalAgreementRate)}, validation ${percent(result.validation.intervalAgreementRate)}, min ${result.training.minimumViolations}, over ${result.training.tentativeOverestimations}, median error ${result.training.medianAbsLevelError}`,
         ].join(' - ');
     }).join('\n') || 'No candidate profiles were evaluated.';
+}
+
+function leaderboardRows(records = []) {
+    return records.slice(0, 25).map(record => {
+        return `#${record.rank} <@${record.userId}> - level **${record.protectedLevel}**, ${formatXp(record.protectedXp)} XP`;
+    }).join('\n') || 'No simulated leaderboard rows are available.';
+}
+
+function calibrationJobSummary(job) {
+    const status = job.status[0].toUpperCase() + job.status.slice(1);
+    const progress = job.progress?.percent !== undefined ? ` (${job.progress.percent}%, ${job.progress.phase || 'working'})` : '';
+    return [
+        `Calibration job: \`${job.id}\``,
+        `Import job: \`${job.importJobId}\``,
+        `Type: **${job.kind}**`,
+        `Status: **${status}**${progress}`,
+        job.error ? `Error: ${job.error}` : null,
+    ].filter(Boolean).join('\n');
 }
 
 function csvCell(value) {
@@ -215,32 +236,52 @@ function createCalibrationExport(records, format, filenameBase, metadata = {}) {
         const headers = [
             'user_id',
             'user_tag',
-            'current_preview_level',
+            'current_stored_level',
+            'current_stored_xp',
+            'baseline_reconstructed_level',
             'reconstructed_level',
             'reconstructed_xp',
             'protected_level',
             'protected_xp',
             'role_min_level',
             'upper_bound_level',
+            'level_delta_from_minimum',
+            'inside_tentative_interval',
             'minimum_violation',
             'tentative_overestimate',
+            'accessible_messages',
+            'cooldown_adjusted_messages',
             'awarded_messages',
+            'first_observed_at',
+            'last_observed_at',
+            'coverage_group',
+            'confidence_warnings',
         ];
         const lines = [
             headers.join(','),
             ...records.map(record => headers.map(header => csvCell({
                 user_id: record.userId,
                 user_tag: record.userTag,
-                current_preview_level: record.currentPreviewLevel,
+                current_stored_level: record.currentStoredLevel,
+                current_stored_xp: record.currentStoredXp,
+                baseline_reconstructed_level: record.baselineReconstructedLevel,
                 reconstructed_level: record.reconstructedLevel,
                 reconstructed_xp: record.reconstructedXp,
                 protected_level: record.protectedLevel,
                 protected_xp: record.protectedXp,
                 role_min_level: record.roleMinLevel,
                 upper_bound_level: record.upperBoundLevel,
+                level_delta_from_minimum: record.levelDeltaFromMinimum,
+                inside_tentative_interval: record.insideTentativeInterval,
                 minimum_violation: record.minimumViolation,
                 tentative_overestimate: record.tentativeOverestimate,
+                accessible_messages: record.accessibleMessages,
+                cooldown_adjusted_messages: record.cooldownAdjustedMessages,
                 awarded_messages: record.awardedMessages,
+                first_observed_at: record.firstObservedAt,
+                last_observed_at: record.lastObservedAt,
+                coverage_group: record.coverageGroup,
+                confidence_warnings: (record.confidenceWarnings || []).join(';'),
             }[header])).join(',')),
         ];
         return new AttachmentBuilder(Buffer.from(`${lines.join('\n')}\n`, 'utf8'), { name: `${filenameBase}.csv` });
@@ -320,14 +361,25 @@ module.exports = {
                 .addIntegerOption(option => option.setName('base').setDescription('XP base for the formula.').setMinValue(1).setMaxValue(1000000))
                 .addNumberOption(option => option.setName('factor').setDescription('Exponential curve factor.').setMinValue(1.01).setMaxValue(10))
                 .addStringOption(option => option.setName('users').setDescription('Optional user IDs or mentions to preview.'))
-                .addStringOption(option => option.setName('export').setDescription('Attach detailed results.').addChoices(...exportChoices)))
+                .addStringOption(option => option.setName('export').setDescription('Remember preferred export format for the result.').addChoices(...exportChoices)))
         .addSubcommand(subcommand =>
             subcommand
                 .setName('calibration-fit')
                 .setDescription('Fit candidate XP profiles against role-level evidence.')
                 .addStringOption(option => option.setName('job_id').setDescription('Completed import job ID.').setRequired(true))
-                .addIntegerOption(option => option.setName('max_profiles').setDescription('Maximum candidate profiles to evaluate.').setMinValue(1).setMaxValue(100))
-                .addStringOption(option => option.setName('export').setDescription('Attach best-profile results.').addChoices(...exportChoices)))
+                .addIntegerOption(option => option.setName('max_profiles').setDescription('Maximum candidate profiles to evaluate.').setMinValue(1).setMaxValue(250))
+                .addStringOption(option => option.setName('export').setDescription('Remember preferred export format for the result.').addChoices(...exportChoices)))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('calibration-status')
+                .setDescription('Show a background calibration job status or result.')
+                .addStringOption(option => option.setName('job_id').setDescription('Calibration job ID. Defaults to the latest calibration job.'))
+                .addStringOption(option => option.setName('export').setDescription('Attach detailed results.').addChoices(...exportChoices)))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('calibration-cancel')
+                .setDescription('Cancel a running calibration job.')
+                .addStringOption(option => option.setName('job_id').setDescription('Calibration job ID. Defaults to the latest calibration job.')))
         .addSubcommandGroup(group =>
             group
                 .setName('test')
@@ -507,153 +559,189 @@ module.exports = {
         }
 
         if (subcommand === 'calibration-preview') {
-            await interaction.deferReply({ flags: 64 });
             const jobId = interaction.options.getString('job_id', true);
             const status = await getLevelImportStatus(jobId);
-            if (!status?.job) return interaction.editReply({ content: 'That level import job was not found.' });
-            if (status.job.guildId !== interaction.guild.id) return interaction.editReply({ content: 'That import job belongs to a different server.' });
-            if (status.job.status !== 'completed') return interaction.editReply({ content: `Job \`${status.job.id}\` is ${status.job.status}; calibration previews require a completed import job.` });
+            if (!status?.job) return interaction.reply({ content: 'That level import job was not found.', flags: 64 });
+            if (status.job.guildId !== interaction.guild.id) return interaction.reply({ content: 'That import job belongs to a different server.', flags: 64 });
+            if (status.job.status !== 'completed') return interaction.reply({ content: `Job \`${status.job.id}\` is ${status.job.status}; calibration previews require a completed import job.`, flags: 64 });
 
             const currentSettings = await getGuildLevelingConfig(interaction.guild.id);
             const target = buildCalibrationSettings(interaction, currentSettings, status.job);
-            const baseline = {
-                label: 'Stored import preview',
-                settings: settingsFromJobProfile(currentSettings, status.job.profile || {}),
-            };
             const userIds = parseUserIds(interaction.options.getString('users') || '');
-            const evidence = await buildRoleEvidence(interaction.guild, currentSettings, {
-                targetUserId: userIds.size === 1 ? [...userIds][0] : null,
+            const created = await startLevelCalibrationJob(interaction.client, interaction.guild, {
+                importJobId: status.job.id,
+                kind: 'preview',
+                profile: target,
+                userIds,
+                exportFormat: interaction.options.getString('export') || 'none',
+                createdBy: interaction.user.id,
             });
-            const simulations = await replayImportJobProfiles(status.job, [baseline, target], {
-                userFilter: userIds.size ? userIds : null,
-            });
-            const records = buildProtectedRecords(simulations[1], evidence.evidence, {
-                baseline: simulations[0],
-                userIds: [...userIds],
-            });
-            const completeness = importCompleteness(status.job);
-            const exportFormat = interaction.options.getString('export') || 'none';
-            const attachment = createCalibrationExport(records, exportFormat, `level-calibration-${status.job.id}`, {
-                jobId: status.job.id,
-                profile: compactProfile(target.settings),
-                evidenceMembers: evidence.evidence.size,
-            });
+            if (!created.ok) {
+                return interaction.reply({
+                    content: `A calibration job is already active for import \`${status.job.id}\`: \`${created.job.id}\` (${created.job.status}). Use \`/level calibration-status job_id:${created.job.id}\`.`,
+                    flags: 64,
+                });
+            }
 
-            return interaction.editReply({
-                embeds: [createEmbed({
-                    title: 'Level Calibration Preview',
-                    color: completeness.complete && evidence.complete ? 'blue' : 'orange',
-                    description: [
-                        `Job: \`${status.job.id}\``,
-                        `Stored candidates: **${formatXp(status.job.messagesEligible)}**`,
-                        `Profile: **${target.label}**`,
-                        formatCalibrationProfile(target.settings),
-                        '',
-                        `Role mappings: **${evidence.mappings.length}**`,
-                        `Members with role evidence: **${evidence.evidence.size}**`,
-                        evidence.complete ? null : `Member fetch warning: ${evidence.error || 'partial member results'}`,
-                        completeness.complete ? null : `Import completeness warning: ${completeness.warnings.map(warning => warning.type).join(', ')}`,
-                    ].filter(Boolean).join('\n'),
-                    fields: [
-                        {
-                            name: 'Replay summary',
-                            value: [
-                                `Current preview awarded: **${formatXp(simulations[0].awardedMessages)}** messages`,
-                                `Calibrated awarded: **${formatXp(simulations[1].awardedMessages)}** messages`,
-                                `Calibrated XP: **${formatXp(simulations[1].xpEstimated)}**`,
-                                `Users reconstructed: **${formatXp(simulations[1].usersReconstructed)}**`,
-                            ].join('\n'),
-                            inline: false,
-                        },
-                        {
-                            name: userIds.size ? 'Requested users' : 'Largest discrepancies',
-                            value: calibrationRecordRows(records, 10),
-                            inline: false,
-                        },
-                    ],
-                })],
-                files: attachment ? [attachment] : [],
+            return interaction.reply({
+                content: [
+                    `Started read-only calibration preview \`${created.job.id}\` for import \`${status.job.id}\`.`,
+                    userIds.size ? `Scope: **${userIds.size}** requested user ID${userIds.size === 1 ? '' : 's'}.` : 'Scope: all members with stored history and role evidence.',
+                    'No XP, roles, Discord history scans, or leveling configuration will be changed.',
+                    `Use \`/level calibration-status job_id:${created.job.id}\` to view progress and results.`,
+                ].join('\n'),
+                flags: 64,
             });
         }
 
         if (subcommand === 'calibration-fit') {
-            await interaction.deferReply({ flags: 64 });
             const jobId = interaction.options.getString('job_id', true);
             const status = await getLevelImportStatus(jobId);
-            if (!status?.job) return interaction.editReply({ content: 'That level import job was not found.' });
-            if (status.job.guildId !== interaction.guild.id) return interaction.editReply({ content: 'That import job belongs to a different server.' });
-            if (status.job.status !== 'completed') return interaction.editReply({ content: `Job \`${status.job.id}\` is ${status.job.status}; calibration fitting requires a completed import job.` });
+            if (!status?.job) return interaction.reply({ content: 'That level import job was not found.', flags: 64 });
+            if (status.job.guildId !== interaction.guild.id) return interaction.reply({ content: 'That import job belongs to a different server.', flags: 64 });
+            if (status.job.status !== 'completed') return interaction.reply({ content: `Job \`${status.job.id}\` is ${status.job.status}; calibration fitting requires a completed import job.`, flags: 64 });
 
-            const currentSettings = await getGuildLevelingConfig(interaction.guild.id);
-            const evidence = await buildRoleEvidence(interaction.guild, currentSettings);
-            if (!evidence.evidence.size) {
-                return interaction.editReply({
-                    content: [
-                        'No current members have mapped reward roles, so there is no role evidence to fit against.',
-                        'Add mappings with `/level role-map-add`, then rerun calibration.',
-                    ].join('\n'),
+            const maxProfiles = interaction.options.getInteger('max_profiles') || 96;
+            const created = await startLevelCalibrationJob(interaction.client, interaction.guild, {
+                importJobId: status.job.id,
+                kind: 'fit',
+                maxProfiles,
+                exportFormat: interaction.options.getString('export') || 'none',
+                createdBy: interaction.user.id,
+            });
+            if (!created.ok) {
+                return interaction.reply({
+                    content: `A calibration job is already active for import \`${status.job.id}\`: \`${created.job.id}\` (${created.job.status}). Use \`/level calibration-status job_id:${created.job.id}\`.`,
+                    flags: 64,
                 });
             }
 
-            const maxProfiles = interaction.options.getInteger('max_profiles') || 32;
-            const profiles = buildDefaultCalibrationProfiles(currentSettings, status.job.profile || {}, { maxProfiles });
-            const fit = await fitCalibrationProfiles(status.job, profiles, evidence.evidence);
-            const baseline = fit.results.find(result => result.profile.source === 'stored_import')?.simulation || null;
-            const bestRecords = fit.best ? buildProtectedRecords(fit.best.simulation, evidence.evidence, { baseline }) : [];
-            const exportFormat = interaction.options.getString('export') || 'none';
-            const attachment = createCalibrationExport(bestRecords, exportFormat, `level-calibration-fit-${status.job.id}`, {
-                jobId: status.job.id,
-                bestProfile: fit.best ? compactProfile(fit.best.profile.settings) : null,
-                evidenceMembers: evidence.evidence.size,
+            return interaction.reply({
+                content: [
+                    `Started read-only calibration fit \`${created.job.id}\` for import \`${status.job.id}\`.`,
+                    `Candidate cap: **${maxProfiles}** bounded profiles.`,
+                    'No XP, roles, Discord history scans, or leveling configuration will be changed.',
+                    `Use \`/level calibration-status job_id:${created.job.id}\` to view progress and results.`,
+                ].join('\n'),
+                flags: 64,
             });
-            const completeness = importCompleteness(status.job);
+        }
 
-            return interaction.editReply({
+        if (subcommand === 'calibration-status') {
+            const jobId = interaction.options.getString('job_id') || (await latestLevelCalibrationJob(interaction.guild.id))?.id;
+            if (!jobId) return interaction.reply({ content: 'No calibration jobs have been recorded for this server.', flags: 64 });
+            const job = await getLevelCalibrationStatus(jobId);
+            if (!job) return interaction.reply({ content: 'That calibration job was not found.', flags: 64 });
+            if (job.guildId !== interaction.guild.id) return interaction.reply({ content: 'That calibration job belongs to a different server.', flags: 64 });
+
+            const result = job.result || {};
+            const exportFormat = interaction.options.getString('export') || job.options?.exportFormat || 'none';
+            const attachment = job.status === 'completed'
+                ? createCalibrationExport(result.records || [], exportFormat, `level-calibration-result-${job.id}`, {
+                    calibrationJobId: job.id,
+                    importJobId: job.importJobId,
+                    kind: job.kind,
+                    profile: result.profile || result.best?.profile || null,
+                    evidence: result.evidence || null,
+                    quality: result.quality || null,
+                    simulatedLeaderboard: result.simulatedLeaderboard || [],
+                })
+                : null;
+            const fields = [];
+            if (job.status === 'completed' && result.kind === 'preview') {
+                fields.push(
+                    {
+                        name: 'Replay summary',
+                        value: [
+                            `Stored awarded: **${formatXp(result.replay?.storedAwardedMessages)}** messages`,
+                            `Calibrated awarded: **${formatXp(result.replay?.calibratedAwardedMessages)}** messages`,
+                            `Calibrated XP: **${formatXp(result.replay?.calibratedXp)}**`,
+                            `Users reconstructed: **${formatXp(result.replay?.usersReconstructed)}**`,
+                        ].join('\n'),
+                        inline: false,
+                    },
+                    {
+                        name: result.scopedUserIds?.length ? 'Requested users' : 'Largest discrepancies',
+                        value: calibrationRecordRows(result.records || [], 8).slice(0, 1024),
+                        inline: false,
+                    },
+                    {
+                        name: 'Simulated top 25',
+                        value: leaderboardRows(result.simulatedLeaderboard || []).slice(0, 1024),
+                        inline: false,
+                    },
+                );
+            } else if (job.status === 'completed' && result.kind === 'fit') {
+                fields.push(
+                    {
+                        name: 'Suggested profile',
+                        value: result.best ? [
+                            `**${result.best.label}**`,
+                            formatCalibrationProfile(result.best.profile),
+                        ].join('\n') : 'No fit was produced.',
+                        inline: false,
+                    },
+                    {
+                        name: 'Training agreement',
+                        value: result.best ? metricSummary(result.best.training) : 'No fit was produced.',
+                        inline: true,
+                    },
+                    {
+                        name: 'Validation agreement',
+                        value: result.best && result.validationCount ? metricSummary(result.best.validation) : 'Not enough role evidence for a held-out validation set.',
+                        inline: true,
+                    },
+                    {
+                        name: 'Top candidates',
+                        value: resultFitRows(result.ranked || []).slice(0, 1024),
+                        inline: false,
+                    },
+                    {
+                        name: 'Major discrepancies',
+                        value: calibrationRecordRows(result.records || [], 8).slice(0, 1024),
+                        inline: false,
+                    },
+                );
+            }
+            if (job.status === 'completed' && result.quality) {
+                fields.push({
+                    name: 'Evidence groups',
+                    value: [
+                        `All role evidence: **${result.quality.allRoleEvidence}**`,
+                        `Substantial surviving history: **${result.quality.substantialSurvivingHistory}**`,
+                        `Questionable history coverage: **${result.quality.questionableHistoryCoverage}**`,
+                    ].join('\n'),
+                    inline: false,
+                });
+            }
+            if (result.warnings?.length) {
+                fields.push({ name: 'Model warnings', value: result.warnings.join('\n').slice(0, 1024), inline: false });
+            }
+
+            return interaction.reply({
                 embeds: [createEmbed({
-                    title: 'Level Calibration Fit',
-                    color: completeness.complete && evidence.complete ? 'green' : 'orange',
+                    title: 'Level Calibration Status',
+                    color: job.status === 'failed' ? 'red' : (job.status === 'completed' ? 'green' : 'blue'),
                     description: [
-                        `Job: \`${status.job.id}\``,
-                        `Candidate profiles: **${fit.results.length}**`,
-                        `Role mappings: **${evidence.mappings.length}**`,
-                        `Members with role evidence: **${evidence.evidence.size}**`,
-                        `Training / validation: **${fit.trainingCount}/${fit.validationCount}**`,
-                        evidence.complete ? null : `Member fetch warning: ${evidence.error || 'partial member results'}`,
-                        completeness.complete ? null : `Import completeness warning: ${completeness.warnings.map(warning => warning.type).join(', ')}`,
+                        calibrationJobSummary(job),
+                        result.evidence ? `Role evidence: **${result.evidence.membersWithRoleEvidence || 0}** members across **${result.evidence.mappings || 0}** mappings.` : null,
+                        result.completeness?.complete === false ? `Import completeness warning: ${result.completeness.warnings.map(warning => warning.type).join(', ')}` : null,
+                        result.evidence?.complete === false ? `Member fetch warning: ${result.evidence.error || 'partial member results'}` : null,
                     ].filter(Boolean).join('\n'),
-                    fields: [
-                        {
-                            name: 'Suggested profile',
-                            value: fit.best ? [
-                                `**${fit.best.profile.label}**`,
-                                formatCalibrationProfile(fit.best.profile.settings),
-                            ].join('\n') : 'No fit was produced.',
-                            inline: false,
-                        },
-                        {
-                            name: 'Training agreement',
-                            value: fit.best ? metricSummary(fit.best.training) : 'No fit was produced.',
-                            inline: true,
-                        },
-                        {
-                            name: 'Validation agreement',
-                            value: fit.best && fit.validationCount ? metricSummary(fit.best.validation) : 'Not enough role evidence for a held-out validation set.',
-                            inline: true,
-                        },
-                        {
-                            name: 'Top candidates',
-                            value: fitRows(fit.results),
-                            inline: false,
-                        },
-                        {
-                            name: 'Major discrepancies',
-                            value: calibrationRecordRows(bestRecords, 10),
-                            inline: false,
-                        },
-                    ],
+                    fields,
                 })],
                 files: attachment ? [attachment] : [],
+                flags: 64,
             });
+        }
+
+        if (subcommand === 'calibration-cancel') {
+            const jobId = interaction.options.getString('job_id') || (await latestLevelCalibrationJob(interaction.guild.id))?.id;
+            if (!jobId) return interaction.reply({ content: 'No calibration job is available to cancel.', flags: 64 });
+            const job = await cancelLevelCalibration(jobId);
+            if (!job) return interaction.reply({ content: 'That calibration job was not found.', flags: 64 });
+            if (job.guildId !== interaction.guild.id) return interaction.reply({ content: 'That calibration job belongs to a different server.', flags: 64 });
+            return interaction.reply({ content: `Cancellation requested for calibration job \`${job.id}\` (${job.status}).`, flags: 64 });
         }
 
         if (group === 'test') {

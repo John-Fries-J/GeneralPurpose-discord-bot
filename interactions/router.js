@@ -1,6 +1,6 @@
 const { MessageFlags } = require('discord.js');
 const language = require('../utils/language');
-const { formatInteractionCommand, safeReply } = require('../utils/discord');
+const { formatInteractionCommand, isInteractionResponseUnavailable, safeReply } = require('../utils/discord');
 const { isCommandEnabled } = require('../utils/features');
 const { memberCanUseCommand } = require('../utils/permissions');
 const { addUserHistory, recordCommandUsage } = require('../utils/store');
@@ -110,6 +110,16 @@ async function runApplicationCommand(interaction) {
                 error: error.message,
             },
         }).catch(() => null);
+        if (isInteractionResponseUnavailable(error)) {
+            interactionLogger.warn('Interaction response token was unavailable before command error reply', {
+                command: interaction.commandName,
+                guildId: interaction.guildId,
+                channelId: interaction.channelId,
+                userId: interaction.user?.id,
+                code: error.code,
+            });
+            return;
+        }
         await safeReply(interaction, { content: language.general.commandError, flags: MessageFlags.Ephemeral });
     }
 }
