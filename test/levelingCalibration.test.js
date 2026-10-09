@@ -56,6 +56,44 @@ function fakeMember(userId, roleIds = []) {
     };
 }
 
+function fakeGuild(members = []) {
+    const memberMap = new Map(members.map(member => [member.id, member]));
+    return {
+        id: 'guild',
+        memberCount: members.length,
+        members: {
+            cache: memberMap,
+            fetch: async userId => {
+                if (userId) {
+                    const member = memberMap.get(String(userId));
+                    if (!member) throw new Error('Unknown member');
+                    return member;
+                }
+                return memberMap;
+            },
+        },
+    };
+}
+
+function fakeClient(guild) {
+    return {
+        guilds: {
+            cache: new Map([[guild.id, guild]]),
+            fetch: async () => guild,
+        },
+    };
+}
+
+async function waitForCalibrationJob(store, jobId, timeoutMs = 3000) {
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+        const job = await store.getLevelCalibrationJob(jobId);
+        if (['completed', 'failed', 'cancelled'].includes(job?.status)) return job;
+        await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    throw new Error(`Calibration job ${jobId} did not finish`);
+}
+
 test('calibration role evidence uses the highest mapped role as a confirmed minimum', () => {
     const { deriveRoleEvidenceForMember } = require('../utils/levelingCalibration');
     const member = fakeMember('user', ['level-50']);
@@ -165,6 +203,52 @@ test('protected preview keeps role-confirmed minimums separate from reconstructe
     assert.equal(record.minimumViolation, true);
 });
 
+test('protected preview can restrict output to explicitly requested users', () => {
+    const { buildProtectedRecords } = require('../utils/levelingCalibration');
+    const simulation = {
+        profile: { settings: { progressionFormula: 'legacy', xpPerLevelBase: 100 } },
+        recordsByUser: new Map([
+            ['requested', { userId: 'requested', reconstructedLevel: 5, reconstructedXp: 1500 }],
+            ['unrelated', { userId: 'unrelated', reconstructedLevel: 70, reconstructedXp: 248500 }],
+        ]),
+        records: [],
+    };
+    const evidence = new Map([
+        ['requested', { userId: 'requested', roleMinLevel: 10 }],
+        ['unrelated', { userId: 'unrelated', roleMinLevel: 70 }],
+    ]);
+
+    const records = buildProtectedRecords(simulation, evidence, { restrictToUserIds: new Set(['requested']) });
+
+    assert.deepEqual(records.map(record => record.userId), ['requested']);
+});
+
+test('evidence diagnostics include activity counts, intervals, and coverage groups', () => {
+    const { buildProtectedRecords } = require('../utils/levelingCalibration');
+    const simulation = {
+        profile: { settings: { progressionFormula: 'legacy', xpPerLevelBase: 100 } },
+        recordsByUser: new Map([['user', {
+            userId: 'user',
+            reconstructedLevel: 20,
+            reconstructedXp: 21000,
+            accessibleMessages: 300,
+            cooldownAdjustedMessages: 120,
+            awardedMessages: 120,
+            firstObservedAt: 0,
+            lastObservedAt: 10 * 86_400_000,
+        }]]),
+        records: [],
+    };
+    const evidence = new Map([['user', { userId: 'user', roleMinLevel: 20, upperBoundLevel: 30 }]]);
+
+    const [record] = buildProtectedRecords(simulation, evidence);
+
+    assert.equal(record.accessibleMessages, 300);
+    assert.equal(record.cooldownAdjustedMessages, 120);
+    assert.equal(record.insideTentativeInterval, true);
+    assert.equal(record.coverageGroup, 'substantial_surviving_history');
+});
+
 test('import completeness reports skipped channels and partial scans', () => {
     const { importCompleteness } = require('../utils/levelingCalibration');
     const result = importCompleteness({
@@ -250,5 +334,130 @@ test('stored import calibration replay is read-only and does not mark messages p
         assert.equal(messages[0].xpAmount, 1);
         assert.equal(reconciliations.length, 0);
         assert.equal(processed.length, 0);
+    });
+});
+
+test('background calibration job completes without mutating XP, roles, or import rows', async () => {
+    await withIsolatedStore(async ({ store }) => {
+        const {
+            processLevelCalibrationJob,
+        } = require('../utils/levelingCalibration');
+        const { updateLevelingSettings } = require('../utils/guildConfig');
+        await updateLevelingSettings('guild', {
+            textXpMin: 99,
+            textXpMax: 99,
+            cooldownSeconds: 0,
+        }, { actorId: 'admin' });
+        const created = await store.createLevelImportJob({
+            guildId: 'guild',
+            status: 'completed',
+            dryRun: true,
+            profileHash: 'legacy',
+            profile: { textXpMin: 1, textXpMax: 1, cooldownSeconds: 0, progressionFormula: 'legacy', xpPerLevelBase: 100 },
+        });
+        await store.insertLevelImportMessage({
+            jobId: created.job.id,
+            guildId: 'guild',
+            messageId: 'message',
+            userId: 'user',
+            userTag: 'User#0001',
+            channelId: 'channel',
+            createdAt: 0,
+            xpAmount: 1,
+            eligible: true,
+        });
+        await store.upsertLevelRoleMapping({
+            guildId: 'guild',
+            roleId: 'level-1',
+            minimumLevel: 1,
+            createdBy: 'admin',
+        });
+        const member = fakeMember('user', ['level-1']);
+        const calibration = await store.createLevelCalibrationJob({
+            guildId: 'guild',
+            importJobId: created.job.id,
+            kind: 'preview',
+            profile: {
+                label: 'fixed',
+                settings: { textXpMin: 10, textXpMax: 10, cooldownSeconds: 0, progressionFormula: 'legacy', xpPerLevelBase: 100 },
+            },
+        });
+
+        const result = await processLevelCalibrationJob(fakeClient(fakeGuild([member])), calibration.job.id);
+        const messages = await store.listLevelImportMessages(created.job.id, { limit: 10 });
+        const processed = await store.listLevelProcessedMessages('guild', { limit: 10 });
+
+        assert.equal(result.status, 'completed');
+        assert.equal(result.result.records[0].reconstructedXp, 10);
+        assert.equal(await store.getUserLevelRecord('guild', 'user'), null);
+        assert.equal(processed.length, 0);
+        assert.equal(messages[0].xpAmount, 1);
+        assert.equal(member.roles.cache.has('level-1'), true);
+    });
+});
+
+test('calibration jobs reject concurrent runs for the same completed import', async () => {
+    await withIsolatedStore(async ({ store }) => {
+        const created = await store.createLevelImportJob({
+            guildId: 'guild',
+            status: 'completed',
+            dryRun: true,
+            profileHash: 'legacy',
+            profile: { textXpMin: 1, textXpMax: 1 },
+        });
+        const first = await store.createLevelCalibrationJob({
+            guildId: 'guild',
+            importJobId: created.job.id,
+            kind: 'preview',
+        });
+        const second = await store.createLevelCalibrationJob({
+            guildId: 'guild',
+            importJobId: created.job.id,
+            kind: 'fit',
+        });
+
+        assert.equal(first.ok, true);
+        assert.equal(second.ok, false);
+        assert.equal(second.reason, 'active_job');
+        assert.equal(second.job.id, first.job.id);
+    });
+});
+
+test('calibration resume recovers queued or running jobs after restart', async () => {
+    await withIsolatedStore(async ({ store }) => {
+        const { resumeLevelCalibrationJobs } = require('../utils/levelingCalibration');
+        const created = await store.createLevelImportJob({
+            guildId: 'guild',
+            status: 'completed',
+            dryRun: true,
+            profileHash: 'legacy',
+            profile: { textXpMin: 1, textXpMax: 1, cooldownSeconds: 0, progressionFormula: 'legacy', xpPerLevelBase: 100 },
+        });
+        await store.insertLevelImportMessage({
+            jobId: created.job.id,
+            guildId: 'guild',
+            messageId: 'message',
+            userId: 'user',
+            channelId: 'channel',
+            createdAt: 0,
+            xpAmount: 1,
+            eligible: true,
+        });
+        const calibration = await store.createLevelCalibrationJob({
+            guildId: 'guild',
+            importJobId: created.job.id,
+            kind: 'preview',
+            status: 'running',
+            profile: {
+                label: 'fixed',
+                settings: { textXpMin: 10, textXpMax: 10, cooldownSeconds: 0, progressionFormula: 'legacy', xpPerLevelBase: 100 },
+            },
+        });
+
+        const resumed = await resumeLevelCalibrationJobs(fakeClient(fakeGuild([])));
+        const finished = await waitForCalibrationJob(store, calibration.job.id);
+
+        assert.equal(resumed, 1);
+        assert.equal(finished.status, 'completed');
     });
 });

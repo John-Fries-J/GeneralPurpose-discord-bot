@@ -421,9 +421,9 @@ async function sendLevelAnnouncement(source, member, progress, settings, down = 
 }
 
 async function awardTextXp(message) {
-    if (!message.guild || message.author?.bot) return null;
+    if (!message.guild || message.author?.bot || message.webhookId) return null;
     const settings = await getGuildLevelingConfig(message.guild.id);
-    if (!allowsTextXp(settings) || message.author?.bot) return null;
+    if (!allowsTextXp(settings) || message.author?.bot || message.webhookId) return null;
     if (isIgnoredForXp(message.member, message.channelId, settings, message.author.id)) return null;
     if (isSpamLimited(message, settings)) return null;
 

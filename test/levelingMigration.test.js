@@ -103,6 +103,7 @@ test('leveling migration creates persistent import and test tables', async () =>
             'level_import_jobs',
             'level_import_checkpoints',
             'level_import_messages',
+            'level_calibration_jobs',
             'level_import_processed_messages',
             'level_role_level_mappings',
             'level_reconciliation_records',
@@ -251,6 +252,54 @@ test('historical import blocks apply when channel scans are skipped or failed', 
         assert.equal(job.errors.length, 1);
         assert.equal(job.result.incomplete, true);
         assert.equal(job.result.requiresConfirmation, true);
+    });
+});
+
+test('historical import excludes webhook and bot messages', async () => {
+    await withIsolatedStore(async ({ store }) => {
+        const { processLevelImportJob } = require('../utils/levelingImport');
+        const messages = new Map([
+            ['human', {
+                id: 'human',
+                author: { id: 'user', tag: 'User#0001', bot: false },
+                createdTimestamp: 1,
+                guild: { members: { cache: new Map() } },
+            }],
+            ['webhook', {
+                id: 'webhook',
+                webhookId: 'webhook-id',
+                author: { id: 'webhook-user', tag: 'Webhook#0001', bot: false },
+                createdTimestamp: 2,
+                guild: { members: { cache: new Map() } },
+            }],
+            ['bot', {
+                id: 'bot',
+                author: { id: 'bot-user', tag: 'Bot#0001', bot: true },
+                createdTimestamp: 3,
+                guild: { members: { cache: new Map() } },
+            }],
+        ]);
+        const channel = {
+            id: 'channel',
+            name: 'channel',
+            type: ChannelType.GuildText,
+            messages: { fetch: async () => messages },
+            permissionsFor: () => ({ has: () => true }),
+        };
+        const guild = fakeGuild([channel], { guildId: 'guild' });
+        const created = await store.createLevelImportJob({
+            guildId: 'guild',
+            dryRun: true,
+            profileHash: 'profile',
+            profile: { textXpMin: 1, textXpMax: 1, cooldownSeconds: 0, reconciliationPolicy: 'max' },
+        });
+
+        const job = await processLevelImportJob(fakeImportClient(guild), created.job.id);
+        const stored = await store.listLevelImportMessages(created.job.id, { limit: 10 });
+
+        assert.equal(job.status, 'completed');
+        assert.equal(job.messagesEligible, 1);
+        assert.deepEqual(stored.map(message => message.messageId), ['human']);
     });
 });
 

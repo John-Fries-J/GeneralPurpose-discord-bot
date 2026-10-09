@@ -232,7 +232,7 @@ async function scanChannelMessages(job, channel, settings) {
         for (const message of messages) {
             messagesSeen += 1;
             if (!message?.id || !message.author?.id) continue;
-            if (message.author.bot) continue;
+            if (message.author.bot || message.webhookId) continue;
             if (job.targetUserId && message.author.id !== job.targetUserId) continue;
             const member = message.member || message.guild?.members?.cache?.get?.(message.author.id) || null;
             if (isIgnoredForXp(member, channel.id, settings, message.author.id)) continue;
@@ -380,6 +380,24 @@ async function calculateStoredMessageEstimates(jobId, settings) {
 }
 
 async function fetchMembersForRoleRecovery(guild, targetUserId = null) {
+    const targetUserIds = targetUserId instanceof Set
+        ? [...targetUserId].map(String)
+        : (Array.isArray(targetUserId) ? targetUserId.map(String) : []);
+    if (targetUserIds.length) {
+        const members = [];
+        const missing = [];
+        for (const userId of targetUserIds) {
+            const member = await guild.members.fetch(userId).catch(() => guild.members.cache.get(userId) || null);
+            if (member) members.push(member);
+            else missing.push(userId);
+        }
+        return {
+            complete: missing.length === 0,
+            members,
+            error: missing.length ? `Target member(s) ${missing.join(', ')} could not be fetched.` : null,
+        };
+    }
+
     if (targetUserId) {
         const member = await guild.members.fetch(targetUserId).catch(() => guild.members.cache.get(targetUserId) || null);
         return {
