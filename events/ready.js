@@ -6,6 +6,7 @@ const { findSendableChannel } = require('../utils/discord');
 const { getGuildSettings } = require('../utils/guildConfig');
 const { bootstrapNameless } = require('../utils/namelessmc');
 const { initializeStorage } = require('../utils/store');
+const { resumeLevelImportJobs } = require('../utils/levelingImport');
 const { createScheduler } = require('../services/scheduler');
 const { reconcileJoinToCreate } = require('../utils/joinToCreate');
 const { logger } = require('../utils/logger');
@@ -37,6 +38,9 @@ module.exports = {
         const config = getConfig();
         readyLogger.info('Discord client ready', { userTag: client.user.tag, guildCount: client.guilds.cache.size });
         if (!await initializeReadyStorage(client)) return;
+        resumeLevelImportJobs(client).catch(error => {
+            readyLogger.error('Level import resume failed', { error });
+        });
         client.scheduler = createScheduler(client, { logger });
         client.scheduler.start();
         reconcileJoinToCreate(client).then(results => {
