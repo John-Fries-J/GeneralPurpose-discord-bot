@@ -14,8 +14,10 @@ const {
     createLevelCalibrationJob,
     getLevelCalibrationJob,
     getUserLevelRecord,
+    listHighestProbotAnnouncementLevels,
     listLevelCalibrationJobs,
     listLevelRoleMappings,
+    summarizeProbotAnnouncementEvidence,
     requestCancelLevelCalibrationJob,
     updateLevelCalibrationJob,
 } = require('./store');
@@ -363,6 +365,57 @@ async function buildRoleEvidence(guild, settings, options = {}) {
     };
 }
 
+async function buildCombinedHistoricalEvidence(guild, settings, options = {}) {
+    const role = await buildRoleEvidence(guild, settings, options);
+    const targetUserIds = options.targetUserIds
+        ? [...toUserIdSet(options.targetUserIds)]
+        : (options.targetUserId ? [String(options.targetUserId)] : []);
+    const announcements = await listHighestProbotAnnouncementLevels(guild.id, {
+        userIds: targetUserIds.length ? targetUserIds : undefined,
+    });
+    const evidence = new Map(role.evidence);
+
+    for (const announcement of announcements) {
+        const userId = String(announcement.userId);
+        const existing = evidence.get(userId) || {
+            userId,
+            userTag: null,
+            memberPresent: false,
+            roleMinLevel: 0,
+            roleMinRoleId: null,
+            heldRoleIds: [],
+            upperBoundLevel: null,
+            upperBoundRoleId: null,
+            upperBoundExclusive: false,
+            upperBoundReliable: false,
+            evidenceQuality: 'announcement_minimum',
+            notes: [],
+        };
+        const announcementLevel = Number(announcement.announcementLevel || 0);
+        evidence.set(userId, {
+            ...existing,
+            announcementMinLevel: Math.max(Number(existing.announcementMinLevel || 0), announcementLevel),
+            announcementCount: Number(announcement.announcementCount || 0),
+            firstAnnouncementAt: announcement.firstAnnouncementAt,
+            lastAnnouncementAt: announcement.lastAnnouncementAt,
+            evidenceQuality: existing.roleMinLevel > 0 ? 'role_and_announcement_minimum' : 'announcement_minimum',
+            notes: [...new Set([...(existing.notes || []), 'announcement_is_confirmed_minimum'])],
+        });
+    }
+
+    return {
+        ...role,
+        evidence,
+        records: [...evidence.values()].sort((a, b) => {
+            const aMinimum = Math.max(Number(a.roleMinLevel || 0), Number(a.announcementMinLevel || 0));
+            const bMinimum = Math.max(Number(b.roleMinLevel || 0), Number(b.announcementMinLevel || 0));
+            return bMinimum - aMinimum || String(a.userId).localeCompare(String(b.userId));
+        }),
+        announcements,
+        announcementSummary: await summarizeProbotAnnouncementEvidence(guild.id),
+    };
+}
+
 function deterministicBucket(value) {
     const hash = crypto.createHash('sha256').update(String(value)).digest();
     return hash.readUInt32BE(0) % 100;
@@ -484,10 +537,11 @@ function confidenceWarningsForRecord(record, evidence, options = {}) {
     if (options.evidenceComplete === false) warnings.push('member_fetch_was_partial');
     if (evidence?.notes?.includes('replacement_style_or_missing_lower_roles')) warnings.push('replacement_style_reward_roles');
     if (evidence?.upperBoundLevel) warnings.push('next_milestone_is_tentative');
-    if (record.roleMinLevel > 0 && record.accessibleMessages === 0) warnings.push('no_surviving_messages_for_role_member');
-    if (record.roleMinLevel >= 30 && record.accessibleMessages > 0 && observedSpanDays(record) < 1) warnings.push('very_short_observed_history_window');
-    if (record.roleMinLevel >= 30 && record.cooldownAdjustedMessages < 10) warnings.push('sparse_surviving_history_compared_with_role_minimum');
-    if (!record.roleMinLevel && options.restrictToUserIds?.has?.(String(record.userId))) warnings.push('no_current_role_evidence_for_requested_user');
+    if (record.announcementMinLevel > record.reconstructedLevel) warnings.push('announcement_exceeds_surviving_message_reconstruction');
+    if (record.confirmedMinimumLevel > 0 && record.accessibleMessages === 0) warnings.push('no_surviving_messages_for_confirmed_member');
+    if (record.confirmedMinimumLevel >= 30 && record.accessibleMessages > 0 && observedSpanDays(record) < 1) warnings.push('very_short_observed_history_window');
+    if (record.confirmedMinimumLevel >= 30 && record.cooldownAdjustedMessages < 10) warnings.push('sparse_surviving_history_compared_with_confirmed_minimum');
+    if (!record.confirmedMinimumLevel && options.restrictToUserIds?.has?.(String(record.userId))) warnings.push('no_confirmed_historical_evidence_for_requested_user');
     return [...new Set(warnings)];
 }
 
@@ -525,13 +579,16 @@ function buildProtectedRecords(simulation, evidenceMap = new Map(), options = {}
         const baselineRecord = baselineByUser.get(userId);
         const evidence = evidenceMap.get(userId) || null;
         const roleMinLevel = evidence?.roleMinLevel || 0;
+        const announcementMinLevel = evidence?.announcementMinLevel || 0;
+        const confirmedMinimumLevel = Math.max(roleMinLevel, announcementMinLevel);
         const reconstructedLevel = reconstructed?.reconstructedLevel || 0;
         const reconstructedXp = reconstructed?.reconstructedXp || 0;
-        const protectedLevel = Math.max(reconstructedLevel, roleMinLevel);
-        const protectedXp = Math.max(reconstructedXp, roleMinLevel > 0 ? getXpForLevel(roleMinLevel, simulation.profile.settings) : 0);
-        const levelDeltaFromMinimum = roleMinLevel > 0 ? reconstructedLevel - roleMinLevel : null;
-        const insideTentativeInterval = roleMinLevel > 0
-            && reconstructedLevel >= roleMinLevel
+        const confirmedMinimumXp = confirmedMinimumLevel > 0 ? getXpForLevel(confirmedMinimumLevel, simulation.profile.settings) : 0;
+        const protectedLevel = Math.max(reconstructedLevel, confirmedMinimumLevel);
+        const protectedXp = Math.max(reconstructedXp, confirmedMinimumXp);
+        const levelDeltaFromMinimum = confirmedMinimumLevel > 0 ? reconstructedLevel - confirmedMinimumLevel : null;
+        const insideTentativeInterval = confirmedMinimumLevel > 0
+            && reconstructedLevel >= confirmedMinimumLevel
             && (!evidence?.upperBoundLevel || reconstructedLevel < evidence.upperBoundLevel);
         const record = {
             userId,
@@ -547,12 +604,16 @@ function buildProtectedRecords(simulation, evidenceMap = new Map(), options = {}
             currentStoredLevel: null,
             currentStoredXp: null,
             roleMinLevel,
+            announcementMinLevel,
+            confirmedMinimumLevel,
+            confirmedMinimumXp,
             roleMinRoleId: evidence?.roleMinRoleId || null,
             upperBoundLevel: evidence?.upperBoundLevel || null,
             tentativeNextMilestone: evidence?.upperBoundLevel || null,
             upperBoundReliable: evidence?.upperBoundReliable === true,
-            minimumViolation: roleMinLevel > 0 && reconstructedLevel < roleMinLevel,
+            minimumViolation: confirmedMinimumLevel > 0 && reconstructedLevel < confirmedMinimumLevel,
             tentativeOverestimate: Boolean(evidence?.upperBoundLevel && reconstructedLevel >= evidence.upperBoundLevel),
+            estimatedOnly: confirmedMinimumLevel <= 0,
             accessibleMessages: reconstructed?.accessibleMessages || 0,
             cooldownAdjustedMessages: reconstructed?.cooldownAdjustedMessages ?? reconstructed?.awardedMessages ?? 0,
             awardedMessages: reconstructed?.awardedMessages || 0,
@@ -564,6 +625,9 @@ function buildProtectedRecords(simulation, evidenceMap = new Map(), options = {}
             insideTentativeInterval,
             heldRoleIds: evidence?.heldRoleIds || [],
             evidenceNotes: evidence?.notes || [],
+            announcementCount: evidence?.announcementCount || 0,
+            firstAnnouncementAt: evidence?.firstAnnouncementAt || null,
+            lastAnnouncementAt: evidence?.lastAnnouncementAt || null,
         };
         record.confidenceWarnings = confidenceWarningsForRecord(record, evidence, {
             ...options,
@@ -829,10 +893,15 @@ function buildSimulatedLeaderboard(simulation, evidenceMap = new Map(), limit = 
     for (const record of byUser.values()) {
         const evidence = evidenceMap.get(record.userId);
         const roleMinLevel = evidence?.roleMinLevel || 0;
-        const roleMinXp = roleMinLevel > 0 ? getXpForLevel(roleMinLevel, simulation.profile.settings) : 0;
+        const announcementMinLevel = evidence?.announcementMinLevel || 0;
+        const confirmedMinimumLevel = Math.max(roleMinLevel, announcementMinLevel);
+        const confirmedMinimumXp = confirmedMinimumLevel > 0 ? getXpForLevel(confirmedMinimumLevel, simulation.profile.settings) : 0;
         record.roleMinLevel = roleMinLevel;
-        record.protectedXp = Math.max(record.reconstructedXp, roleMinXp);
+        record.announcementMinLevel = announcementMinLevel;
+        record.confirmedMinimumLevel = confirmedMinimumLevel;
+        record.protectedXp = Math.max(record.reconstructedXp, confirmedMinimumXp);
         record.protectedLevel = getLevelProgress({ textXp: record.protectedXp, voiceXp: 0 }, simulation.profile.settings).level;
+        record.estimatedOnly = confirmedMinimumLevel <= 0;
     }
     return [...byUser.values()]
         .sort((a, b) => b.protectedXp - a.protectedXp || String(a.userId).localeCompare(String(b.userId)))
@@ -842,10 +911,14 @@ function buildSimulatedLeaderboard(simulation, evidenceMap = new Map(), limit = 
 
 function summarizeEvidenceQuality(records = []) {
     const withRoleEvidence = records.filter(record => record.roleMinLevel > 0);
+    const withAnnouncementEvidence = records.filter(record => record.announcementMinLevel > 0);
+    const estimatedOnly = records.filter(record => record.estimatedOnly);
     const substantial = withRoleEvidence.filter(record => record.coverageGroup === 'substantial_surviving_history');
     const questionable = withRoleEvidence.filter(record => record.coverageGroup === 'questionable_history_coverage');
     return {
         allRoleEvidence: withRoleEvidence.length,
+        allAnnouncementEvidence: withAnnouncementEvidence.length,
+        estimatedOnly: estimatedOnly.length,
         substantialSurvivingHistory: substantial.length,
         questionableHistoryCoverage: questionable.length,
         criteria: {
@@ -902,6 +975,7 @@ function parseJobUserIds(job) {
 
 async function buildPreviewCalibrationResult(guild, importJob, calibrationJob, currentSettings) {
     const userIds = parseJobUserIds(calibrationJob);
+    const includeProbotAnnouncements = calibrationJob.kind === 'migration_preview' || calibrationJob.options?.includeProbotAnnouncements === true;
     const target = {
         label: calibrationJob.profile?.label || 'Calibration profile',
         settings: getLevelingConfig({ leveling: calibrationJob.profile?.settings || calibrationJob.profile || {} }),
@@ -913,9 +987,13 @@ async function buildPreviewCalibrationResult(guild, importJob, calibrationJob, c
     const completeness = importCompleteness(importJob);
 
     await updateCalibrationProgress(calibrationJob.id, { phase: 'role_evidence', percent: 15 });
-    const evidence = await buildRoleEvidence(guild, currentSettings, {
-        targetUserIds: userIds.size ? userIds : null,
-    });
+    const evidence = includeProbotAnnouncements
+        ? await buildCombinedHistoricalEvidence(guild, currentSettings, {
+            targetUserIds: userIds.size ? userIds : null,
+        })
+        : await buildRoleEvidence(guild, currentSettings, {
+            targetUserIds: userIds.size ? userIds : null,
+        });
     await assertCalibrationNotCancelled(calibrationJob.id);
 
     await updateCalibrationProgress(calibrationJob.id, { phase: 'message_replay', percent: 35 });
@@ -933,7 +1011,7 @@ async function buildPreviewCalibrationResult(guild, importJob, calibrationJob, c
 
     await updateCalibrationProgress(calibrationJob.id, { phase: 'summarizing', percent: 85 });
     return {
-        kind: 'preview',
+        kind: includeProbotAnnouncements ? 'migration_preview' : 'preview',
         importJobId: importJob.id,
         profile: compactProfile(target.settings),
         profileLabel: target.label,
@@ -942,6 +1020,10 @@ async function buildPreviewCalibrationResult(guild, importJob, calibrationJob, c
         evidence: {
             mappings: evidence.mappings.length,
             membersWithRoleEvidence: evidence.evidence.size,
+            membersWithAnnouncementEvidence: evidence.announcementSummary?.uniqueVerifiedMembers || 0,
+            verifiedAnnouncements: evidence.announcementSummary?.verifiedAnnouncements || 0,
+            unresolvedAnnouncements: evidence.announcementSummary?.unresolvedIdentities || 0,
+            highestAnnouncementLevel: evidence.announcementSummary?.highestRecoveredLevel || 0,
             membersFetched: evidence.membersFetched,
             complete: evidence.complete,
             error: evidence.error,
@@ -1104,6 +1186,7 @@ async function startLevelCalibrationJob(client, guild, options = {}) {
             userIds: [...toUserIdSet(options.userIds)],
             maxProfiles: options.maxProfiles,
             exportFormat: options.exportFormat || 'none',
+            includeProbotAnnouncements: options.includeProbotAnnouncements === true,
         },
         createdBy: options.createdBy || null,
     });
@@ -1138,6 +1221,7 @@ async function latestLevelCalibrationJob(guildId) {
 
 module.exports = {
     attachCurrentStoredLevels,
+    buildCombinedHistoricalEvidence,
     buildDefaultCalibrationProfiles,
     buildProtectedRecords,
     buildRoleEvidence,

@@ -1,7 +1,8 @@
 const { AttachmentBuilder, InteractionContextType, ApplicationIntegrationType, PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
 const { createEmbed } = require('../../utils/embeds');
-const { formatXp, getGuildLevelingConfig, getLevelProgress, getLevelingConfig, getProfileDefaults } = require('../../utils/leveling');
+const { formatXp, getGuildLevelingConfig, getLevelProgress, getLevelingConfig, getProfileDefaults, getXpForLevel } = require('../../utils/leveling');
 const {
+    buildCombinedHistoricalEvidence,
     cancelLevelCalibration,
     compactProfile,
     getLevelCalibrationStatus,
@@ -9,6 +10,14 @@ const {
     settingsFromJobProfile,
     startLevelCalibrationJob,
 } = require('../../utils/levelingCalibration');
+const {
+    DEFAULT_PROBOT_AUTHOR_ID,
+    DEFAULT_PROBOT_SOURCE_CHANNEL_ID,
+    cancelProbotScan,
+    getProbotScanStatus,
+    latestProbotScanJob,
+    startProbotScan,
+} = require('../../utils/probotRecovery');
 const {
     cancelLevelImport,
     getLevelImportStatus,
@@ -19,7 +28,9 @@ const { createXpTest, previewLevelTest, rollbackLevelTest } = require('../../uti
 const {
     listLevelImportJobs,
     listLevelRoleMappings,
+    getUserLevelRecord,
     removeLevelRoleMapping,
+    summarizeProbotAnnouncementEvidence,
     upsertLevelRoleMapping,
 } = require('../../utils/store');
 
@@ -86,11 +97,44 @@ async function latestGuildJob(guildId) {
     return (await listLevelImportJobs(guildId, { limit: 1 }))[0] || null;
 }
 
+async function latestCompletedGuildJob(guildId) {
+    return (await listLevelImportJobs(guildId, { statuses: ['completed'], limit: 1 }))[0] || null;
+}
+
 function channelRows(channels = []) {
     return channels.slice(0, 5).map(channel => {
         const target = channel.parentId ? `<#${channel.parentId}>/${channel.name || channel.channelId}` : `<#${channel.channelId}>`;
         return `${target} - ${channel.reason || 'skipped'}`;
     }).join('\n') || 'None';
+}
+
+function summarizeProbotJob(job) {
+    const status = job.status[0].toUpperCase() + job.status.slice(1);
+    return [
+        `Job: \`${job.id}\``,
+        `Status: **${status}**`,
+        `Source: <#${job.sourceChannelId}>`,
+        `Author: \`${job.probotAuthorId}\``,
+        `Channels: **${job.channelsScanned}/${job.channelsTotal}**`,
+        `Scanned: **${formatXp(job.scannedCount)}**`,
+        `Verified: **${formatXp(job.verifiedCount)}**`,
+        `Unresolved: **${formatXp(job.unresolvedCount)}**`,
+        `Invalid/skipped: **${formatXp(job.invalidCount)}/${formatXp(job.skippedCount)}**`,
+        `Duplicates: **${formatXp(job.duplicateCount)}**`,
+        job.currentChannelId ? `Current channel: <#${job.currentChannelId}>` : null,
+    ].filter(Boolean).join('\n');
+}
+
+function probotCheckpointRows(checkpoints = []) {
+    return checkpoints.slice(0, 5).map(checkpoint => {
+        return `<#${checkpoint.channelId}> - ${checkpoint.status}, ${formatXp(checkpoint.scannedCount)} scanned, ${formatXp(checkpoint.verifiedCount)} verified`;
+    }).join('\n') || 'No checkpoints recorded yet.';
+}
+
+function recoveryRows(records = [], limit = 10) {
+    return records.slice(0, limit).map(record => {
+        return `<@${record.userId}> - confirmed **${record.confirmedMinimumLevel}** (role ${record.roleMinLevel || 0}, announcement ${record.announcementMinLevel || 0}), current **${record.currentStoredLevel ?? 0}**, proposed **${record.protectedLevel ?? record.confirmedMinimumLevel}**`;
+    }).join('\n') || 'No recovered level evidence found.';
 }
 
 function errorRows(errors = []) {
@@ -172,13 +216,15 @@ function buildCalibrationSettings(interaction, currentSettings, job) {
 
 function calibrationRecordRows(records = [], limit = 10) {
     return records.slice(0, limit).map(record => {
-        const role = record.roleMinLevel ? `min **${record.roleMinLevel}**` : 'no role min';
+        const role = record.roleMinLevel ? `role **${record.roleMinLevel}**` : 'no role';
+        const announcement = record.announcementMinLevel ? `announcement **${record.announcementMinLevel}**` : 'no announcement';
+        const confirmed = record.confirmedMinimumLevel ? `confirmed **${record.confirmedMinimumLevel}**` : 'estimated only';
         const stored = record.currentStoredLevel === null || record.currentStoredLevel === undefined ? '?' : record.currentStoredLevel;
         const delta = record.levelDeltaFromMinimum === null || record.levelDeltaFromMinimum === undefined
             ? 'n/a'
             : (record.levelDeltaFromMinimum >= 0 ? `+${record.levelDeltaFromMinimum}` : `${record.levelDeltaFromMinimum}`);
         const warnings = record.confidenceWarnings?.length ? `; ${record.confidenceWarnings.slice(0, 2).join(', ')}` : '';
-        return `<@${record.userId}> - ${role}, recon **${record.reconstructedLevel}** (${formatXp(record.reconstructedXp)} XP), protected **${record.protectedLevel}**, stored **${stored}**, Δ **${delta}**, activity **${formatXp(record.accessibleMessages)}/${formatXp(record.cooldownAdjustedMessages)}**${warnings}`;
+        return `<@${record.userId}> - ${confirmed} (${role}, ${announcement}), recon **${record.reconstructedLevel}** (${formatXp(record.reconstructedXp)} XP), proposed **${record.protectedLevel}**, stored **${stored}**, delta **${delta}**, activity **${formatXp(record.accessibleMessages)}/${formatXp(record.cooldownAdjustedMessages)}**${warnings}`;
     }).join('\n') || 'No matching users found in the stored import data.';
 }
 
@@ -244,6 +290,10 @@ function createCalibrationExport(records, format, filenameBase, metadata = {}) {
             'protected_level',
             'protected_xp',
             'role_min_level',
+            'announcement_min_level',
+            'confirmed_minimum_level',
+            'confirmed_minimum_xp',
+            'estimated_only',
             'upper_bound_level',
             'level_delta_from_minimum',
             'inside_tentative_interval',
@@ -270,6 +320,10 @@ function createCalibrationExport(records, format, filenameBase, metadata = {}) {
                 protected_level: record.protectedLevel,
                 protected_xp: record.protectedXp,
                 role_min_level: record.roleMinLevel,
+                announcement_min_level: record.announcementMinLevel,
+                confirmed_minimum_level: record.confirmedMinimumLevel,
+                confirmed_minimum_xp: record.confirmedMinimumXp,
+                estimated_only: record.estimatedOnly,
                 upper_bound_level: record.upperBoundLevel,
                 level_delta_from_minimum: record.levelDeltaFromMinimum,
                 inside_tentative_interval: record.insideTentativeInterval,
@@ -282,6 +336,45 @@ function createCalibrationExport(records, format, filenameBase, metadata = {}) {
                 last_observed_at: record.lastObservedAt,
                 coverage_group: record.coverageGroup,
                 confidence_warnings: (record.confidenceWarnings || []).join(';'),
+            }[header])).join(',')),
+        ];
+        return new AttachmentBuilder(Buffer.from(`${lines.join('\n')}\n`, 'utf8'), { name: `${filenameBase}.csv` });
+    }
+    return null;
+}
+
+function createProbotRecoveryExport(records, format, filenameBase, metadata = {}) {
+    if (format === 'json') {
+        return new AttachmentBuilder(Buffer.from(JSON.stringify({ metadata, records }, null, 2), 'utf8'), { name: `${filenameBase}.json` });
+    }
+    if (format === 'csv') {
+        const headers = [
+            'user_id',
+            'current_stored_level',
+            'current_stored_xp',
+            'role_min_level',
+            'announcement_min_level',
+            'confirmed_minimum_level',
+            'confirmed_minimum_xp',
+            'announcement_count',
+            'first_announcement_at',
+            'last_announcement_at',
+            'held_role_ids',
+        ];
+        const lines = [
+            headers.join(','),
+            ...records.map(record => headers.map(header => csvCell({
+                user_id: record.userId,
+                current_stored_level: record.currentStoredLevel,
+                current_stored_xp: record.currentStoredXp,
+                role_min_level: record.roleMinLevel,
+                announcement_min_level: record.announcementMinLevel,
+                confirmed_minimum_level: record.confirmedMinimumLevel,
+                confirmed_minimum_xp: record.confirmedMinimumXp,
+                announcement_count: record.announcementCount,
+                first_announcement_at: record.firstAnnouncementAt,
+                last_announcement_at: record.lastAnnouncementAt,
+                held_role_ids: (record.heldRoleIds || []).join(';'),
             }[header])).join(',')),
         ];
         return new AttachmentBuilder(Buffer.from(`${lines.join('\n')}\n`, 'utf8'), { name: `${filenameBase}.csv` });
@@ -322,6 +415,44 @@ module.exports = {
                 .setName('import-cancel')
                 .setDescription('Cancel a running level import job.')
                 .addStringOption(option => option.setName('job_id').setDescription('Import job ID. Defaults to the latest guild job.')))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('probot-scan')
+                .setDescription('Start or resume a read-only ProBot level announcement scan.')
+                .addChannelOption(option => option.setName('channel').setDescription('Announcement channel. Defaults to the configured ProBot source.'))
+                .addStringOption(option => option.setName('additional_channels').setDescription('Optional extra channel or thread IDs/mentions to scan.'))
+                .addStringOption(option => option.setName('probot_author_id').setDescription('ProBot user ID. Defaults to the known ProBot account.')))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('probot-status')
+                .setDescription('Show ProBot announcement scan progress and evidence counts.')
+                .addStringOption(option => option.setName('job_id').setDescription('Scan job ID. Defaults to the latest ProBot scan.')))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('probot-cancel')
+                .setDescription('Cancel a running ProBot announcement scan.')
+                .addStringOption(option => option.setName('job_id').setDescription('Scan job ID. Defaults to the latest ProBot scan.')))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('probot-preview')
+                .setDescription('Preview confirmed levels from ProBot announcements and mapped roles.')
+                .addUserOption(option => option.setName('user').setDescription('Limit the preview to one member.'))
+                .addStringOption(option => option.setName('users').setDescription('Optional user IDs or mentions to preview.'))
+                .addStringOption(option => option.setName('export').setDescription('Attach detailed recovered evidence.').addChoices(...exportChoices)))
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('migration-preview')
+                .setDescription('Start a read-only recovered-level migration simulation.')
+                .addStringOption(option => option.setName('job_id').setDescription('Completed import job ID. Defaults to the latest completed import.'))
+                .addStringOption(option => option.setName('profile').setDescription('Profile to simulate.').addChoices(...calibrationProfileChoices))
+                .addIntegerOption(option => option.setName('min_xp').setDescription('Minimum XP per qualifying message.').setMinValue(0).setMaxValue(1000))
+                .addIntegerOption(option => option.setName('max_xp').setDescription('Maximum XP per qualifying message.').setMinValue(0).setMaxValue(1000))
+                .addIntegerOption(option => option.setName('cooldown').setDescription('Cooldown seconds.').setMinValue(0).setMaxValue(86400))
+                .addStringOption(option => option.setName('formula').setDescription('Progression formula.').addChoices(...calibrationFormulaChoices))
+                .addIntegerOption(option => option.setName('base').setDescription('XP base for the formula.').setMinValue(1).setMaxValue(1000000))
+                .addNumberOption(option => option.setName('factor').setDescription('Exponential curve factor.').setMinValue(1.01).setMaxValue(10))
+                .addStringOption(option => option.setName('users').setDescription('Optional user IDs or mentions to preview.'))
+                .addStringOption(option => option.setName('export').setDescription('Remember preferred export format for the result.').addChoices(...exportChoices)))
         .addSubcommand(subcommand =>
             subcommand
                 .setName('role-map-add')
@@ -490,6 +621,164 @@ module.exports = {
             return interaction.reply({ content: `Cancellation requested for level import \`${job.id}\` (${job.status}).`, flags: 64 });
         }
 
+        if (subcommand === 'probot-scan') {
+            const channel = interaction.options.getChannel('channel');
+            const sourceChannelId = channel?.id || DEFAULT_PROBOT_SOURCE_CHANNEL_ID;
+            const additionalChannelIds = interaction.options.getString('additional_channels') || '';
+            const probotAuthorId = interaction.options.getString('probot_author_id') || DEFAULT_PROBOT_AUTHOR_ID;
+            let created;
+            try {
+                created = await startProbotScan(interaction.client, interaction.guild, {
+                    sourceChannelId,
+                    additionalChannelIds,
+                    probotAuthorId,
+                    createdBy: interaction.user.id,
+                });
+            } catch (error) {
+                return interaction.reply({ content: `ProBot scan could not start: ${error.message}`, flags: 64 });
+            }
+            if (!created.ok) {
+                return interaction.reply({
+                    content: `A ProBot announcement scan is already active for <#${sourceChannelId}>: \`${created.job.id}\` (${created.job.status}). Use \`/level probot-status job_id:${created.job.id}\`.`,
+                    flags: 64,
+                });
+            }
+            return interaction.reply({
+                content: [
+                    `Started read-only ProBot announcement scan \`${created.job.id}\`.`,
+                    `Source: <#${sourceChannelId}>. ProBot author: \`${probotAuthorId}\`.`,
+                    'Only explicitly selected channels are scanned. No messages, XP, or roles will be changed.',
+                    `Use \`/level probot-status job_id:${created.job.id}\` to monitor progress.`,
+                ].join('\n'),
+                flags: 64,
+            });
+        }
+
+        if (subcommand === 'probot-status') {
+            const jobId = interaction.options.getString('job_id') || (await latestProbotScanJob(interaction.guild.id))?.id;
+            if (!jobId) return interaction.reply({ content: 'No ProBot scan jobs have been recorded for this server.', flags: 64 });
+            const status = await getProbotScanStatus(jobId);
+            if (!status?.job) return interaction.reply({ content: 'That ProBot scan job was not found.', flags: 64 });
+            if (status.job.guildId !== interaction.guild.id) return interaction.reply({ content: 'That ProBot scan job belongs to a different server.', flags: 64 });
+            const summary = await summarizeProbotAnnouncementEvidence(interaction.guild.id);
+            return interaction.reply({
+                embeds: [createEmbed({
+                    title: 'ProBot Recovery Scan Status',
+                    color: status.job.status === 'failed' ? 'red' : (status.job.status === 'completed' ? 'green' : 'blue'),
+                    description: summarizeProbotJob(status.job),
+                    fields: [
+                        { name: 'Persisted evidence', value: [
+                            `Verified announcements: **${formatXp(summary.verifiedAnnouncements)}**`,
+                            `Unique members: **${formatXp(summary.uniqueVerifiedMembers)}**`,
+                            `Unresolved identities: **${formatXp(summary.unresolvedIdentities)}**`,
+                            `Highest recovered level: **${formatXp(summary.highestRecoveredLevel)}**`,
+                        ].join('\n'), inline: false },
+                        { name: 'Checkpoints', value: probotCheckpointRows(status.checkpoints), inline: false },
+                        { name: 'Errors', value: errorRows(status.job.errors || []), inline: false },
+                    ],
+                })],
+                flags: 64,
+            });
+        }
+
+        if (subcommand === 'probot-cancel') {
+            const jobId = interaction.options.getString('job_id') || (await latestProbotScanJob(interaction.guild.id))?.id;
+            if (!jobId) return interaction.reply({ content: 'No ProBot scan job is available to cancel.', flags: 64 });
+            const job = await cancelProbotScan(jobId);
+            if (!job) return interaction.reply({ content: 'That ProBot scan job was not found.', flags: 64 });
+            if (job.guildId !== interaction.guild.id) return interaction.reply({ content: 'That ProBot scan job belongs to a different server.', flags: 64 });
+            return interaction.reply({ content: `Cancellation requested for ProBot scan \`${job.id}\` (${job.status}).`, flags: 64 });
+        }
+
+        if (subcommand === 'probot-preview') {
+            await interaction.deferReply({ flags: 64 });
+            const settings = await getGuildLevelingConfig(interaction.guild.id);
+            const user = interaction.options.getUser('user');
+            const userIds = parseUserIds(interaction.options.getString('users') || '');
+            if (user) userIds.add(user.id);
+            const evidence = await buildCombinedHistoricalEvidence(interaction.guild, settings, {
+                targetUserIds: userIds.size ? userIds : null,
+            });
+            const records = [];
+            for (const record of evidence.records) {
+                const confirmedMinimumLevel = Math.max(Number(record.roleMinLevel || 0), Number(record.announcementMinLevel || 0));
+                if (confirmedMinimumLevel <= 0 && !userIds.has(String(record.userId))) continue;
+                const current = await getUserLevelRecord(interaction.guild.id, record.userId);
+                const currentStoredXp = Number(current?.textXp || 0) + Number(current?.voiceXp || 0);
+                records.push({
+                    ...record,
+                    confirmedMinimumLevel,
+                    confirmedMinimumXp: getXpForLevel(confirmedMinimumLevel, settings),
+                    currentStoredXp,
+                    currentStoredLevel: getLevelProgress({ textXp: currentStoredXp, voiceXp: 0 }, settings).level,
+                    protectedLevel: Math.max(getLevelProgress({ textXp: currentStoredXp, voiceXp: 0 }, settings).level, confirmedMinimumLevel),
+                });
+            }
+            const summary = await summarizeProbotAnnouncementEvidence(interaction.guild.id);
+            const exportFormat = interaction.options.getString('export') || 'none';
+            const attachment = createProbotRecoveryExport(records, exportFormat, `probot-recovery-preview-${interaction.guild.id}`, {
+                summary,
+                mappings: evidence.mappings.length,
+            });
+            return interaction.editReply({
+                embeds: [createEmbed({
+                    title: 'ProBot Recovery Preview',
+                    color: 'blue',
+                    description: [
+                        `Verified announcements: **${formatXp(summary.verifiedAnnouncements)}**`,
+                        `Unique announcement members: **${formatXp(summary.uniqueVerifiedMembers)}**`,
+                        `Unresolved identities: **${formatXp(summary.unresolvedIdentities)}**`,
+                        `Role mappings: **${formatXp(evidence.mappings.length)}**`,
+                        `Recovered members in preview: **${formatXp(records.length)}**`,
+                        'No XP or roles were changed.',
+                    ].join('\n'),
+                    fields: [
+                        { name: 'Top recovered members', value: recoveryRows(records, 10).slice(0, 1024), inline: false },
+                    ],
+                })],
+                files: attachment ? [attachment] : [],
+            });
+        }
+
+        if (subcommand === 'migration-preview') {
+            const requestedJobId = interaction.options.getString('job_id');
+            const status = requestedJobId
+                ? await getLevelImportStatus(requestedJobId)
+                : { job: await latestCompletedGuildJob(interaction.guild.id) };
+            if (!status?.job) return interaction.reply({ content: 'No completed level import job was found for this server.', flags: 64 });
+            if (status.job.guildId !== interaction.guild.id) return interaction.reply({ content: 'That import job belongs to a different server.', flags: 64 });
+            if (status.job.status !== 'completed') return interaction.reply({ content: `Job \`${status.job.id}\` is ${status.job.status}; migration previews require a completed import job.`, flags: 64 });
+
+            const currentSettings = await getGuildLevelingConfig(interaction.guild.id);
+            const target = buildCalibrationSettings(interaction, currentSettings, status.job);
+            const userIds = parseUserIds(interaction.options.getString('users') || '');
+            const created = await startLevelCalibrationJob(interaction.client, interaction.guild, {
+                importJobId: status.job.id,
+                kind: 'migration_preview',
+                profile: target,
+                userIds,
+                exportFormat: interaction.options.getString('export') || 'none',
+                includeProbotAnnouncements: true,
+                createdBy: interaction.user.id,
+            });
+            if (!created.ok) {
+                return interaction.reply({
+                    content: `A preview job is already active for import \`${status.job.id}\`: \`${created.job.id}\` (${created.job.status}). Use \`/level calibration-status job_id:${created.job.id}\`.`,
+                    flags: 64,
+                });
+            }
+
+            return interaction.reply({
+                content: [
+                    `Started read-only recovered-level migration preview \`${created.job.id}\` for import \`${status.job.id}\`.`,
+                    'It combines mapped role minimums, verified ProBot announcements, and reconstructed surviving-message estimates.',
+                    'No XP, roles, Discord history, or leveling configuration will be changed.',
+                    `Use \`/level calibration-status job_id:${created.job.id} export:${interaction.options.getString('export') || 'none'}\` to view results.`,
+                ].join('\n'),
+                flags: 64,
+            });
+        }
+
         if (subcommand === 'role-map-add') {
             const role = interaction.options.getRole('role', true);
             const level = interaction.options.getInteger('level', true);
@@ -648,7 +937,7 @@ module.exports = {
                 })
                 : null;
             const fields = [];
-            if (job.status === 'completed' && result.kind === 'preview') {
+            if (job.status === 'completed' && ['preview', 'migration_preview'].includes(result.kind)) {
                 fields.push(
                     {
                         name: 'Replay summary',
@@ -708,6 +997,8 @@ module.exports = {
                     name: 'Evidence groups',
                     value: [
                         `All role evidence: **${result.quality.allRoleEvidence}**`,
+                        `All announcement evidence: **${result.quality.allAnnouncementEvidence || 0}**`,
+                        `Estimated-only: **${result.quality.estimatedOnly || 0}**`,
                         `Substantial surviving history: **${result.quality.substantialSurvivingHistory}**`,
                         `Questionable history coverage: **${result.quality.questionableHistoryCoverage}**`,
                     ].join('\n'),
@@ -725,6 +1016,7 @@ module.exports = {
                     description: [
                         calibrationJobSummary(job),
                         result.evidence ? `Role evidence: **${result.evidence.membersWithRoleEvidence || 0}** members across **${result.evidence.mappings || 0}** mappings.` : null,
+                        result.evidence?.verifiedAnnouncements ? `ProBot announcements: **${result.evidence.verifiedAnnouncements}** verified, **${result.evidence.membersWithAnnouncementEvidence || 0}** members, highest level **${result.evidence.highestAnnouncementLevel || 0}**.` : null,
                         result.completeness?.complete === false ? `Import completeness warning: ${result.completeness.warnings.map(warning => warning.type).join(', ')}` : null,
                         result.evidence?.complete === false ? `Member fetch warning: ${result.evidence.error || 'partial member results'}` : null,
                     ].filter(Boolean).join('\n'),
