@@ -4,7 +4,7 @@ const Database = require('better-sqlite3');
 const { getConfig } = require('../utils/config');
 const externalMigrations = require('./migrations');
 
-const schemaVersion = 7;
+const schemaVersion = 8;
 
 let cached = null;
 

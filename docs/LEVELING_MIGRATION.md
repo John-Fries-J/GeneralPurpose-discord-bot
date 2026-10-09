@@ -30,6 +30,28 @@
 5. Apply with `/level import-history apply:true include_roles:true confirm:APPLY`. If the dry run reported skipped channels, failed scans, or incomplete member fetching and you still accept the partial import, use `confirm:APPLY_INCOMPLETE`; apply jobs stop before changing XP when incomplete data is detected without that stronger confirmation.
 6. Use `/level test set`, `/level test xp`, and `/level test rollback` on a dedicated test account before enabling role removal.
 
+## Final ProBot XP Migration
+
+The final ProBot migration is a separate conservative phase. It updates live `levels.text_xp` only after explicit confirmation, preserves `levels.voice_xp`, snapshots every affected record, and never changes Discord roles.
+
+Policy:
+
+- Verified ProBot level announcements and mapped reward roles are treated as confirmed minimum historical levels.
+- Reconstructed historical message levels from the completed import are audit evidence only. Extreme or estimated-only outliers are flagged but not applied.
+- The confirmed level is converted to XP with the server's current live leveling formula.
+- Existing live text XP is preserved after subtracting prior historical import, role recovery, and active final migration deltas so repeated applies cannot duplicate recovered XP.
+- Departed members' stored XP rows are preserved. `/leaderboard current_members_only:true` can hide departed users without deleting their records.
+
+Safe sequence:
+
+1. Run `/level probot-final-preview export:csv` and review affected members plus unreliable estimate warnings.
+2. Run `/level probot-final-preview user:<test-user> export:json` for a single-user dry run.
+3. Run `/level probot-final-test user:<test-user> confirm:APPLY_PROBOT_TEST`.
+4. Check `/rank user:<test-user>` and `/leaderboard`.
+5. Roll the test back if needed with `/level probot-final-rollback batch_id:<batch-id> confirm:ROLLBACK_PROBOT_FINAL`.
+6. Apply server-wide only after review with `/level probot-final-apply confirm:APPLY_PROBOT_FINAL`.
+7. Keep the returned batch ID for rollback. Rollback subtracts only the migration delta and preserves XP earned after application.
+
 ## Historical Calibration Preview
 
 - Use `/level calibration-preview job_id:<completed-job-id> profile:ProBot-inspired default` to create a background replay job under a different XP profile without rescanning Discord and without changing XP or roles.

@@ -107,6 +107,8 @@ test('leveling migration creates persistent import and test tables', async () =>
             'level_probot_scan_jobs',
             'level_probot_scan_checkpoints',
             'level_probot_announcements',
+            'level_probot_migration_batches',
+            'level_probot_migration_snapshots',
             'level_import_processed_messages',
             'level_role_level_mappings',
             'level_reconciliation_records',

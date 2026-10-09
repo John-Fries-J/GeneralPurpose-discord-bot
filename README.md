@@ -297,9 +297,10 @@ Config:
 - `/level import-preview` dry-runs historical XP reconstruction from accessible Discord message history.
 - `/level import-history apply:true confirm:APPLY` applies a historical XP import through a background job.
 - `/level import-status` and `/level import-cancel` monitor or cancel import jobs.
+- `/level probot-final-preview`, `/level probot-final-test`, `/level probot-final-apply confirm:APPLY_PROBOT_FINAL`, and `/level probot-final-rollback confirm:ROLLBACK_PROBOT_FINAL` safely apply confirmed ProBot level recovery to live XP records without changing roles.
 - `/level role-map-add role level`, `/level role-map-view`, and `/level role-recovery-preview` recover minimum levels from existing reward roles.
 - `/level test set`, `/level test xp`, `/level test preview`, `/level test sync-roles`, `/level test reset`, and `/level test rollback` smoke-test leveling changes with persistent rollback sessions.
-- `/leaderboard type page` shows paginated total, text, or voice XP leaders.
+- `/leaderboard type page current_members_only` shows paginated total, text, or voice XP leaders and can hide departed members while preserving their stored records.
 
 Music:
 
