@@ -4,9 +4,9 @@ const PARSER_VERSION = 'probot-level-announcement-v1';
 const MAX_LEVEL = 10000;
 
 const levelPatterns = [
-    /\b(?:you(?:['’]ve| have)?|has|have)?\s*(?:just\s+)?(?:reached|hit|achieved)\s+level\s+(\d{1,5})\b/iu,
-    /\b(?:leveled|levelled)\s+up\s+(?:to\s+)?level\s+(\d{1,5})\b/iu,
-    /\bnow\s+level\s+(\d{1,5})\b/iu,
+    /\b(?:you(?:['’]ve| have)?|has|have)?\s*(?:just\s+)?(?:reached|hit|achieved)\s+\*{0,2}level\s+(\d{1,5})\b/iu,
+    /\b(?:leveled|levelled)\s+up\s+(?:to\s+)?\*{0,2}level\s+(\d{1,5})\b/iu,
+    /\bnow\s+\*{0,2}level\s+(\d{1,5})\b/iu,
 ];
 
 function cleanText(value = '') {
