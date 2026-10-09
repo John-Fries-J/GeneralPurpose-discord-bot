@@ -51,6 +51,9 @@ const {
     listCommandStats,
     listEmbedTemplates,
     listGuildHistory,
+    listLevelImportJobs,
+    listLevelRoleMappings,
+    listLevelTestSessions,
     listModerationCases,
     listModNotes,
     listScheduledMessages,
@@ -228,6 +231,13 @@ function renderRoleMultiSelect(name, roles, selectedIds) {
     const selected = new Set(normalizeIdList(selectedIds));
     return `<select name="${escapeHtml(name)}" multiple size="6">
 ${roles.map(role => `<option value="${escapeHtml(role.id)}" ${selected.has(role.id) ? 'selected' : ''}>${escapeHtml(role.name)}</option>`).join('')}
+</select>`;
+}
+
+function renderChannelMultiSelect(name, channels, selectedIds) {
+    const selected = new Set(normalizeIdList(selectedIds));
+    return `<select name="${escapeHtml(name)}" multiple size="6">
+${channels.map(channel => `<option value="${escapeHtml(channel.id)}" ${selected.has(channel.id) ? 'selected' : ''}>${escapeHtml(channelLabel(channel))}</option>`).join('')}
 </select>`;
 }
 
@@ -446,11 +456,15 @@ ${renderTextInput('emptyGraceSeconds', 'Empty grace period seconds', Math.round(
     });
 }
 
-function renderLevelingSettingsForm(config, session) {
+function renderLevelingSettingsForm(config, channels, roles, session) {
     const leveling = config.leveling || {};
+    const roleSync = leveling.roleSync || {};
+    const antiFarm = leveling.antiFarm || {};
+    const voiceEligibility = leveling.voiceEligibility || {};
+    const rankCard = leveling.rankCard || {};
     return renderSettingsForm({
         title: 'Leveling',
-        description: 'Server-specific leveling mode and XP pacing with bounded controls.',
+        description: 'Server-specific leveling mode, XP pacing, migration safety, and reward-role behavior.',
         section: 'leveling',
         session,
         body: `
@@ -462,10 +476,67 @@ ${renderToggle('enabled', 'Leveling', leveling.enabled === true, 'Award XP throu
         { value: 'both', label: 'Both' },
     ], leveling.mode || 'both')}</label>
 <div class="settings-grid">
-${renderTextInput('textXpPerMessage', 'Text XP per message', leveling.textXpPerMessage ?? 1, { type: 'number' })}
+${renderTextInput('textXpPerMessage', 'Text XP fallback', leveling.textXpPerMessage ?? 1, { type: 'number' })}
+${renderTextInput('textXpMin', 'Minimum message XP', leveling.textXpMin ?? leveling.textXpPerMessage ?? 1, { type: 'number', min: 0, max: 1000 })}
+${renderTextInput('textXpMax', 'Maximum message XP', leveling.textXpMax ?? leveling.textXpPerMessage ?? 1, { type: 'number', min: 0, max: 1000 })}
 ${renderTextInput('voiceXpPerMinute', 'Voice XP per minute', leveling.voiceXpPerMinute ?? 1, { type: 'number' })}
 ${renderTextInput('cooldownSeconds', 'Text XP cooldown seconds', leveling.cooldownSeconds ?? 60, { type: 'number' })}
+${renderTextInput('xpPerLevelBase', 'XP curve base', leveling.xpPerLevelBase ?? 100, { type: 'number', min: 1 })}
+${renderTextInput('xpCurveFactor', 'Exponential factor', leveling.xpCurveFactor ?? 1.18, { type: 'number', min: 1.01, max: 10, step: 0.01 })}
 </div>
+<div class="settings-grid">
+<label>XP profile${renderSegmented('xpProfile', [
+        { value: 'legacy', label: 'Legacy' },
+        { value: 'probot_inspired', label: 'ProBot-style' },
+        { value: 'custom', label: 'Custom' },
+    ], leveling.xpProfile || 'legacy')}</label>
+<label>Progression formula${renderSegmented('progressionFormula', [
+        { value: 'legacy', label: 'Legacy' },
+        { value: 'linear', label: 'Linear' },
+        { value: 'quadratic', label: 'Quadratic' },
+        { value: 'exponential', label: 'Exp' },
+        { value: 'probot_inspired', label: 'ProBot-style' },
+    ], leveling.progressionFormula || 'legacy')}</label>
+</div>
+<div class="settings-grid">
+<label>Excluded channels${renderChannelMultiSelect('ignoredChannelIds', channels, leveling.ignoredChannelIds || [])}</label>
+<label>Excluded roles${renderRoleMultiSelect('ignoredRoleIds', roles, leveling.ignoredRoleIds || [])}</label>
+${renderTextInput('ignoredUserIds', 'Excluded user IDs', (leveling.ignoredUserIds || []).join(', '), { placeholder: 'Comma separated Discord user IDs' })}
+</div>
+<div class="settings-grid">
+${renderToggle('announceLevelUp', 'Level-up announcements', leveling.announceLevelUp === true, 'Send a message when a member gains a level.')}
+${renderToggle('announceLevelDown', 'Level-down announcements', leveling.announceLevelDown === true, 'Send a message when an admin/test lowers a level.')}
+${renderSelect('announceChannelId', 'Announcement channel', channelOptions(channels, [ChannelType.GuildText, ChannelType.GuildAnnouncement]), leveling.announceChannelId || '', { emptyLabel: 'Use source channel' })}
+</div>
+${renderTextInput('levelUpMessage', 'Level-up message', leveling.levelUpMessage || '{user} reached level {level}.')}
+${renderTextInput('levelDownMessage', 'Level-down message', leveling.levelDownMessage || '{user} dropped to level {level}.')}
+<div class="settings-grid">
+${renderToggle('antiFarmEnabled', 'Anti-farm checks', antiFarm.enabled === true, 'Skip repeated or excessive message patterns.')}
+${renderTextInput('antiFarmMinMessageLength', 'Minimum message length', antiFarm.minMessageLength ?? 0, { type: 'number', min: 0 })}
+${renderTextInput('antiFarmRepeatedWindow', 'Repeat window seconds', antiFarm.repeatedMessageWindowSeconds ?? 300, { type: 'number', min: 0 })}
+${renderTextInput('antiFarmMaxMessages', 'Max messages per window', antiFarm.maxMessagesPerWindow ?? 0, { type: 'number', min: 0 })}
+${renderTextInput('antiFarmWindowSeconds', 'Message window seconds', antiFarm.windowSeconds ?? 60, { type: 'number', min: 1 })}
+</div>
+<div class="settings-grid">
+${renderToggle('voiceAllowAfk', 'Voice XP in AFK', voiceEligibility.allowAfk !== false, 'Allow users in the AFK channel to earn voice XP.')}
+${renderToggle('voiceAllowDeafened', 'Voice XP while deafened', voiceEligibility.allowDeafened !== false, 'Allow deafened users to earn voice XP.')}
+${renderToggle('voiceAllowSolo', 'Voice XP while solo', voiceEligibility.allowSolo !== false, 'Allow users alone in a voice channel to earn XP.')}
+</div>
+<div class="settings-grid">
+${renderToggle('roleSyncEnabled', 'Reward-role sync', roleSync.enabled !== false, 'Manage only registered leveling reward roles.')}
+${renderToggle('roleSyncAwardMissingRoles', 'Grant missing roles', roleSync.awardMissingRoles !== false, 'Grant earned reward roles automatically.')}
+${renderToggle('roleSyncRemoveObsoleteRoles', 'Remove obsolete roles', roleSync.removeObsoleteRoles === true, 'Potentially destructive. Disabled by default.')}
+${renderToggle('roleSyncApplyDuringMigration', 'Sync during migration', roleSync.applyDuringMigration === true, 'Apply role sync after historical imports.')}
+${renderToggle('roleSyncDryRun', 'Role sync dry run', roleSync.dryRun === true, 'Preview role sync without changing Discord roles.')}
+${renderToggle('roleSyncOnLevelUp', 'Sync on level-up', roleSync.syncOnLevelUp !== false, 'Run reward-role sync after XP awards.')}
+</div>
+<div class="settings-grid">
+${renderToggle('rankCardEnabled', 'Graphical rank card', rankCard.enabled !== false, 'Attach an SVG rank card when /rank runs.')}
+${renderTextInput('rankCardTheme', 'Rank card theme', rankCard.theme || 'blue', { placeholder: 'blue, green, or slate' })}
+${renderTextInput('rankCardBackgroundUrl', 'Rank card background URL', rankCard.backgroundUrl || '', { placeholder: 'https://example.com/background.png' })}
+${renderTextInput('leaderboardBackgroundUrl', 'Leaderboard background URL', rankCard.leaderboardBackgroundUrl || '', { placeholder: 'Optional' })}
+</div>
+${renderTextarea('roleRewardsJson', 'Role rewards JSON', JSON.stringify(leveling.roleRewards || [], null, 2), { rows: 6, description: 'Use entries like {"level": 10, "roleId": "123"} or {"xp": 1000, "roleId": "123"}.' })}
 </div>`,
     });
 }
@@ -528,6 +599,7 @@ async function renderDashboard(client, session, notice = '', page = 'overview') 
     const needsModeration = ['overview', 'moderation', 'audit'].includes(page);
     const needsTickets = ['overview', 'tickets', 'audit'].includes(page);
     const needsVoice = ['overview', 'voice'].includes(page);
+    const needsLeveling = page === 'leveling';
     const needsBackups = page === 'backups';
     const logs = needsLogs ? readDashboardLogs(120) : [];
     const scheduledMessages = needsSender ? await listScheduledMessages(activeGuildId, 25) : [];
@@ -546,6 +618,9 @@ async function renderDashboard(client, session, notice = '', page = 'overview') 
     const configBackups = needsBackups ? listConfigBackups() : [];
     const configAudit = needsAudit && activeGuildId ? await listConfigAudit(activeGuildId, { limit: 75 }) : [];
     const healthReport = ['overview', 'health'].includes(page) ? await buildHealthReport(client) : null;
+    const levelImportJobs = needsLeveling && activeGuildId ? await listLevelImportJobs(activeGuildId, { limit: 5 }) : [];
+    const levelRoleMappings = needsLeveling && activeGuildId ? await listLevelRoleMappings(activeGuildId) : [];
+    const levelTestSessions = needsLeveling && activeGuildId ? await listLevelTestSessions(activeGuildId, { limit: 5 }) : [];
 
     const renderCommandSections = includeLanguageEditors => grouped.map(([category, commands]) => `
 <section class="panel module-card" id="module-${escapeHtml(slug(category))}">
@@ -597,7 +672,7 @@ ${includeLanguageEditors ? getLanguageSectionsForCategory(category).map(section 
     const loggingSettingsSection = renderLoggingSettingsForm(effectiveConfig, allChannels, session);
     const ticketSettingsSection = renderTicketSettingsForm(effectiveConfig, allChannels, roles, session);
     const joinToCreateSettingsSection = renderJoinToCreateSettingsForm(effectiveConfig, allChannels, session);
-    const levelingSettingsForm = renderLevelingSettingsForm(effectiveConfig, session);
+    const levelingSettingsForm = renderLevelingSettingsForm(effectiveConfig, allChannels, roles, session);
     const moderationSettingsSection = renderModerationSettingsForm(config, roles, session);
     const musicSettingsSection = renderMusicSettingsForm(config, session);
     const topbar = renderPageHeader({
@@ -792,8 +867,66 @@ ${renderConfigSectionEditor('rulesAgreement', 'Rules Agreement Panel', 'Configur
 ${renderConfigSectionEditor('birthdays', 'Birthday Reminders', 'Configure birthday reminder channel and timezone.', session, config.birthdays || { enabled: false, channelId: '', timezone: 'Europe/London' })}
 ${renderConfigSectionEditor('starboard', 'Starboard', 'Configure highlight/starboard emoji, threshold, and destination channel.', session, config.starboard || { enabled: false, channelId: '', emoji: '⭐', threshold: 3 })}
 ${renderConfigSectionEditor('pollTemplates', 'Poll Templates', 'Saved poll presets for staff workflows.', session, config.pollTemplates || [])}`;
+    const levelImportRows = levelImportJobs.map(job => `<div class="row"><span><strong>${escapeHtml(job.status)}</strong> <code>${escapeHtml(job.id)}</code><br><span class="muted">${escapeHtml(job.dryRun ? 'dry run' : 'apply')} • ${escapeHtml(job.messagesEligible)}/${escapeHtml(job.messagesSeen)} eligible messages • ${escapeHtml(job.channelsScanned)}/${escapeHtml(job.channelsTotal)} channels</span></span><form method="post" action="/leveling/import-cancel">${csrfInput(session)}<input type="hidden" name="jobId" value="${escapeHtml(job.id)}"><button class="danger" type="submit">Cancel</button></form></div>`).join('');
+    const levelRoleRows = levelRoleMappings.map(mapping => `<div class="row"><span><strong><@&${escapeHtml(mapping.roleId)}></strong><br><span class="muted">Minimum level ${escapeHtml(mapping.minimumLevel)}</span></span><form method="post" action="/leveling/role-map/remove">${csrfInput(session)}<input type="hidden" name="roleId" value="${escapeHtml(mapping.roleId)}"><button class="danger" type="submit">Remove</button></form></div>`).join('');
+    const levelTestRows = levelTestSessions.map(sessionItem => `<div class="row"><span><strong>${escapeHtml(sessionItem.status)}</strong> <code>${escapeHtml(sessionItem.id)}</code><br><span class="muted">${escapeHtml(sessionItem.userTag || sessionItem.userId)} • delta ${escapeHtml(sessionItem.xpDelta)}</span></span></div>`).join('');
+    const levelingMigrationSection = `
+<section class="grid">
+<section class="panel">
+<h2>Role Recovery</h2>
+<form method="post" action="/leveling/role-map/add">
+${csrfInput(session)}
+<div class="settings-grid">
+${renderSelect('roleId', 'Existing reward role', roleOptions(roles), '', { emptyLabel: 'Choose a role' })}
+${renderTextInput('minimumLevel', 'Minimum level', '', { type: 'number', min: 1 })}
+</div>
+<p><button class="secondary" type="submit">Add mapping</button></p>
+</form>
+${levelRoleRows || '<p class="muted">No role recovery mappings configured.</p>'}
+<form method="post" action="/leveling/role-recovery-preview">${csrfInput(session)}<p><button class="secondary" type="submit">Preview role recovery</button></p></form>
+<form method="post" action="/leveling/role-recovery-apply">${csrfInput(session)}<input name="confirm" placeholder="Type APPLY"><p><button class="danger" type="submit">Apply role recovery</button></p></form>
+</section>
+<section class="panel">
+<h2>Historical Import</h2>
+<form method="post" action="/leveling/import-preview">${csrfInput(session)}<p><button class="secondary" type="submit">Start dry-run import</button></p></form>
+<form method="post" action="/leveling/import-history">${csrfInput(session)}<input name="confirm" placeholder="Type APPLY"><p><button class="danger" type="submit">Apply historical import</button></p></form>
+${levelImportRows || '<p class="muted">No import jobs yet.</p>'}
+</section>
+</section>
+<section class="grid">
+<section class="panel">
+<h2>Testing</h2>
+<form method="post" action="/leveling/test-preview">
+${csrfInput(session)}
+<div class="settings-grid">
+${renderTextInput('userId', 'Member ID', '', { placeholder: 'Discord user ID' })}
+${renderTextInput('level', 'Preview level', '5', { type: 'number', min: 0 })}
+</div>
+<p><button class="secondary" type="submit">Preview test</button></p>
+</form>
+<form method="post" action="/leveling/test-set">
+${csrfInput(session)}
+<div class="settings-grid">
+${renderTextInput('userId', 'Member ID', '', { placeholder: 'Dedicated test account recommended' })}
+${renderTextInput('level', 'Set level', '5', { type: 'number', min: 0 })}
+</div>
+<p><button class="danger" type="submit">Create real test session</button></p>
+</form>
+<form method="post" action="/leveling/test-rollback">
+${csrfInput(session)}
+${renderTextInput('userId', 'Member ID', '', { placeholder: 'Rollback latest active session' })}
+<p><button class="secondary" type="submit">Rollback test</button></p>
+</form>
+${levelTestRows || '<p class="muted">No test sessions yet.</p>'}
+</section>
+<section class="panel">
+<h2>Statistics</h2>
+${levelImportJobs.length ? levelImportJobs.map(job => `<div class="row"><span>${escapeHtml(job.status)} import</span><strong>${escapeHtml(job.messagesEligible)} messages</strong></div>`).join('') : '<p class="muted">Run a preview to populate import statistics.</p>'}
+</section>
+</section>`;
     const levelingSection = `
-${levelingSettingsForm}`;
+${levelingSettingsForm}
+${levelingMigrationSection}`;
     const voiceSection = `
 ${joinToCreateSettingsSection}
 ${renderVoiceDashboard(tempVoiceChannels, voiceActivity, dashboardGuild)}`;

@@ -33,6 +33,32 @@ function intField(body, key, {
     return value;
 }
 
+function numberField(body, key, {
+    min = Number.MIN_SAFE_INTEGER,
+    max = Number.MAX_SAFE_INTEGER,
+    fallback = 0,
+    label = key,
+} = {}) {
+    const raw = field(body[key]);
+    if (raw === '') return fallback;
+
+    const value = Number(raw);
+    if (!Number.isFinite(value)) {
+        throw new Error(`${label} must be a number.`);
+    }
+    if (value < min || value > max) {
+        throw new Error(`${label} must be between ${min} and ${max}.`);
+    }
+
+    return value;
+}
+
+function arrayField(body, key) {
+    const value = body[key];
+    if (Array.isArray(value)) return value.map(field).filter(Boolean);
+    return field(value).split(',').map(item => item.trim()).filter(Boolean);
+}
+
 function urlField(body, key, {
     label = key,
 } = {}) {
@@ -222,6 +248,24 @@ function parseDashboardSettings(body = {}, options = {}) {
         if (!['text', 'voice', 'both'].includes(mode)) {
             throw new Error('Leveling mode must be text, voice, or both.');
         }
+        const progressionFormula = field(body.progressionFormula) || 'legacy';
+        if (!['legacy', 'linear', 'quadratic', 'exponential', 'probot_inspired'].includes(progressionFormula)) {
+            throw new Error('Leveling formula must be legacy, linear, quadratic, exponential, or probot_inspired.');
+        }
+        const xpProfile = field(body.xpProfile) || 'legacy';
+        if (!['legacy', 'probot_inspired', 'custom'].includes(xpProfile)) {
+            throw new Error('Leveling XP profile must be legacy, probot_inspired, or custom.');
+        }
+        const ignoredChannelIds = arrayField(body, 'ignoredChannelIds')
+            .map(id => validateChannel(context, id, 'Ignored channel', null));
+        const ignoredRoleIds = arrayField(body, 'ignoredRoleIds')
+            .map(id => validateRole(context, id, 'Ignored role'));
+        const roleRewards = field(body.roleRewardsJson)
+            ? JSON.parse(field(body.roleRewardsJson))
+            : undefined;
+        if (roleRewards !== undefined && !Array.isArray(roleRewards)) {
+            throw new Error('Role rewards JSON must be an array.');
+        }
         return {
             section,
             message: 'Leveling settings saved',
@@ -233,6 +277,18 @@ function parseDashboardSettings(body = {}, options = {}) {
                     max: 1000,
                     fallback: 1,
                     label: 'Text XP per message',
+                }),
+                textXpMin: intField(body, 'textXpMin', {
+                    min: 0,
+                    max: 1000,
+                    fallback: 1,
+                    label: 'Minimum text XP',
+                }),
+                textXpMax: intField(body, 'textXpMax', {
+                    min: 0,
+                    max: 1000,
+                    fallback: 1,
+                    label: 'Maximum text XP',
                 }),
                 voiceXpPerMinute: intField(body, 'voiceXpPerMinute', {
                     min: 0,
@@ -246,6 +302,55 @@ function parseDashboardSettings(body = {}, options = {}) {
                     fallback: 60,
                     label: 'Text XP cooldown seconds',
                 }),
+                progressionFormula,
+                xpProfile,
+                xpPerLevelBase: intField(body, 'xpPerLevelBase', {
+                    min: 1,
+                    max: 1000000,
+                    fallback: 100,
+                    label: 'XP curve base',
+                }),
+                xpCurveFactor: numberField(body, 'xpCurveFactor', {
+                    min: 1.01,
+                    max: 10,
+                    fallback: 1.18,
+                    label: 'XP curve factor',
+                }),
+                ignoredChannelIds,
+                ignoredRoleIds,
+                ignoredUserIds: arrayField(body, 'ignoredUserIds'),
+                announceLevelUp: boolField(body, 'announceLevelUp'),
+                announceLevelDown: boolField(body, 'announceLevelDown'),
+                announceChannelId: validateChannel(context, body.announceChannelId, 'Announcement channel', textChannelTypes, { requireSendable: true }),
+                levelUpMessage: field(body.levelUpMessage) || '{user} reached level {level}.',
+                levelDownMessage: field(body.levelDownMessage) || '{user} dropped to level {level}.',
+                antiFarm: {
+                    enabled: boolField(body, 'antiFarmEnabled'),
+                    minMessageLength: intField(body, 'antiFarmMinMessageLength', { min: 0, max: 2000, fallback: 0, label: 'Minimum message length' }),
+                    repeatedMessageWindowSeconds: intField(body, 'antiFarmRepeatedWindow', { min: 0, max: 86400, fallback: 300, label: 'Repeated message window' }),
+                    maxMessagesPerWindow: intField(body, 'antiFarmMaxMessages', { min: 0, max: 1000, fallback: 0, label: 'Maximum messages per window' }),
+                    windowSeconds: intField(body, 'antiFarmWindowSeconds', { min: 1, max: 86400, fallback: 60, label: 'Anti-farm window' }),
+                },
+                voiceEligibility: {
+                    allowAfk: boolField(body, 'voiceAllowAfk'),
+                    allowDeafened: boolField(body, 'voiceAllowDeafened'),
+                    allowSolo: boolField(body, 'voiceAllowSolo'),
+                },
+                roleSync: {
+                    enabled: boolField(body, 'roleSyncEnabled'),
+                    awardMissingRoles: boolField(body, 'roleSyncAwardMissingRoles'),
+                    removeObsoleteRoles: boolField(body, 'roleSyncRemoveObsoleteRoles'),
+                    applyDuringMigration: boolField(body, 'roleSyncApplyDuringMigration'),
+                    dryRun: boolField(body, 'roleSyncDryRun'),
+                    syncOnLevelUp: boolField(body, 'roleSyncOnLevelUp'),
+                },
+                rankCard: {
+                    enabled: boolField(body, 'rankCardEnabled'),
+                    theme: field(body.rankCardTheme) || 'blue',
+                    backgroundUrl: field(body.rankCardBackgroundUrl),
+                    leaderboardBackgroundUrl: field(body.leaderboardBackgroundUrl),
+                },
+                ...(roleRewards !== undefined ? { roleRewards } : {}),
             },
         };
     }
@@ -368,6 +473,7 @@ module.exports = {
     boolField,
     createValidationContext,
     intField,
+    numberField,
     parseDashboardSettings,
     urlField,
 };
