@@ -214,4 +214,85 @@ module.exports = [
             CREATE UNIQUE INDEX IF NOT EXISTS idx_level_calibration_jobs_active_import ON level_calibration_jobs(guild_id, import_job_id) WHERE status IN ('queued', 'running', 'cancelling');
         `,
     },
+    {
+        version: 7,
+        name: 'probot_level_recovery',
+        sql: `
+            CREATE TABLE IF NOT EXISTS level_probot_scan_jobs (
+                id TEXT PRIMARY KEY,
+                guild_id TEXT NOT NULL,
+                source_channel_id TEXT NOT NULL,
+                source_channel_ids_json TEXT NOT NULL DEFAULT '[]',
+                probot_author_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                created_by TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                started_at INTEGER,
+                completed_at INTEGER,
+                current_channel_id TEXT,
+                channels_total INTEGER NOT NULL DEFAULT 0,
+                channels_scanned INTEGER NOT NULL DEFAULT 0,
+                scanned_count INTEGER NOT NULL DEFAULT 0,
+                matched_count INTEGER NOT NULL DEFAULT 0,
+                verified_count INTEGER NOT NULL DEFAULT 0,
+                unresolved_count INTEGER NOT NULL DEFAULT 0,
+                invalid_count INTEGER NOT NULL DEFAULT 0,
+                skipped_count INTEGER NOT NULL DEFAULT 0,
+                duplicate_count INTEGER NOT NULL DEFAULT 0,
+                oldest_scanned_at INTEGER,
+                newest_scanned_at INTEGER,
+                errors_json TEXT NOT NULL DEFAULT '[]',
+                cancel_requested INTEGER NOT NULL DEFAULT 0,
+                result_json TEXT NOT NULL DEFAULT '{}'
+            );
+            CREATE INDEX IF NOT EXISTS idx_level_probot_scan_jobs_guild_status ON level_probot_scan_jobs(guild_id, status, updated_at);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_level_probot_scan_jobs_active_source ON level_probot_scan_jobs(guild_id, source_channel_id) WHERE status IN ('queued', 'running', 'cancelling');
+
+            CREATE TABLE IF NOT EXISTS level_probot_scan_checkpoints (
+                job_id TEXT NOT NULL,
+                guild_id TEXT NOT NULL,
+                channel_id TEXT NOT NULL,
+                parent_channel_id TEXT,
+                before_message_id TEXT,
+                oldest_message_id TEXT,
+                status TEXT NOT NULL,
+                scanned_count INTEGER NOT NULL DEFAULT 0,
+                matched_count INTEGER NOT NULL DEFAULT 0,
+                verified_count INTEGER NOT NULL DEFAULT 0,
+                unresolved_count INTEGER NOT NULL DEFAULT 0,
+                invalid_count INTEGER NOT NULL DEFAULT 0,
+                skipped_count INTEGER NOT NULL DEFAULT 0,
+                duplicate_count INTEGER NOT NULL DEFAULT 0,
+                oldest_scanned_at INTEGER,
+                newest_scanned_at INTEGER,
+                error TEXT,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (job_id, channel_id),
+                FOREIGN KEY (job_id) REFERENCES level_probot_scan_jobs(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_level_probot_scan_checkpoints_job_status ON level_probot_scan_checkpoints(job_id, status);
+
+            CREATE TABLE IF NOT EXISTS level_probot_announcements (
+                guild_id TEXT NOT NULL,
+                source_channel_id TEXT NOT NULL,
+                message_id TEXT NOT NULL,
+                job_id TEXT,
+                probot_author_id TEXT NOT NULL,
+                target_user_id TEXT,
+                announced_level INTEGER,
+                announcement_timestamp INTEGER NOT NULL,
+                parser_version TEXT NOT NULL,
+                parse_status TEXT NOT NULL,
+                confidence TEXT NOT NULL,
+                content_source TEXT,
+                diagnostic_json TEXT NOT NULL DEFAULT '{}',
+                created_at INTEGER NOT NULL,
+                PRIMARY KEY (guild_id, message_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_level_probot_announcements_guild_status ON level_probot_announcements(guild_id, parse_status, announcement_timestamp);
+            CREATE INDEX IF NOT EXISTS idx_level_probot_announcements_guild_user_level ON level_probot_announcements(guild_id, target_user_id, announced_level);
+            CREATE INDEX IF NOT EXISTS idx_level_probot_announcements_channel_time ON level_probot_announcements(guild_id, source_channel_id, announcement_timestamp);
+        `,
+    },
 ];

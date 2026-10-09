@@ -45,6 +45,9 @@ function createEmptyState() {
         levelImportCheckpoints: [],
         levelImportMessages: [],
         levelCalibrationJobs: [],
+        levelProbotScanJobs: [],
+        levelProbotScanCheckpoints: [],
+        levelProbotAnnouncements: [],
         levelProcessedMessages: [],
         levelRoleMappings: [],
         levelReconciliationRecords: [],
@@ -265,6 +268,9 @@ function clearNormalizedState(db) {
         DELETE FROM level_import_checkpoints;
         DELETE FROM level_import_processed_messages;
         DELETE FROM level_calibration_jobs;
+        DELETE FROM level_probot_announcements;
+        DELETE FROM level_probot_scan_checkpoints;
+        DELETE FROM level_probot_scan_jobs;
         DELETE FROM level_import_jobs;
         DELETE FROM level_role_level_mappings;
         DELETE FROM level_reconciliation_records;
@@ -1178,6 +1184,239 @@ async function requestCancelLevelCalibrationJob(id) {
     });
 }
 
+async function createLevelProbotScanJob(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.createLevelProbotScanJob(await getSqliteDb(), record);
+    const timestamp = Date.now();
+    let result = null;
+    await useLegacyStateMutation(state => {
+        state.levelProbotScanJobs ||= [];
+        const active = state.levelProbotScanJobs.find(item => (
+            item.guildId === record.guildId
+            && item.sourceChannelId === record.sourceChannelId
+            && ['queued', 'running', 'cancelling'].includes(item.status)
+        ));
+        if (active) {
+            result = { ok: false, job: active, reason: 'active_job' };
+            return state;
+        }
+        const sourceChannelIds = [...new Set((record.sourceChannelIds?.length ? record.sourceChannelIds : [record.sourceChannelId]).map(String))];
+        const job = {
+            id: record.id || makeId(),
+            guildId: record.guildId,
+            sourceChannelId: record.sourceChannelId,
+            sourceChannelIds,
+            probotAuthorId: record.probotAuthorId,
+            status: record.status || 'queued',
+            createdBy: record.createdBy || null,
+            createdAt: record.createdAt || timestamp,
+            updatedAt: timestamp,
+            startedAt: null,
+            completedAt: null,
+            currentChannelId: null,
+            channelsTotal: sourceChannelIds.length,
+            channelsScanned: 0,
+            scannedCount: 0,
+            matchedCount: 0,
+            verifiedCount: 0,
+            unresolvedCount: 0,
+            invalidCount: 0,
+            skippedCount: 0,
+            duplicateCount: 0,
+            oldestScannedAt: null,
+            newestScannedAt: null,
+            errors: [],
+            cancelRequested: false,
+            result: record.result || {},
+        };
+        state.levelProbotScanJobs.push(job);
+        result = { ok: true, job };
+        return state;
+    });
+    return result;
+}
+
+async function getLevelProbotScanJob(id) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.getLevelProbotScanJob(await getSqliteDb(), id);
+    return ((await readState()).levelProbotScanJobs || []).find(item => item.id === id) || null;
+}
+
+async function listLevelProbotScanJobs(guildId = null, options = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listLevelProbotScanJobs(await getSqliteDb(), guildId, options);
+    const limit = Math.max(1, Number(options.limit || 50));
+    const statuses = Array.isArray(options.statuses) ? new Set(options.statuses) : null;
+    return ((await readState()).levelProbotScanJobs || [])
+        .filter(item => !guildId || item.guildId === guildId)
+        .filter(item => !statuses || statuses.has(item.status))
+        .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0))
+        .slice(0, limit);
+}
+
+async function updateLevelProbotScanJob(id, patch = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.updateLevelProbotScanJob(await getSqliteDb(), id, patch);
+    let updated = null;
+    await useLegacyStateMutation(state => {
+        const job = (state.levelProbotScanJobs || []).find(item => item.id === id);
+        if (!job) return state;
+        Object.assign(job, patch, { updatedAt: patch.updatedAt || Date.now() });
+        updated = { ...job };
+        return state;
+    });
+    return updated;
+}
+
+async function requestCancelLevelProbotScanJob(id) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.requestCancelLevelProbotScanJob(await getSqliteDb(), id);
+    const job = await getLevelProbotScanJob(id);
+    if (!job) return null;
+    return updateLevelProbotScanJob(id, {
+        status: ['completed', 'cancelled', 'failed'].includes(job.status) ? job.status : 'cancelling',
+        cancelRequested: true,
+    });
+}
+
+async function upsertLevelProbotScanCheckpoint(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.upsertLevelProbotScanCheckpoint(await getSqliteDb(), record);
+    let saved = null;
+    await useLegacyStateMutation(state => {
+        state.levelProbotScanCheckpoints ||= [];
+        saved = {
+            jobId: record.jobId,
+            guildId: record.guildId,
+            channelId: record.channelId,
+            parentChannelId: record.parentChannelId || null,
+            beforeMessageId: record.beforeMessageId || null,
+            oldestMessageId: record.oldestMessageId || null,
+            status: record.status || 'pending',
+            scannedCount: Number(record.scannedCount || 0),
+            matchedCount: Number(record.matchedCount || 0),
+            verifiedCount: Number(record.verifiedCount || 0),
+            unresolvedCount: Number(record.unresolvedCount || 0),
+            invalidCount: Number(record.invalidCount || 0),
+            skippedCount: Number(record.skippedCount || 0),
+            duplicateCount: Number(record.duplicateCount || 0),
+            oldestScannedAt: record.oldestScannedAt || null,
+            newestScannedAt: record.newestScannedAt || null,
+            error: record.error || null,
+            updatedAt: record.updatedAt || Date.now(),
+        };
+        state.levelProbotScanCheckpoints = state.levelProbotScanCheckpoints.filter(item => !(item.jobId === saved.jobId && item.channelId === saved.channelId));
+        state.levelProbotScanCheckpoints.push(saved);
+        return state;
+    });
+    return saved;
+}
+
+async function listLevelProbotScanCheckpoints(jobId = null) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listLevelProbotScanCheckpoints(await getSqliteDb(), jobId);
+    return ((await readState()).levelProbotScanCheckpoints || [])
+        .filter(item => !jobId || item.jobId === jobId)
+        .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
+}
+
+async function insertLevelProbotAnnouncement(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.insertLevelProbotAnnouncement(await getSqliteDb(), record);
+    let result = null;
+    await useLegacyStateMutation(state => {
+        state.levelProbotAnnouncements ||= [];
+        const existing = state.levelProbotAnnouncements.find(item => item.guildId === record.guildId && item.messageId === record.messageId);
+        if (existing) {
+            result = { inserted: false, repeated: existing.parseStatus === 'repeated_verified', record: existing };
+            return state;
+        }
+        const repeated = record.parseStatus === 'verified'
+            && record.targetUserId
+            && state.levelProbotAnnouncements.some(item => (
+                item.guildId === record.guildId
+                && item.targetUserId === record.targetUserId
+                && Number(item.announcedLevel || 0) === Number(record.announcedLevel || 0)
+                && ['verified', 'repeated_verified'].includes(item.parseStatus)
+            ));
+        const saved = {
+            guildId: record.guildId,
+            sourceChannelId: record.sourceChannelId,
+            messageId: record.messageId,
+            jobId: record.jobId || null,
+            probotAuthorId: record.probotAuthorId,
+            targetUserId: record.targetUserId || null,
+            announcedLevel: record.announcedLevel === null || record.announcedLevel === undefined ? null : Number(record.announcedLevel),
+            announcementTimestamp: Number(record.announcementTimestamp || 0),
+            parserVersion: record.parserVersion,
+            parseStatus: repeated ? 'repeated_verified' : record.parseStatus,
+            confidence: record.confidence || 'none',
+            contentSource: record.contentSource || null,
+            diagnostic: record.diagnostic || {},
+            createdAt: record.createdAt || Date.now(),
+        };
+        state.levelProbotAnnouncements.push(saved);
+        result = { inserted: true, repeated, record: saved };
+        return state;
+    });
+    return result;
+}
+
+async function listLevelProbotAnnouncements(guildId, options = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listLevelProbotAnnouncements(await getSqliteDb(), guildId, options);
+    const limit = Math.max(1, Number(options.limit || 1000));
+    const statuses = Array.isArray(options.statuses) ? new Set(options.statuses) : null;
+    return ((await readState()).levelProbotAnnouncements || [])
+        .filter(item => item.guildId === guildId)
+        .filter(item => !options.userId || item.targetUserId === options.userId)
+        .filter(item => !statuses || statuses.has(item.parseStatus))
+        .sort((a, b) => Number(b.announcementTimestamp || 0) - Number(a.announcementTimestamp || 0))
+        .slice(0, limit);
+}
+
+async function listHighestProbotAnnouncementLevels(guildId, options = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listHighestProbotAnnouncementLevels(await getSqliteDb(), guildId, options);
+    const userFilter = Array.isArray(options.userIds) && options.userIds.length ? new Set(options.userIds.map(String)) : null;
+    const byUser = new Map();
+    for (const item of ((await readState()).levelProbotAnnouncements || [])) {
+        if (item.guildId !== guildId || !item.targetUserId || !['verified', 'repeated_verified'].includes(item.parseStatus)) continue;
+        if (userFilter && !userFilter.has(String(item.targetUserId))) continue;
+        const current = byUser.get(item.targetUserId) || {
+            guildId,
+            userId: item.targetUserId,
+            announcementLevel: 0,
+            announcementCount: 0,
+            firstAnnouncementAt: Number(item.announcementTimestamp || 0),
+            lastAnnouncementAt: Number(item.announcementTimestamp || 0),
+        };
+        current.announcementLevel = Math.max(current.announcementLevel, Number(item.announcedLevel || 0));
+        current.announcementCount += 1;
+        current.firstAnnouncementAt = Math.min(current.firstAnnouncementAt, Number(item.announcementTimestamp || 0));
+        current.lastAnnouncementAt = Math.max(current.lastAnnouncementAt, Number(item.announcementTimestamp || 0));
+        byUser.set(item.targetUserId, current);
+    }
+    return [...byUser.values()].sort((a, b) => b.announcementLevel - a.announcementLevel || String(a.userId).localeCompare(String(b.userId)));
+}
+
+async function summarizeProbotAnnouncementEvidence(guildId) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.summarizeProbotAnnouncementEvidence(await getSqliteDb(), guildId);
+    const records = (await readState()).levelProbotAnnouncements || [];
+    const guildRecords = records.filter(item => item.guildId === guildId);
+    const verified = guildRecords.filter(item => ['verified', 'repeated_verified'].includes(item.parseStatus));
+    return {
+        totalRecords: guildRecords.length,
+        verifiedAnnouncements: verified.length,
+        uniqueVerifiedMembers: new Set(verified.map(item => item.targetUserId).filter(Boolean)).size,
+        unresolvedIdentities: guildRecords.filter(item => item.parseStatus === 'unresolved_identity').length,
+        invalidRecords: guildRecords.filter(item => !['verified', 'repeated_verified', 'unresolved_identity'].includes(item.parseStatus)).length,
+        repeatedAnnouncements: guildRecords.filter(item => item.parseStatus === 'repeated_verified').length,
+        highestRecoveredLevel: verified.reduce((highest, item) => Math.max(highest, Number(item.announcedLevel || 0)), 0),
+    };
+}
+
 async function upsertLevelImportCheckpoint(record) {
     const settings = getStorageSettings();
     if (settings.provider === 'sqlite') return repository.upsertLevelImportCheckpoint(await getSqliteDb(), record);
@@ -1968,6 +2207,7 @@ module.exports = {
     countProcessedLevelMessage,
     createLevelCalibrationJob,
     createLevelImportJob,
+    createLevelProbotScanJob,
     createLevelTestSession,
     createModerationCase,
     createEmptyState,
@@ -1983,6 +2223,7 @@ module.exports = {
     getGuildConfigurationOverrides,
     getLevelCalibrationJob,
     getLevelImportJob,
+    getLevelProbotScanJob,
     getLevelRank,
     getLevelTestSession,
     getLimitedAccount,
@@ -2015,6 +2256,10 @@ module.exports = {
     listLevelImportJobs,
     listLevelImportMessages,
     listLevelImportMessagesPage,
+    listLevelProbotAnnouncements,
+    listLevelProbotScanCheckpoints,
+    listLevelProbotScanJobs,
+    listHighestProbotAnnouncementLevels,
     listLevelProcessedMessages,
     listLevelReconciliationRecords,
     listLevelRoleMappings,
@@ -2032,17 +2277,21 @@ module.exports = {
     recordCommandUsage,
     requestCancelLevelCalibrationJob,
     requestCancelLevelImportJob,
+    requestCancelLevelProbotScanJob,
     saveGuildConfigurationSection,
     setUserXp,
     setUserXpMinimum,
+    summarizeProbotAnnouncementEvidence,
     updateReminderStatus,
     updateLevelImportJob,
+    updateLevelProbotScanJob,
     updateLevelCalibrationJob,
     updateLevelTestSession,
     markScheduledJobFinish,
     markScheduledJobStart,
     markLevelImportMessageProcessed,
     insertLevelImportMessage,
+    insertLevelProbotAnnouncement,
     insertLevelReconciliationRecord,
     insertLevelXpEvent,
     markLimitedAccountFailed,
@@ -2052,6 +2301,7 @@ module.exports = {
     upsertEmbedTemplate,
     beginLimitedAccount,
     upsertLevelImportCheckpoint,
+    upsertLevelProbotScanCheckpoint,
     upsertLevelRoleMapping,
     upsertLimitedAccount,
     upsertStarboardMessage,
