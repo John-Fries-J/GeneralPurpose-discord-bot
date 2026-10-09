@@ -566,6 +566,7 @@ module.exports = {
     formatXp,
     getEarnedRewardRoleIds,
     getGuildLevelingConfig,
+    getProfileDefaults,
     getLevelProgress,
     getLevelRank,
     getLevelingConfig,
