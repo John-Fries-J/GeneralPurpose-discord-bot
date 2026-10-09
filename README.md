@@ -288,10 +288,18 @@ Config:
 - `/jointocreate setup trigger_channel category name_format max_limit` enables join-to-create.
 - `/jointocreate disable` disables join-to-create.
 - `/voice limit amount`, `/voice name name`, `/voice lock`, `/voice unlock`, `/voice permit user`, and `/voice reject user` manage owned temporary voice channels.
-- `/levelconfig enable mode text_xp voice_xp cooldown` enables leveling.
+- `/levelconfig enable mode text_xp min_xp max_xp voice_xp cooldown` enables leveling.
+- `/levelconfig profile profile formula base factor confirm` previews or applies an XP curve change. Re-run with `confirm: APPLY` after reviewing the level thresholds.
 - `/levelconfig add-role xp role` adds an XP role reward.
+- `/levelconfig add-level-role level role` adds a level-based role reward.
 - `/levelconfig remove-role role` removes a reward.
-- `/leaderboard type` shows total, text, or voice XP leaders.
+- `/levelconfig role-sync` configures automatic reward-role granting/removal. Obsolete role removal is disabled unless explicitly enabled.
+- `/level import-preview` dry-runs historical XP reconstruction from accessible Discord message history.
+- `/level import-history apply:true confirm:APPLY` applies a historical XP import through a background job.
+- `/level import-status` and `/level import-cancel` monitor or cancel import jobs.
+- `/level role-map-add role level`, `/level role-map-view`, and `/level role-recovery-preview` recover minimum levels from existing reward roles.
+- `/level test set`, `/level test xp`, `/level test preview`, `/level test sync-roles`, `/level test reset`, and `/level test rollback` smoke-test leveling changes with persistent rollback sessions.
+- `/leaderboard type page` shows paginated total, text, or voice XP leaders.
 
 Music:
 
@@ -324,9 +332,14 @@ Join-to-Create:
 
 Leveling:
 
-- Text XP is awarded from messages with a configurable cooldown.
-- Voice XP is awarded once per minute to non-bot users in voice channels when voice mode is enabled.
-- Rewards are based on total XP and can grant roles automatically.
+- Text XP supports configurable min/max XP per eligible message, cooldowns, multipliers, exclusions, optional anti-farm checks, and legacy-compatible fixed XP.
+- XP curves support the legacy formula, linear, quadratic, exponential, and a ProBot-inspired estimate. The ProBot-inspired profile is not ProBot's private formula.
+- Voice XP is awarded once per minute to eligible non-bot users and can exclude AFK, deafened, or solo users. XP is not backfilled after restarts.
+- Rewards are based on total XP or configured levels and can grant roles automatically. Obsolete reward-role removal defaults to off and only touches registered leveling rewards.
+- Historical imports scan only channels and threads the bot can access with Discord's API. Deleted messages, unavailable history, and historical voice XP are not counted or fabricated.
+- Existing reward roles can be mapped to minimum levels. If a member has Level 5, 10, and 20 roles, recovery infers level 20, not level 35.
+- Rank cards include avatar, level, XP, progress, server rank, and text/voice breakdown, with an embed fallback.
+- More migration detail is in `docs/LEVELING_MIGRATION.md`.
 
 ## Editing Text
 
