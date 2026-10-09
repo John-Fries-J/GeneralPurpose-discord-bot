@@ -1367,6 +1367,10 @@ function hasVerifiedProbotAnnouncementLevel(db, guildId, userId, level, excludeM
     return Boolean(row);
 }
 
+function isVerifiedProbotParseStatus(status) {
+    return status === 'verified' || status === 'repeated_verified';
+}
+
 function insertLevelProbotAnnouncement(db, record) {
     let parseStatus = record.parseStatus;
     if (
@@ -1378,13 +1382,28 @@ function insertLevelProbotAnnouncement(db, record) {
         parseStatus = 'repeated_verified';
     }
 
+    const existing = db.prepare('SELECT * FROM level_probot_announcements WHERE guild_id = ? AND message_id = ?').get(record.guildId, record.messageId);
     const result = db.prepare(`
-        INSERT OR IGNORE INTO level_probot_announcements (
+        INSERT INTO level_probot_announcements (
             guild_id, source_channel_id, message_id, job_id, probot_author_id,
             target_user_id, announced_level, announcement_timestamp, parser_version,
             parse_status, confidence, content_source, diagnostic_json, created_at
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(guild_id, message_id) DO UPDATE SET
+            source_channel_id = excluded.source_channel_id,
+            job_id = excluded.job_id,
+            probot_author_id = excluded.probot_author_id,
+            target_user_id = excluded.target_user_id,
+            announced_level = excluded.announced_level,
+            announcement_timestamp = excluded.announcement_timestamp,
+            parser_version = excluded.parser_version,
+            parse_status = excluded.parse_status,
+            confidence = excluded.confidence,
+            content_source = excluded.content_source,
+            diagnostic_json = excluded.diagnostic_json
+        WHERE level_probot_announcements.parse_status NOT IN ('verified', 'repeated_verified')
+            AND excluded.parse_status IN ('verified', 'repeated_verified')
     `).run(
         record.guildId,
         record.sourceChannelId,
@@ -1403,8 +1422,9 @@ function insertLevelProbotAnnouncement(db, record) {
     );
     const saved = db.prepare('SELECT * FROM level_probot_announcements WHERE guild_id = ? AND message_id = ?').get(record.guildId, record.messageId);
     return {
-        inserted: result.changes > 0,
-        repeated: parseStatus === 'repeated_verified',
+        inserted: !existing && result.changes > 0,
+        updated: Boolean(existing && result.changes > 0 && !isVerifiedProbotParseStatus(existing.parse_status)),
+        repeated: saved?.parse_status === 'repeated_verified',
         record: mapLevelProbotAnnouncement(saved),
     };
 }

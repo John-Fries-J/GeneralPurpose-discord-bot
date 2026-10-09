@@ -245,6 +245,109 @@ test('storage deduplicates announcements and aggregates highest verified level',
     });
 });
 
+test('SQLite ProBot announcement upsert upgrades invalid and unresolved evidence to verified', async () => {
+    await withIsolatedStore(async ({ store }) => {
+        const base = {
+            guildId: 'guild',
+            sourceChannelId: 'channel',
+            probotAuthorId: '282859044593598464',
+            parserVersion: 'parser-v1',
+            confidence: 'none',
+            contentSource: 'content',
+            announcementTimestamp: 1,
+            diagnostic: {},
+        };
+        const cases = [
+            {
+                messageId: 'invalid-message',
+                original: { parseStatus: 'invalid_format', announcedLevel: null },
+                verified: { targetUserId: 'user-a', announcedLevel: 10 },
+            },
+            {
+                messageId: 'unresolved-message',
+                original: { parseStatus: 'unresolved_identity', announcedLevel: 20 },
+                verified: { targetUserId: 'user-b', announcedLevel: 20 },
+            },
+        ];
+
+        for (const item of cases) {
+            assert.equal((await store.insertLevelProbotAnnouncement({
+                ...base,
+                messageId: item.messageId,
+                targetUserId: null,
+                ...item.original,
+            })).inserted, true);
+            const upgraded = await store.insertLevelProbotAnnouncement({
+                ...base,
+                messageId: item.messageId,
+                jobId: 'verified-job',
+                parserVersion: 'parser-v2',
+                confidence: 'high',
+                diagnostic: { reason: 'parser_fixed' },
+                parseStatus: 'verified',
+                ...item.verified,
+            });
+
+            assert.equal(upgraded.inserted, false);
+            assert.equal(upgraded.updated, true);
+            assert.equal(upgraded.record.parseStatus, 'verified');
+            assert.equal(upgraded.record.targetUserId, item.verified.targetUserId);
+            assert.equal(upgraded.record.announcedLevel, item.verified.announcedLevel);
+            assert.equal(upgraded.record.parserVersion, 'parser-v2');
+            assert.equal(upgraded.record.jobId, 'verified-job');
+        }
+
+        const records = await store.listLevelProbotAnnouncements('guild', { limit: 10 });
+        const highest = await store.listHighestProbotAnnouncementLevels('guild');
+
+        assert.equal(records.length, 2);
+        assert.deepEqual(highest.map(row => row.userId).sort(), ['user-a', 'user-b']);
+    });
+});
+
+test('SQLite ProBot announcement upsert never downgrades verified evidence', async () => {
+    await withIsolatedStore(async ({ store }) => {
+        const base = {
+            guildId: 'guild',
+            sourceChannelId: 'channel',
+            messageId: 'message',
+            probotAuthorId: '282859044593598464',
+            announcementTimestamp: 1,
+            contentSource: 'content',
+        };
+
+        assert.equal((await store.insertLevelProbotAnnouncement({
+            ...base,
+            jobId: 'verified-job',
+            targetUserId: 'user',
+            announcedLevel: 10,
+            parserVersion: 'parser-v1',
+            parseStatus: 'verified',
+            confidence: 'high',
+            diagnostic: { source: 'verified' },
+        })).inserted, true);
+        const downgraded = await store.insertLevelProbotAnnouncement({
+            ...base,
+            jobId: 'invalid-job',
+            targetUserId: null,
+            announcedLevel: null,
+            parserVersion: 'parser-v2',
+            parseStatus: 'invalid_format',
+            confidence: 'none',
+            diagnostic: { source: 'invalid' },
+        });
+
+        assert.equal(downgraded.inserted, false);
+        assert.equal(downgraded.updated, false);
+        assert.equal(downgraded.record.parseStatus, 'verified');
+        assert.equal(downgraded.record.targetUserId, 'user');
+        assert.equal(downgraded.record.announcedLevel, 10);
+        assert.equal(downgraded.record.parserVersion, 'parser-v1');
+        assert.equal(downgraded.record.jobId, 'verified-job');
+        assert.deepEqual(downgraded.record.diagnostic, { source: 'verified' });
+    });
+});
+
 test('scanner paginates, checkpoints, and excludes non-ProBot authors', async () => {
     await withIsolatedStore(async ({ store }) => {
         const { processProbotScanJob } = require('../utils/probotRecovery');
@@ -273,6 +376,62 @@ test('scanner paginates, checkpoints, and excludes non-ProBot authors', async ()
         assert.equal(job.skippedCount, 1);
         assert.equal(checkpoints[0].status, 'completed');
         assert.equal(highest[0].announcementLevel, 30);
+    });
+});
+
+test('new ProBot scan uses fresh checkpoints and upgrades prior unresolved announcements', async () => {
+    await withIsolatedStore(async ({ store }) => {
+        const { processProbotScanJob } = require('../utils/probotRecovery');
+        const guild = fakeGuild([], { guildId: 'guild' });
+        const unresolvedMessage = fakeMessage('m1', 1, {
+            content: '@Member, you\'ve reached level 42!',
+            mentionIds: [],
+        });
+        guild.channels.cache.set('channel', fakeChannel('channel', guild, [unresolvedMessage]));
+        const first = await store.createLevelProbotScanJob({
+            guildId: 'guild',
+            sourceChannelId: 'channel',
+            sourceChannelIds: ['channel'],
+            probotAuthorId: '282859044593598464',
+        });
+
+        const firstJob = await processProbotScanJob(fakeClient(guild), first.job.id);
+        const firstCheckpoints = await store.listLevelProbotScanCheckpoints(first.job.id);
+        assert.equal(firstJob.status, 'completed');
+        assert.equal(firstJob.unresolvedCount, 1);
+        assert.equal(firstCheckpoints[0].status, 'completed');
+
+        const verifiedMessage = fakeMessage('m1', 1, {
+            level: 42,
+            userId: '100000000000000001',
+            mentionIds: ['100000000000000001'],
+        });
+        guild.channels.cache.set('channel', fakeChannel('channel', guild, [verifiedMessage]));
+        const second = await store.createLevelProbotScanJob({
+            guildId: 'guild',
+            sourceChannelId: 'channel',
+            sourceChannelIds: ['channel'],
+            probotAuthorId: '282859044593598464',
+        });
+
+        const secondJob = await processProbotScanJob(fakeClient(guild), second.job.id);
+        const secondCheckpoints = await store.listLevelProbotScanCheckpoints(second.job.id);
+        const allCheckpoints = await store.listLevelProbotScanCheckpoints();
+        const announcements = await store.listLevelProbotAnnouncements('guild', { limit: 10 });
+
+        assert.equal(second.ok, true);
+        assert.notEqual(second.job.id, first.job.id);
+        assert.equal(secondJob.status, 'completed');
+        assert.equal(secondJob.scannedCount, 1);
+        assert.equal(secondJob.verifiedCount, 1);
+        assert.equal(secondCheckpoints.length, 1);
+        assert.equal(secondCheckpoints[0].jobId, second.job.id);
+        assert.equal(secondCheckpoints[0].status, 'completed');
+        assert.equal(allCheckpoints.length, 2);
+        assert.equal(announcements.length, 1);
+        assert.equal(announcements[0].parseStatus, 'verified');
+        assert.equal(announcements[0].targetUserId, '100000000000000001');
+        assert.equal(announcements[0].announcedLevel, 42);
     });
 });
 
