@@ -48,6 +48,8 @@ function createEmptyState() {
         levelProbotScanJobs: [],
         levelProbotScanCheckpoints: [],
         levelProbotAnnouncements: [],
+        levelProbotMigrationBatches: [],
+        levelProbotMigrationSnapshots: [],
         levelProcessedMessages: [],
         levelRoleMappings: [],
         levelReconciliationRecords: [],
@@ -268,6 +270,8 @@ function clearNormalizedState(db) {
         DELETE FROM level_import_checkpoints;
         DELETE FROM level_import_processed_messages;
         DELETE FROM level_calibration_jobs;
+        DELETE FROM level_probot_migration_snapshots;
+        DELETE FROM level_probot_migration_batches;
         DELETE FROM level_probot_announcements;
         DELETE FROM level_probot_scan_checkpoints;
         DELETE FROM level_probot_scan_jobs;
@@ -1417,6 +1421,48 @@ async function summarizeProbotAnnouncementEvidence(guildId) {
     };
 }
 
+async function applyLevelProbotFinalMigration(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.applyLevelProbotFinalMigration(await getSqliteDb(), record);
+    throw new Error('Final ProBot XP migration requires SQLite storage.');
+}
+
+async function rollbackLevelProbotFinalMigration(batchId, options = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.rollbackLevelProbotFinalMigration(await getSqliteDb(), batchId, options);
+    throw new Error('Final ProBot XP migration rollback requires SQLite storage.');
+}
+
+async function getLevelProbotMigrationBatch(batchId) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.getLevelProbotMigrationBatch(await getSqliteDb(), batchId);
+    return ((await readState()).levelProbotMigrationBatches || []).find(item => item.id === batchId) || null;
+}
+
+async function listLevelProbotMigrationBatches(guildId = null, options = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listLevelProbotMigrationBatches(await getSqliteDb(), guildId, options);
+    const limit = Math.max(1, Number(options.limit || 50));
+    const statuses = Array.isArray(options.statuses) ? new Set(options.statuses) : null;
+    return ((await readState()).levelProbotMigrationBatches || [])
+        .filter(item => !guildId || item.guildId === guildId)
+        .filter(item => !statuses || statuses.has(item.status))
+        .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0))
+        .slice(0, limit);
+}
+
+async function listLevelProbotMigrationSnapshots(batchId = null, options = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listLevelProbotMigrationSnapshots(await getSqliteDb(), batchId, options);
+    const limit = Math.max(1, Number(options.limit || 10000));
+    return ((await readState()).levelProbotMigrationSnapshots || [])
+        .filter(item => !batchId || item.batchId === batchId)
+        .filter(item => !options.guildId || item.guildId === options.guildId)
+        .filter(item => !options.userId || item.userId === options.userId)
+        .sort((a, b) => Number(b.appliedAt || 0) - Number(a.appliedAt || 0))
+        .slice(0, limit);
+}
+
 async function upsertLevelImportCheckpoint(record) {
     const settings = getStorageSettings();
     if (settings.provider === 'sqlite') return repository.upsertLevelImportCheckpoint(await getSqliteDb(), record);
@@ -2201,6 +2247,7 @@ module.exports = {
     addModNote,
     addUserXp,
     adjustUserXp,
+    applyLevelProbotFinalMigration,
     appendVoiceActivity,
     clearWarningCases,
     countActiveModerationCases,
@@ -2223,6 +2270,7 @@ module.exports = {
     getGuildConfigurationOverrides,
     getLevelCalibrationJob,
     getLevelImportJob,
+    getLevelProbotMigrationBatch,
     getLevelProbotScanJob,
     getLevelRank,
     getLevelTestSession,
@@ -2257,6 +2305,8 @@ module.exports = {
     listLevelImportMessages,
     listLevelImportMessagesPage,
     listLevelProbotAnnouncements,
+    listLevelProbotMigrationBatches,
+    listLevelProbotMigrationSnapshots,
     listLevelProbotScanCheckpoints,
     listLevelProbotScanJobs,
     listHighestProbotAnnouncementLevels,
@@ -2274,6 +2324,7 @@ module.exports = {
     removeTempMute,
     removeTempRole,
     removeTempVoiceChannel,
+    rollbackLevelProbotFinalMigration,
     recordCommandUsage,
     requestCancelLevelCalibrationJob,
     requestCancelLevelImportJob,

@@ -334,6 +334,59 @@ function mapLevelProbotAnnouncement(row) {
     };
 }
 
+function mapLevelProbotMigrationBatch(row) {
+    if (!row) return null;
+    return {
+        id: row.id,
+        guildId: row.guild_id,
+        mode: row.mode,
+        status: row.status,
+        targetUserId: row.target_user_id,
+        currentMemberOnly: row.current_member_only !== 0,
+        importJobId: row.import_job_id,
+        createdBy: row.created_by,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        appliedAt: row.applied_at,
+        rolledBackAt: row.rolled_back_at,
+        recordsTotal: row.records_total,
+        affectedCount: row.affected_count,
+        rollbackCount: row.rollback_count,
+        xpDelta: row.xp_delta,
+        policy: parseJson(row.policy_json, {}),
+        result: parseJson(row.result_json, {}),
+        error: row.error,
+    };
+}
+
+function mapLevelProbotMigrationSnapshot(row) {
+    if (!row) return null;
+    return {
+        batchId: row.batch_id,
+        guildId: row.guild_id,
+        userId: row.user_id,
+        userTag: row.user_tag,
+        previousTextXp: row.previous_text_xp,
+        previousVoiceXp: row.previous_voice_xp,
+        previousLastTextXpAt: row.previous_last_text_xp_at,
+        previousCreatedAt: row.previous_created_at,
+        previousUpdatedAt: row.previous_updated_at,
+        targetTextXp: row.target_text_xp,
+        targetVoiceXp: row.target_voice_xp,
+        textDelta: row.text_delta,
+        confirmedLevel: row.confirmed_level,
+        requiredTotalXp: row.required_total_xp,
+        liveTextXp: row.live_text_xp,
+        priorHistoricalTextXp: row.prior_historical_text_xp,
+        priorFinalTextXp: row.prior_final_text_xp,
+        evidence: parseJson(row.evidence_json, {}),
+        appliedAt: row.applied_at,
+        rolledBackAt: row.rolled_back_at,
+        rollbackTextXp: row.rollback_text_xp,
+        rollbackVoiceXp: row.rollback_voice_xp,
+    };
+}
+
 function mapLevelRoleMapping(row) {
     if (!row) return null;
     return {
@@ -425,6 +478,8 @@ function readState(db) {
         levelProbotScanJobs: listLevelProbotScanJobs(db, null, { limit: 1000 }),
         levelProbotScanCheckpoints: listLevelProbotScanCheckpoints(db),
         levelProbotAnnouncements: db.prepare('SELECT * FROM level_probot_announcements ORDER BY announcement_timestamp DESC LIMIT 1000').all().map(mapLevelProbotAnnouncement),
+        levelProbotMigrationBatches: listLevelProbotMigrationBatches(db, null, { limit: 1000 }),
+        levelProbotMigrationSnapshots: listLevelProbotMigrationSnapshots(db, null, { limit: 1000 }),
         levelProcessedMessages: listLevelProcessedMessages(db, null, { limit: 1000 }),
         levelRoleMappings: listLevelRoleMappings(db),
         levelReconciliationRecords: listLevelReconciliationRecords(db, null, { limit: 1000 }),
@@ -1718,6 +1773,383 @@ function listLevelReconciliationRecords(db, jobId = null, options = {}) {
     return rows.map(mapLevelReconciliation);
 }
 
+const historicalLevelSources = ['historical_import', 'role_recovery'];
+
+function getPriorHistoricalTextXp(db, guildId, userId) {
+    const row = db.prepare(`
+        SELECT COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0) amount
+        FROM level_xp_events
+        WHERE guild_id = ?
+            AND user_id = ?
+            AND source IN (${historicalLevelSources.map(() => '?').join(', ')})
+    `).get(guildId, userId, ...historicalLevelSources);
+    return Number(row?.amount || 0);
+}
+
+function getActiveProbotMigrationTextXp(db, guildId, userId) {
+    const row = db.prepare(`
+        SELECT COALESCE(SUM(text_delta), 0) amount
+        FROM level_probot_migration_snapshots
+        WHERE guild_id = ?
+            AND user_id = ?
+            AND rolled_back_at IS NULL
+    `).get(guildId, userId);
+    return Number(row?.amount || 0);
+}
+
+function getLevelProbotMigrationBatch(db, id) {
+    return mapLevelProbotMigrationBatch(db.prepare('SELECT * FROM level_probot_migration_batches WHERE id = ?').get(id));
+}
+
+function listLevelProbotMigrationBatches(db, guildId = null, options = {}) {
+    const limit = Math.max(1, Math.min(1000, Number(options.limit || 50)));
+    const statuses = Array.isArray(options.statuses) ? options.statuses.filter(Boolean) : [];
+    const clauses = [];
+    const params = [];
+    if (guildId) {
+        clauses.push('guild_id = ?');
+        params.push(guildId);
+    }
+    if (statuses.length) {
+        clauses.push(`status IN (${statuses.map(() => '?').join(', ')})`);
+        params.push(...statuses);
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    return db.prepare(`SELECT * FROM level_probot_migration_batches ${where} ORDER BY updated_at DESC LIMIT ?`)
+        .all(...params, limit)
+        .map(mapLevelProbotMigrationBatch);
+}
+
+function listLevelProbotMigrationSnapshots(db, batchId = null, options = {}) {
+    const limit = Math.max(1, Math.min(100000, Number(options.limit || 10000)));
+    const guildId = options.guildId || null;
+    const userId = options.userId || null;
+    const clauses = [];
+    const params = [];
+    if (batchId) {
+        clauses.push('batch_id = ?');
+        params.push(batchId);
+    }
+    if (guildId) {
+        clauses.push('guild_id = ?');
+        params.push(guildId);
+    }
+    if (userId) {
+        clauses.push('user_id = ?');
+        params.push(userId);
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    return db.prepare(`SELECT * FROM level_probot_migration_snapshots ${where} ORDER BY applied_at DESC, user_id ASC LIMIT ?`)
+        .all(...params, limit)
+        .map(mapLevelProbotMigrationSnapshot);
+}
+
+function updateLevelProbotMigrationBatch(db, id, patch = {}) {
+    const existing = getLevelProbotMigrationBatch(db, id);
+    if (!existing) return null;
+    const next = { ...existing, ...patch, updatedAt: patch.updatedAt || now() };
+    db.prepare(`
+        UPDATE level_probot_migration_batches
+        SET mode = ?, status = ?, target_user_id = ?, current_member_only = ?,
+            import_job_id = ?, created_by = ?, updated_at = ?, applied_at = ?,
+            rolled_back_at = ?, records_total = ?, affected_count = ?,
+            rollback_count = ?, xp_delta = ?, policy_json = ?, result_json = ?, error = ?
+        WHERE id = ?
+    `).run(
+        next.mode,
+        next.status,
+        next.targetUserId || null,
+        next.currentMemberOnly ? 1 : 0,
+        next.importJobId || null,
+        next.createdBy || null,
+        next.updatedAt,
+        next.appliedAt || null,
+        next.rolledBackAt || null,
+        Number(next.recordsTotal || 0),
+        Number(next.affectedCount || 0),
+        Number(next.rollbackCount || 0),
+        Number(next.xpDelta || 0),
+        stringify(next.policy, {}),
+        stringify(next.result, {}),
+        next.error || null,
+        id,
+    );
+    return getLevelProbotMigrationBatch(db, id);
+}
+
+function insertLevelProbotMigrationBatch(db, record, timestamp) {
+    const batch = {
+        id: record.id || makeId(),
+        guildId: record.guildId,
+        mode: record.mode || 'server_apply',
+        status: record.status || 'applying',
+        targetUserId: record.targetUserId || null,
+        currentMemberOnly: record.currentMemberOnly === true,
+        importJobId: record.importJobId || null,
+        createdBy: record.createdBy || null,
+        createdAt: record.createdAt || timestamp,
+        appliedAt: record.appliedAt || null,
+        rolledBackAt: record.rolledBackAt || null,
+        recordsTotal: Number(record.recordsTotal || 0),
+        affectedCount: Number(record.affectedCount || 0),
+        rollbackCount: Number(record.rollbackCount || 0),
+        xpDelta: Number(record.xpDelta || 0),
+        policy: record.policy || {},
+        result: record.result || {},
+        error: record.error || null,
+    };
+    db.prepare(`
+        INSERT INTO level_probot_migration_batches (
+            id, guild_id, mode, status, target_user_id, current_member_only,
+            import_job_id, created_by, created_at, updated_at, policy_json, result_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO NOTHING
+    `).run(
+        batch.id,
+        batch.guildId,
+        batch.mode,
+        batch.status,
+        batch.targetUserId,
+        batch.currentMemberOnly ? 1 : 0,
+        batch.importJobId,
+        batch.createdBy,
+        batch.createdAt,
+        timestamp,
+        stringify(batch.policy, {}),
+        stringify(batch.result, {}),
+    );
+    updateLevelProbotMigrationBatch(db, batch.id, batch);
+    return getLevelProbotMigrationBatch(db, batch.id);
+}
+
+function calculateProbotMigrationTarget(db, proposal, previous) {
+    const currentText = Number(previous?.textXp || 0);
+    const currentVoice = Number(previous?.voiceXp || 0);
+    const requiredTotalXp = Math.max(0, Math.floor(Number(proposal.requiredTotalXp || 0)));
+    const priorHistoricalTextXp = getPriorHistoricalTextXp(db, proposal.guildId, proposal.userId);
+    const priorFinalTextXp = getActiveProbotMigrationTextXp(db, proposal.guildId, proposal.userId);
+    const liveTextXp = Math.max(0, currentText - priorHistoricalTextXp - priorFinalTextXp);
+    const targetTextXp = proposal.confirmedLevel > 0
+        ? Math.max(currentText, requiredTotalXp + liveTextXp)
+        : currentText;
+
+    return {
+        currentText,
+        currentVoice,
+        requiredTotalXp,
+        priorHistoricalTextXp,
+        priorFinalTextXp,
+        liveTextXp,
+        targetTextXp,
+        targetVoiceXp: currentVoice,
+        textDelta: Math.max(0, targetTextXp - currentText),
+    };
+}
+
+function insertLevelProbotMigrationSnapshot(db, batch, proposal, previous, target, timestamp) {
+    db.prepare(`
+        INSERT INTO level_probot_migration_snapshots (
+            batch_id, guild_id, user_id, user_tag, previous_text_xp,
+            previous_voice_xp, previous_last_text_xp_at, previous_created_at,
+            previous_updated_at, target_text_xp, target_voice_xp, text_delta,
+            confirmed_level, required_total_xp, live_text_xp,
+            prior_historical_text_xp, prior_final_text_xp, evidence_json,
+            applied_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+        batch.id,
+        proposal.guildId,
+        proposal.userId,
+        proposal.userTag || previous?.userTag || null,
+        Number(previous?.textXp || 0),
+        Number(previous?.voiceXp || 0),
+        Number(previous?.lastTextXpAt || 0),
+        previous?.createdAt || null,
+        previous?.updatedAt || null,
+        target.targetTextXp,
+        target.targetVoiceXp,
+        target.textDelta,
+        Number(proposal.confirmedLevel || 0),
+        target.requiredTotalXp,
+        target.liveTextXp,
+        target.priorHistoricalTextXp,
+        target.priorFinalTextXp,
+        stringify(proposal.evidence, {}),
+        timestamp,
+    );
+    return mapLevelProbotMigrationSnapshot(db.prepare('SELECT * FROM level_probot_migration_snapshots WHERE batch_id = ? AND user_id = ?').get(batch.id, proposal.userId));
+}
+
+function applyLevelProbotFinalMigration(db, record) {
+    return db.transaction(() => {
+        const timestamp = record.createdAt || now();
+        const proposals = Array.isArray(record.proposals) ? record.proposals : [];
+        const batch = insertLevelProbotMigrationBatch(db, {
+            ...record,
+            status: 'applying',
+        }, timestamp);
+        let affectedCount = 0;
+        let xpDelta = 0;
+        const snapshots = [];
+
+        for (const proposal of proposals) {
+            const normalized = {
+                ...proposal,
+                guildId: record.guildId,
+                userId: proposal.userId,
+                confirmedLevel: Math.max(0, Math.floor(Number(proposal.confirmedLevel || 0))),
+                requiredTotalXp: Math.max(0, Math.floor(Number(proposal.requiredTotalXp || 0))),
+            };
+            const previous = getUserLevelRecord(db, normalized.guildId, normalized.userId);
+            const base = previous || {
+                guildId: normalized.guildId,
+                userId: normalized.userId,
+                userTag: normalized.userTag || null,
+                textXp: 0,
+                voiceXp: 0,
+                lastTextXpAt: 0,
+                createdAt: timestamp,
+                updatedAt: timestamp,
+            };
+            const target = calculateProbotMigrationTarget(db, normalized, base);
+            if (target.textDelta <= 0) continue;
+
+            const updated = upsertLevelRecord(db, {
+                ...base,
+                userTag: normalized.userTag || base.userTag || null,
+                textXp: target.targetTextXp,
+                voiceXp: target.targetVoiceXp,
+                updatedAt: timestamp,
+            });
+            insertLevelXpEvent(db, {
+                guildId: normalized.guildId,
+                userId: normalized.userId,
+                userTag: normalized.userTag || base.userTag || null,
+                source: 'probot_final_migration',
+                sourceKey: `${batch.id}:${normalized.userId}:apply`,
+                xpType: 'text',
+                amount: target.textDelta,
+                previousTextXp: Number(base.textXp || 0),
+                previousVoiceXp: Number(base.voiceXp || 0),
+                newTextXp: updated.textXp,
+                newVoiceXp: updated.voiceXp,
+                adminId: record.createdBy || null,
+                jobId: batch.id,
+                metadata: {
+                    policy: record.policy || {},
+                    confirmedLevel: normalized.confirmedLevel,
+                    requiredTotalXp: target.requiredTotalXp,
+                    liveTextXp: target.liveTextXp,
+                    priorHistoricalTextXp: target.priorHistoricalTextXp,
+                    priorFinalTextXp: target.priorFinalTextXp,
+                    evidence: normalized.evidence || {},
+                },
+                createdAt: timestamp,
+            });
+            snapshots.push(insertLevelProbotMigrationSnapshot(db, batch, normalized, previous, target, timestamp));
+            affectedCount += 1;
+            xpDelta += target.textDelta;
+        }
+
+        const applied = updateLevelProbotMigrationBatch(db, batch.id, {
+            status: 'applied',
+            appliedAt: timestamp,
+            recordsTotal: proposals.length,
+            affectedCount,
+            xpDelta,
+            result: {
+                ...(record.result || {}),
+                affectedCount,
+                xpDelta,
+            },
+        });
+        return { batch: applied, snapshots };
+    })();
+}
+
+function rollbackLevelProbotFinalMigration(db, batchId, options = {}) {
+    return db.transaction(() => {
+        const timestamp = options.createdAt || now();
+        const batch = getLevelProbotMigrationBatch(db, batchId);
+        if (!batch) return null;
+        if (batch.status === 'rolled_back') {
+            return {
+                batch,
+                snapshots: listLevelProbotMigrationSnapshots(db, batchId),
+                rollbackCount: 0,
+                xpDelta: 0,
+            };
+        }
+
+        const snapshots = listLevelProbotMigrationSnapshots(db, batchId, { limit: 100000 })
+            .filter(snapshot => !snapshot.rolledBackAt);
+        let rollbackCount = 0;
+        let xpDelta = 0;
+        const updatedSnapshots = [];
+
+        for (const snapshot of snapshots) {
+            const current = getUserLevelRecord(db, snapshot.guildId, snapshot.userId);
+            if (!current) continue;
+            const rollbackTextXp = Math.max(
+                Number(snapshot.previousTextXp || 0),
+                Number(current.textXp || 0) - Number(snapshot.textDelta || 0),
+            );
+            const rollbackVoiceXp = Number(current.voiceXp || 0);
+            const updated = upsertLevelRecord(db, {
+                ...current,
+                textXp: rollbackTextXp,
+                voiceXp: rollbackVoiceXp,
+                updatedAt: timestamp,
+            });
+            const amount = Number(updated.textXp || 0) - Number(current.textXp || 0);
+            insertLevelXpEvent(db, {
+                guildId: snapshot.guildId,
+                userId: snapshot.userId,
+                userTag: current.userTag || snapshot.userTag || null,
+                source: 'probot_final_migration_rollback',
+                sourceKey: `${batch.id}:${snapshot.userId}:rollback`,
+                xpType: 'text',
+                amount,
+                previousTextXp: current.textXp,
+                previousVoiceXp: current.voiceXp,
+                newTextXp: updated.textXp,
+                newVoiceXp: updated.voiceXp,
+                adminId: options.adminId || null,
+                jobId: batch.id,
+                metadata: {
+                    restoredFromBatch: batch.id,
+                    originalTextDelta: snapshot.textDelta,
+                    previousTextXp: snapshot.previousTextXp,
+                    preservedLiveTextXp: Math.max(0, Number(current.textXp || 0) - Number(snapshot.targetTextXp || 0)),
+                },
+                createdAt: timestamp,
+            });
+            db.prepare(`
+                UPDATE level_probot_migration_snapshots
+                SET rolled_back_at = ?, rollback_text_xp = ?, rollback_voice_xp = ?
+                WHERE batch_id = ? AND user_id = ?
+            `).run(timestamp, updated.textXp, updated.voiceXp, snapshot.batchId, snapshot.userId);
+            updatedSnapshots.push(mapLevelProbotMigrationSnapshot(db.prepare('SELECT * FROM level_probot_migration_snapshots WHERE batch_id = ? AND user_id = ?').get(snapshot.batchId, snapshot.userId)));
+            rollbackCount += 1;
+            xpDelta += amount;
+        }
+
+        const rolledBack = updateLevelProbotMigrationBatch(db, batch.id, {
+            status: 'rolled_back',
+            rolledBackAt: timestamp,
+            rollbackCount,
+            result: {
+                ...(batch.result || {}),
+                rollbackCount,
+                rollbackXpDelta: xpDelta,
+            },
+        });
+        return { batch: rolledBack, snapshots: updatedSnapshots, rollbackCount, xpDelta };
+    })();
+}
+
 function createLevelTestSession(db, record) {
     const timestamp = record.createdAt || now();
     const session = {
@@ -2274,6 +2706,43 @@ function importState(db, state = {}) {
     count('levelProbotScanJobs', state.levelProbotScanJobs, record => createLevelProbotScanJob(db, record));
     count('levelProbotScanCheckpoints', state.levelProbotScanCheckpoints, record => upsertLevelProbotScanCheckpoint(db, record));
     count('levelProbotAnnouncements', state.levelProbotAnnouncements, record => insertLevelProbotAnnouncement(db, record));
+    count('levelProbotMigrationBatches', state.levelProbotMigrationBatches, record => insertLevelProbotMigrationBatch(db, record, record.createdAt || now()));
+    count('levelProbotMigrationSnapshots', state.levelProbotMigrationSnapshots, record => {
+        db.prepare(`
+            INSERT OR IGNORE INTO level_probot_migration_snapshots (
+                batch_id, guild_id, user_id, user_tag, previous_text_xp,
+                previous_voice_xp, previous_last_text_xp_at, previous_created_at,
+                previous_updated_at, target_text_xp, target_voice_xp, text_delta,
+                confirmed_level, required_total_xp, live_text_xp,
+                prior_historical_text_xp, prior_final_text_xp, evidence_json,
+                applied_at, rolled_back_at, rollback_text_xp, rollback_voice_xp
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+            record.batchId,
+            record.guildId,
+            record.userId,
+            record.userTag || null,
+            Number(record.previousTextXp || 0),
+            Number(record.previousVoiceXp || 0),
+            Number(record.previousLastTextXpAt || 0),
+            record.previousCreatedAt || null,
+            record.previousUpdatedAt || null,
+            Number(record.targetTextXp || 0),
+            Number(record.targetVoiceXp || 0),
+            Number(record.textDelta || 0),
+            Number(record.confirmedLevel || 0),
+            Number(record.requiredTotalXp || 0),
+            Number(record.liveTextXp || 0),
+            Number(record.priorHistoricalTextXp || 0),
+            Number(record.priorFinalTextXp || 0),
+            stringify(record.evidence, {}),
+            record.appliedAt || null,
+            record.rolledBackAt || null,
+            record.rollbackTextXp ?? null,
+            record.rollbackVoiceXp ?? null,
+        );
+    });
     count('levelProcessedMessages', state.levelProcessedMessages, record => markLevelImportMessageProcessed(db, record));
     count('levelRoleMappings', state.levelRoleMappings, record => upsertLevelRoleMapping(db, record));
     count('levelReconciliationRecords', state.levelReconciliationRecords, record => insertLevelReconciliationRecord(db, record));
@@ -2288,6 +2757,7 @@ module.exports = {
     addUserHistory,
     addUserXp,
     adjustUserXp,
+    applyLevelProbotFinalMigration,
     appendVoiceActivity,
     clearWarningCases,
     countActiveModerationCases,
@@ -2312,6 +2782,7 @@ module.exports = {
     getTicketTranscript,
     getLevelCalibrationJob,
     getLevelImportJob,
+    getLevelProbotMigrationBatch,
     getLevelProbotScanJob,
     getLevelRank,
     getLevelTestSession,
@@ -2340,6 +2811,8 @@ module.exports = {
     listLevelImportMessages,
     listLevelImportMessagesPage,
     listLevelProbotAnnouncements,
+    listLevelProbotMigrationBatches,
+    listLevelProbotMigrationSnapshots,
     listLevelProbotScanCheckpoints,
     listLevelProbotScanJobs,
     listHighestProbotAnnouncementLevels,
@@ -2365,6 +2838,7 @@ module.exports = {
     removeTempRole,
     removeTempVoiceChannel,
     removeLevelRoleMapping,
+    rollbackLevelProbotFinalMigration,
     requestCancelLevelImportJob,
     requestCancelLevelProbotScanJob,
     requestCancelLevelCalibrationJob,

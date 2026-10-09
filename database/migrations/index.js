@@ -295,4 +295,62 @@ module.exports = [
             CREATE INDEX IF NOT EXISTS idx_level_probot_announcements_channel_time ON level_probot_announcements(guild_id, source_channel_id, announcement_timestamp);
         `,
     },
+    {
+        version: 8,
+        name: 'probot_final_level_migration',
+        sql: `
+            CREATE TABLE IF NOT EXISTS level_probot_migration_batches (
+                id TEXT PRIMARY KEY,
+                guild_id TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                status TEXT NOT NULL,
+                target_user_id TEXT,
+                current_member_only INTEGER NOT NULL DEFAULT 0,
+                import_job_id TEXT,
+                created_by TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                applied_at INTEGER,
+                rolled_back_at INTEGER,
+                records_total INTEGER NOT NULL DEFAULT 0,
+                affected_count INTEGER NOT NULL DEFAULT 0,
+                rollback_count INTEGER NOT NULL DEFAULT 0,
+                xp_delta INTEGER NOT NULL DEFAULT 0,
+                policy_json TEXT NOT NULL DEFAULT '{}',
+                result_json TEXT NOT NULL DEFAULT '{}',
+                error TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_level_probot_migration_batches_guild ON level_probot_migration_batches(guild_id, updated_at);
+            CREATE INDEX IF NOT EXISTS idx_level_probot_migration_batches_status ON level_probot_migration_batches(guild_id, status, updated_at);
+
+            CREATE TABLE IF NOT EXISTS level_probot_migration_snapshots (
+                batch_id TEXT NOT NULL,
+                guild_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                user_tag TEXT,
+                previous_text_xp INTEGER NOT NULL DEFAULT 0,
+                previous_voice_xp INTEGER NOT NULL DEFAULT 0,
+                previous_last_text_xp_at INTEGER NOT NULL DEFAULT 0,
+                previous_created_at INTEGER,
+                previous_updated_at INTEGER,
+                target_text_xp INTEGER NOT NULL DEFAULT 0,
+                target_voice_xp INTEGER NOT NULL DEFAULT 0,
+                text_delta INTEGER NOT NULL DEFAULT 0,
+                confirmed_level INTEGER NOT NULL DEFAULT 0,
+                required_total_xp INTEGER NOT NULL DEFAULT 0,
+                live_text_xp INTEGER NOT NULL DEFAULT 0,
+                prior_historical_text_xp INTEGER NOT NULL DEFAULT 0,
+                prior_final_text_xp INTEGER NOT NULL DEFAULT 0,
+                evidence_json TEXT NOT NULL DEFAULT '{}',
+                applied_at INTEGER,
+                rolled_back_at INTEGER,
+                rollback_text_xp INTEGER,
+                rollback_voice_xp INTEGER,
+                PRIMARY KEY (batch_id, user_id),
+                FOREIGN KEY (batch_id) REFERENCES level_probot_migration_batches(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_level_probot_migration_snapshots_guild_user ON level_probot_migration_snapshots(guild_id, user_id, applied_at);
+            CREATE INDEX IF NOT EXISTS idx_level_probot_migration_snapshots_active ON level_probot_migration_snapshots(guild_id, user_id) WHERE rolled_back_at IS NULL;
+        `,
+    },
 ];
