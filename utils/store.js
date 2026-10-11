@@ -40,6 +40,8 @@ function createEmptyState() {
         guildLevelRewards: [],
         configAudit: [],
         limitedAccounts: [],
+        rankCardPreferences: [],
+        rankCardBackgrounds: [],
         levelXpEvents: [],
         levelImportJobs: [],
         levelImportCheckpoints: [],
@@ -265,6 +267,8 @@ function clearNormalizedState(db) {
         DELETE FROM guild_log_channels;
         DELETE FROM guild_settings;
         DELETE FROM honeypot_limited_accounts;
+        DELETE FROM rank_card_preferences;
+        DELETE FROM rank_card_backgrounds;
         DELETE FROM level_xp_events;
         DELETE FROM level_import_messages;
         DELETE FROM level_import_checkpoints;
@@ -480,6 +484,116 @@ async function markLimitedAccountFailed(guildId, userId, options = {}) {
         return state;
     });
     return updated;
+}
+
+function normalizeRankCardPreference(record, timestamp = Date.now()) {
+    return {
+        guildId: record.guildId,
+        userId: record.userId,
+        backgroundType: record.backgroundType || 'default',
+        backgroundKey: record.backgroundKey || null,
+        accentColor: record.accentColor || null,
+        createdAt: record.createdAt || timestamp,
+        updatedAt: record.updatedAt || timestamp,
+    };
+}
+
+async function getRankCardPreference(guildId, userId) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.getRankCardPreference(await getSqliteDb(), guildId, userId);
+    return ((await readState()).rankCardPreferences || []).find(item => item.guildId === guildId && item.userId === userId) || null;
+}
+
+async function listRankCardPreferences(guildId = null) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listRankCardPreferences(await getSqliteDb(), guildId);
+    return ((await readState()).rankCardPreferences || [])
+        .filter(item => !guildId || item.guildId === guildId)
+        .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
+}
+
+async function upsertRankCardPreference(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.upsertRankCardPreference(await getSqliteDb(), record);
+
+    let saved = null;
+    await useLegacyStateMutation(state => {
+        state.rankCardPreferences ||= [];
+        const existing = state.rankCardPreferences.find(item => item.guildId === record.guildId && item.userId === record.userId);
+        saved = normalizeRankCardPreference({
+            ...record,
+            createdAt: record.createdAt || existing?.createdAt,
+        });
+        state.rankCardPreferences = state.rankCardPreferences.filter(item => !(item.guildId === saved.guildId && item.userId === saved.userId));
+        state.rankCardPreferences.push(saved);
+        return state;
+    });
+    return saved;
+}
+
+async function deleteRankCardPreference(guildId, userId) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.deleteRankCardPreference(await getSqliteDb(), guildId, userId);
+    return useLegacyStateMutation(state => {
+        state.rankCardPreferences ||= [];
+        state.rankCardPreferences = state.rankCardPreferences.filter(item => !(item.guildId === guildId && item.userId === userId));
+        return state;
+    });
+}
+
+function normalizeRankCardBackground(record, timestamp = Date.now()) {
+    return {
+        guildId: record.guildId,
+        backgroundId: record.backgroundId,
+        name: record.name,
+        assetPath: record.assetPath,
+        createdBy: record.createdBy || null,
+        createdAt: record.createdAt || timestamp,
+        updatedAt: record.updatedAt || timestamp,
+    };
+}
+
+async function getRankCardBackground(guildId, backgroundId) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.getRankCardBackground(await getSqliteDb(), guildId, backgroundId);
+    return ((await readState()).rankCardBackgrounds || []).find(item => item.guildId === guildId && item.backgroundId === backgroundId) || null;
+}
+
+async function listRankCardBackgrounds(guildId = null) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listRankCardBackgrounds(await getSqliteDb(), guildId);
+    return ((await readState()).rankCardBackgrounds || [])
+        .filter(item => !guildId || item.guildId === guildId)
+        .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+}
+
+async function upsertRankCardBackground(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.upsertRankCardBackground(await getSqliteDb(), record);
+
+    let saved = null;
+    await useLegacyStateMutation(state => {
+        state.rankCardBackgrounds ||= [];
+        const existing = state.rankCardBackgrounds.find(item => item.guildId === record.guildId && item.backgroundId === record.backgroundId);
+        saved = normalizeRankCardBackground({
+            ...record,
+            createdAt: record.createdAt || existing?.createdAt,
+        });
+        state.rankCardBackgrounds = state.rankCardBackgrounds.filter(item => !(item.guildId === saved.guildId && item.backgroundId === saved.backgroundId));
+        state.rankCardBackgrounds.push(saved);
+        return state;
+    });
+    return saved;
+}
+
+async function deleteRankCardBackground(guildId, backgroundId) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.deleteRankCardBackground(await getSqliteDb(), guildId, backgroundId);
+    return useLegacyStateMutation(state => {
+        state.rankCardBackgrounds ||= [];
+        state.rankCardBackgrounds = state.rankCardBackgrounds.filter(item => !(item.guildId === guildId && item.backgroundId === backgroundId));
+        return state;
+    });
 }
 
 async function createModerationCase(record) {
@@ -2261,6 +2375,8 @@ module.exports = {
     createReminder,
     createScheduledMessage,
     createTicketTranscript,
+    deleteRankCardBackground,
+    deleteRankCardPreference,
     deleteScheduledMessage,
     deleteEmbedTemplate,
     deleteModNote,
@@ -2275,6 +2391,8 @@ module.exports = {
     getLevelRank,
     getLevelTestSession,
     getLimitedAccount,
+    getRankCardBackground,
+    getRankCardPreference,
     getRetentionSettings,
     getTempVoiceChannel,
     getTicketRecord,
@@ -2293,6 +2411,8 @@ module.exports = {
     listDueScheduledMessages,
     listConfigAudit,
     listModNotes,
+    listRankCardBackgrounds,
+    listRankCardPreferences,
     listScheduledMessages,
     listScheduledJobStatus,
     listTicketRecords,
@@ -2350,6 +2470,8 @@ module.exports = {
     updateScheduledMessageStatus,
     updateModerationCaseReason,
     upsertEmbedTemplate,
+    upsertRankCardBackground,
+    upsertRankCardPreference,
     beginLimitedAccount,
     upsertLevelImportCheckpoint,
     upsertLevelProbotScanCheckpoint,

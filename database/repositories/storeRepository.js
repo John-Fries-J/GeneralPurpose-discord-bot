@@ -1,6 +1,7 @@
 const { makeId } = require('./ids');
 const historyRepository = require('./historyRepository');
 const honeypotLimitedAccountsRepository = require('./honeypotLimitedAccountsRepository');
+const rankCardRepository = require('./rankCardRepository');
 const { now, parseJson, pruneTableByNewest, stringify } = require('./shared');
 
 function mapCase(row) {
@@ -470,6 +471,8 @@ function readState(db) {
         guildLevelRewards: listAllGuildLevelRewards(db),
         configAudit: listConfigAudit(db, null, { limit: 1000 }),
         limitedAccounts: honeypotLimitedAccountsRepository.listLimitedAccounts(db),
+        rankCardPreferences: rankCardRepository.listRankCardPreferences(db),
+        rankCardBackgrounds: rankCardRepository.listRankCardBackgrounds(db),
         levelXpEvents: listLevelXpEvents(db, null, { limit: 1000 }),
         levelImportJobs: listLevelImportJobs(db, null, { limit: 1000 }),
         levelImportCheckpoints: listLevelImportCheckpoints(db),
@@ -2698,6 +2701,8 @@ function importState(db, state = {}) {
     });
     count('configAudit', state.configAudit, record => addConfigAuditEntries(db, [record]));
     count('limitedAccounts', state.limitedAccounts, record => honeypotLimitedAccountsRepository.upsertLimitedAccount(db, record));
+    count('rankCardPreferences', state.rankCardPreferences, record => rankCardRepository.upsertRankCardPreference(db, record));
+    count('rankCardBackgrounds', state.rankCardBackgrounds, record => rankCardRepository.upsertRankCardBackground(db, record));
     count('levelXpEvents', state.levelXpEvents, record => insertLevelXpEvent(db, record));
     count('levelImportJobs', state.levelImportJobs, record => createLevelImportJob(db, record));
     count('levelImportCheckpoints', state.levelImportCheckpoints, record => upsertLevelImportCheckpoint(db, record));
@@ -2753,6 +2758,7 @@ function importState(db, state = {}) {
 
 module.exports = {
     ...honeypotLimitedAccountsRepository,
+    ...rankCardRepository,
     addModNote,
     addUserHistory,
     addUserXp,

@@ -133,6 +133,9 @@ function getLevelingConfig(config = getConfig()) {
         rankCard: {
             enabled: bool(rankCard.enabled, true),
             theme: String(rankCard.theme || 'blue'),
+            accentColor: String(rankCard.accentColor || ''),
+            accentAltColor: String(rankCard.accentAltColor || ''),
+            defaultBackgroundId: String(rankCard.defaultBackgroundId || rankCard.backgroundId || ''),
             backgroundUrl: String(rankCard.backgroundUrl || ''),
             leaderboardBackgroundUrl: String(rankCard.leaderboardBackgroundUrl || ''),
         },

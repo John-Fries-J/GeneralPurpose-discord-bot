@@ -353,4 +353,34 @@ module.exports = [
             CREATE INDEX IF NOT EXISTS idx_level_probot_migration_snapshots_active ON level_probot_migration_snapshots(guild_id, user_id) WHERE rolled_back_at IS NULL;
         `,
     },
+    {
+        version: 9,
+        name: 'rank_card_preferences',
+        sql: `
+            CREATE TABLE IF NOT EXISTS rank_card_preferences (
+                guild_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                background_type TEXT NOT NULL DEFAULT 'default',
+                background_key TEXT,
+                accent_color TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (guild_id, user_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_rank_card_preferences_updated ON rank_card_preferences(updated_at);
+
+            CREATE TABLE IF NOT EXISTS rank_card_backgrounds (
+                guild_id TEXT NOT NULL,
+                background_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                asset_path TEXT NOT NULL,
+                created_by TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (guild_id, background_id),
+                UNIQUE (guild_id, name)
+            );
+            CREATE INDEX IF NOT EXISTS idx_rank_card_backgrounds_guild ON rank_card_backgrounds(guild_id, name);
+        `,
+    },
 ];

@@ -106,6 +106,9 @@ const builtInSections = Object.freeze({
         rankCard: {
             enabled: true,
             theme: 'blue',
+            accentColor: '',
+            accentAltColor: '',
+            defaultBackgroundId: '',
             backgroundUrl: '',
             leaderboardBackgroundUrl: '',
         },

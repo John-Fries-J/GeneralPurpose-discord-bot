@@ -5,6 +5,7 @@ module.exports = {
     guildSettings: require('./guildSettingsRepository'),
     honeypotLimitedAccounts: require('./honeypotLimitedAccountsRepository'),
     leveling: require('./levelingRepository'),
+    rankCard: require('./rankCardRepository'),
     history: require('./historyRepository'),
     scheduler: require('./schedulerRepository'),
     voice: require('./voiceRepository'),
