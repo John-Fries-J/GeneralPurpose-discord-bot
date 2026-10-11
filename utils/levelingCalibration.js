@@ -338,6 +338,15 @@ async function buildRoleEvidence(guild, settings, options = {}) {
             complete: true,
             error: null,
             membersFetched: 0,
+            memberFetch: {
+                complete: true,
+                source: 'not_required',
+                expectedMembers: 0,
+                membersFetched: 0,
+                fetchAttempts: 0,
+                retryDelaysMs: [],
+                errors: [],
+            },
             evidence: new Map(),
             records: [],
         };
@@ -346,7 +355,7 @@ async function buildRoleEvidence(guild, settings, options = {}) {
     const targetUserIds = options.targetUserIds
         ? new Set([...options.targetUserIds].map(String))
         : (options.targetUserId ? new Set([String(options.targetUserId)]) : null);
-    const fetched = await fetchMembersForRoleRecovery(guild, targetUserIds || null);
+    const fetched = await fetchMembersForRoleRecovery(guild, targetUserIds || null, options.memberFetch || {});
     const evidence = new Map();
     for (const member of fetched.members) {
         if (member.user?.bot) continue;
@@ -360,6 +369,16 @@ async function buildRoleEvidence(guild, settings, options = {}) {
         complete: fetched.complete,
         error: fetched.error,
         membersFetched: fetched.members.length,
+        memberFetch: {
+            complete: fetched.complete,
+            source: fetched.source || 'unknown',
+            expectedMembers: fetched.expectedMembers || 0,
+            membersFetched: fetched.membersFetched ?? fetched.members.length,
+            fetchAttempts: fetched.fetchAttempts || 0,
+            retryDelaysMs: fetched.retryDelaysMs || [],
+            errors: fetched.errors || [],
+            error: fetched.error || null,
+        },
         evidence,
         records: [...evidence.values()].sort((a, b) => b.roleMinLevel - a.roleMinLevel || String(a.userId).localeCompare(String(b.userId))),
     };

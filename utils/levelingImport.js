@@ -1,3 +1,4 @@
+const { setTimeout: delay } = require('node:timers/promises');
 const { ChannelType, PermissionFlagsBits } = require('discord.js');
 const {
     countProcessedLevelMessage,
@@ -48,6 +49,198 @@ const threadContainerTypes = new Set([
 
 function compactError(error) {
     return error?.message || String(error || 'Unknown error');
+}
+
+function finiteNumber(value, fallback = 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function integerOption(value, fallback, { min = 0, max = Number.MAX_SAFE_INTEGER } = {}) {
+    return Math.max(min, Math.min(max, Math.floor(finiteNumber(value, fallback))));
+}
+
+function guildMemberCount(guild) {
+    return integerOption(guild?.memberCount, 0);
+}
+
+function cachedGuildMembers(guild) {
+    return [...(guild?.members?.cache?.values?.() || [])];
+}
+
+function fetchedGuildMembers(fetched, guild) {
+    const values = fetched?.values?.();
+    if (values) return [...values];
+    return cachedGuildMembers(guild);
+}
+
+function isCompleteCachedMemberList(guild) {
+    const expected = guildMemberCount(guild);
+    return expected > 0 && cachedGuildMembers(guild).length >= expected;
+}
+
+function memberFetchResult({ complete, members, error = null, source = 'unknown', expectedMembers = 0, fetchAttempts = 0, retryDelaysMs = [], errors = [] }) {
+    return {
+        complete,
+        members,
+        error,
+        source,
+        expectedMembers,
+        membersFetched: members.length,
+        fetchAttempts,
+        retryDelaysMs,
+        errors,
+    };
+}
+
+function retryAfterMsFromError(error) {
+    const gatewayRetryAfter = finiteNumber(error?.data?.retry_after, NaN);
+    if (Number.isFinite(gatewayRetryAfter)) return Math.max(0, Math.ceil(gatewayRetryAfter * 1000));
+
+    const restRetryAfter = finiteNumber(error?.retryAfter, NaN);
+    if (Number.isFinite(restRetryAfter)) return Math.max(0, Math.ceil(restRetryAfter));
+
+    const match = compactError(error).match(/retry after\s+([\d.]+)\s+seconds/i);
+    if (!match) return null;
+    return Math.max(0, Math.ceil(Number(match[1]) * 1000));
+}
+
+function memberFetchRetryDelayMs(error, attempt, options = {}) {
+    const maxRetryDelayMs = integerOption(options.maxRetryDelayMs, 60_000, { min: 0 });
+    const minRetryDelayMs = integerOption(options.minRetryDelayMs, 1_000, { min: 0 });
+    const rateLimitBufferMs = integerOption(options.rateLimitBufferMs, 250, { min: 0 });
+    const retryAfterMs = retryAfterMsFromError(error);
+    if (retryAfterMs !== null) {
+        const delayMs = retryAfterMs + rateLimitBufferMs;
+        return delayMs <= maxRetryDelayMs ? Math.max(minRetryDelayMs, delayMs) : null;
+    }
+    return Math.min(maxRetryDelayMs, Math.max(minRetryDelayMs, minRetryDelayMs * (2 ** attempt)));
+}
+
+async function waitForMemberFetchRetry(delayMs, options = {}) {
+    if (delayMs <= 0) return;
+    if (typeof options.delay === 'function') {
+        await options.delay(delayMs);
+        return;
+    }
+    await delay(delayMs);
+}
+
+async function fetchSingleMemberForRoleRecovery(guild, userId, options = {}) {
+    const cached = guild.members.cache.get(String(userId));
+    if (cached && options.preferCache !== false) {
+        return { member: cached, source: 'cache', fetchAttempts: 0, errors: [], retryDelaysMs: [] };
+    }
+
+    const maxRetries = integerOption(options.maxRetries, 2, { min: 0, max: 5 });
+    const errors = [];
+    const retryDelaysMs = [];
+    let fetchAttempts = 0;
+    for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+        fetchAttempts += 1;
+        try {
+            const member = await guild.members.fetch(String(userId));
+            return { member, source: 'fetch', fetchAttempts, errors, retryDelaysMs };
+        } catch (error) {
+            errors.push(compactError(error));
+            const fallback = guild.members.cache.get(String(userId));
+            if (fallback && options.preferCache !== false) {
+                return { member: fallback, source: 'cache_after_fetch_error', fetchAttempts, errors, retryDelaysMs };
+            }
+            if (attempt >= maxRetries) break;
+            const delayMs = memberFetchRetryDelayMs(error, attempt, options);
+            if (delayMs === null) break;
+            retryDelaysMs.push(delayMs);
+            await waitForMemberFetchRetry(delayMs, options);
+        }
+    }
+
+    return {
+        member: null,
+        source: 'missing',
+        fetchAttempts,
+        errors,
+        retryDelaysMs,
+    };
+}
+
+async function fetchAllMembersForRoleRecovery(guild, options = {}) {
+    const expectedMembers = guildMemberCount(guild);
+    if (isCompleteCachedMemberList(guild) && options.preferCache !== false) {
+        return memberFetchResult({
+            complete: true,
+            members: cachedGuildMembers(guild),
+            source: 'cache_complete',
+            expectedMembers,
+        });
+    }
+
+    if (typeof guild?.members?.fetch !== 'function') {
+        const members = cachedGuildMembers(guild);
+        const complete = expectedMembers > 0 && members.length >= expectedMembers;
+        return memberFetchResult({
+            complete,
+            members,
+            source: complete ? 'cache_complete' : 'cache_partial',
+            expectedMembers,
+            error: complete ? null : 'Guild member fetch is unavailable and the member cache is incomplete.',
+        });
+    }
+
+    const maxRetries = integerOption(options.maxRetries, 2, { min: 0, max: 5 });
+    const errors = [];
+    const retryDelaysMs = [];
+    let fetchAttempts = 0;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+        fetchAttempts += 1;
+        try {
+            const fetched = await guild.members.fetch();
+            const members = fetchedGuildMembers(fetched, guild);
+            const complete = expectedMembers <= 0 || members.length >= expectedMembers;
+            return memberFetchResult({
+                complete,
+                members,
+                source: 'gateway_fetch',
+                expectedMembers,
+                fetchAttempts,
+                retryDelaysMs,
+                errors,
+                error: complete ? null : `Fetched ${members.length} of ${expectedMembers} guild members.`,
+            });
+        } catch (error) {
+            errors.push(compactError(error));
+            if (isCompleteCachedMemberList(guild) && options.preferCache !== false) {
+                return memberFetchResult({
+                    complete: true,
+                    members: cachedGuildMembers(guild),
+                    source: 'cache_complete_after_fetch_error',
+                    expectedMembers,
+                    fetchAttempts,
+                    retryDelaysMs,
+                    errors,
+                });
+            }
+            if (attempt >= maxRetries) break;
+            const delayMs = memberFetchRetryDelayMs(error, attempt, options);
+            if (delayMs === null) break;
+            retryDelaysMs.push(delayMs);
+            await waitForMemberFetchRetry(delayMs, options);
+        }
+    }
+
+    const members = options.usePartialCache === false ? [] : cachedGuildMembers(guild);
+    const lastError = errors[errors.length - 1] || 'Unknown member fetch failure.';
+    return memberFetchResult({
+        complete: false,
+        members,
+        source: members.length ? 'cache_partial_after_fetch_error' : 'fetch_failed',
+        expectedMembers,
+        fetchAttempts,
+        retryDelaysMs,
+        errors,
+        error: `Guild member fetch failed after ${fetchAttempts} attempt${fetchAttempts === 1 ? '' : 's'}: ${lastError}`,
+    });
 }
 
 function canReadHistory(channel, guild) {
@@ -379,51 +572,55 @@ async function calculateStoredMessageEstimates(jobId, settings) {
     };
 }
 
-async function fetchMembersForRoleRecovery(guild, targetUserId = null) {
+async function fetchMembersForRoleRecovery(guild, targetUserId = null, options = {}) {
     const targetUserIds = targetUserId instanceof Set
         ? [...targetUserId].map(String)
         : (Array.isArray(targetUserId) ? targetUserId.map(String) : []);
     if (targetUserIds.length) {
         const members = [];
         const missing = [];
+        const errors = [];
+        const retryDelaysMs = [];
+        let fetchAttempts = 0;
+        const sources = new Set();
         for (const userId of targetUserIds) {
-            const member = await guild.members.fetch(userId).catch(() => guild.members.cache.get(userId) || null);
-            if (member) members.push(member);
+            const result = await fetchSingleMemberForRoleRecovery(guild, userId, options);
+            fetchAttempts += result.fetchAttempts;
+            retryDelaysMs.push(...result.retryDelaysMs);
+            errors.push(...result.errors);
+            sources.add(result.source);
+            if (result.member) members.push(result.member);
             else missing.push(userId);
         }
         return {
             complete: missing.length === 0,
             members,
             error: missing.length ? `Target member(s) ${missing.join(', ')} could not be fetched.` : null,
+            source: missing.length ? 'target_fetch_partial' : [...sources].join('+') || 'target_fetch',
+            expectedMembers: targetUserIds.length,
+            membersFetched: members.length,
+            fetchAttempts,
+            retryDelaysMs,
+            errors,
         };
     }
 
-    if (targetUserId) {
-        const member = await guild.members.fetch(targetUserId).catch(() => guild.members.cache.get(targetUserId) || null);
+    if (targetUserId && !(targetUserId instanceof Set) && !Array.isArray(targetUserId)) {
+        const result = await fetchSingleMemberForRoleRecovery(guild, String(targetUserId), options);
         return {
-            complete: Boolean(member),
-            members: member ? [member] : [],
-            error: member ? null : `Target member ${targetUserId} could not be fetched.`,
+            complete: Boolean(result.member),
+            members: result.member ? [result.member] : [],
+            error: result.member ? null : `Target member ${targetUserId} could not be fetched.`,
+            source: result.source,
+            expectedMembers: 1,
+            membersFetched: result.member ? 1 : 0,
+            fetchAttempts: result.fetchAttempts,
+            retryDelaysMs: result.retryDelaysMs,
+            errors: result.errors,
         };
     }
 
-    try {
-        const fetched = await guild.members.fetch();
-        const members = [...(fetched?.values?.() || guild.members.cache.values())];
-        const expected = Number(guild.memberCount || 0);
-        const complete = !expected || members.length >= expected;
-        return {
-            complete,
-            members,
-            error: complete ? null : `Fetched ${members.length} of ${expected} guild members.`,
-        };
-    } catch (error) {
-        return {
-            complete: false,
-            members: [],
-            error: `Guild member fetch failed: ${compactError(error)}`,
-        };
-    }
+    return fetchAllMembersForRoleRecovery(guild, options);
 }
 
 async function buildRoleEstimates(guild, mappings, targetUserId = null) {
