@@ -53,7 +53,7 @@ function fakeGuild(options = {}) {
     const members = options.members || new Map();
     return {
         id: options.guildId || 'guild',
-        memberCount: members.size,
+        memberCount: options.memberCount ?? members.size,
         members: {
             cache: members,
             me: { permissions: { has: () => true }, roles: { highest: { position: 100 } } },
@@ -63,6 +63,14 @@ function fakeGuild(options = {}) {
             }),
         },
         roles: { cache: options.roles || new Map() },
+    };
+}
+
+function fakeMember(userId, roleIds = []) {
+    return {
+        id: userId,
+        user: { id: userId, tag: `${userId}#0001`, username: userId, bot: false },
+        roles: { cache: new Map(roleIds.map(roleId => [roleId, { id: roleId }])) },
     };
 }
 
@@ -80,6 +88,13 @@ async function seedAnnouncement(store, userId, level, overrides = {}) {
         confidence: 'high',
         diagnostic: {},
     });
+}
+
+function gatewayRateLimitError(seconds = 0.001) {
+    const error = new Error(`Request with opcode 8 was rate limited. Retry after ${seconds} seconds.`);
+    error.name = 'GatewayRateLimitError';
+    error.data = { opcode: 8, retry_after: seconds };
+    return error;
 }
 
 test('final ProBot migration updates live XP for the Level 30 example and leaderboard', async () => {
@@ -257,5 +272,215 @@ test('final ProBot preview flags extreme estimated-only reconstructed outliers',
         assert.equal(record.wouldChange, false);
         assert.ok(record.confidenceWarnings.includes('estimated_only_reconstruction_not_applied'));
         assert.ok(record.confidenceWarnings.includes('extreme_reconstructed_level_unreliable'));
+    });
+});
+
+test('final ProBot preview retries gateway member-fetch rate limits and recovers role evidence', async () => {
+    await withIsolatedStore(async ({ store }) => {
+        const { buildFinalProbotMigrationPreview } = require('../utils/probotFinalMigration');
+        await store.upsertLevelRoleMapping({
+            guildId: 'guild',
+            roleId: 'level-5',
+            minimumLevel: 5,
+            createdBy: 'admin',
+        });
+        const cache = new Map();
+        const member = fakeMember('role-user', ['level-5']);
+        let fetchCalls = 0;
+        const guild = fakeGuild({
+            members: cache,
+            memberCount: 1,
+            fetchMembers: async userId => {
+                if (userId) return cache.get(String(userId)) || null;
+                fetchCalls += 1;
+                if (fetchCalls === 1) throw gatewayRateLimitError(0.001);
+                cache.set(member.id, member);
+                return cache;
+            },
+        });
+
+        const preview = await buildFinalProbotMigrationPreview(guild, {
+            memberFetch: {
+                maxRetries: 1,
+                minRetryDelayMs: 0,
+                rateLimitBufferMs: 0,
+                delay: async () => {},
+            },
+        });
+        const record = preview.records.find(item => item.userId === 'role-user');
+
+        assert.equal(fetchCalls, 2);
+        assert.equal(preview.evidence.complete, true);
+        assert.equal(preview.evidence.memberFetch.fetchAttempts, 2);
+        assert.deepEqual(preview.evidence.memberFetch.retryDelaysMs, [1]);
+        assert.equal(record.roleMinLevel, 5);
+        assert.equal(record.confirmedMinimumLevel, 5);
+        assert.equal(preview.canApply, true);
+    });
+});
+
+test('final ProBot preview reuses complete cached members for role evidence', async () => {
+    await withIsolatedStore(async ({ store }) => {
+        const { buildFinalProbotMigrationPreview } = require('../utils/probotFinalMigration');
+        await store.upsertLevelRoleMapping({
+            guildId: 'guild',
+            roleId: 'level-10',
+            minimumLevel: 10,
+            createdBy: 'admin',
+        });
+        const member = fakeMember('cached-user', ['level-10']);
+        let fetchCalls = 0;
+        const guild = fakeGuild({
+            members: new Map([[member.id, member]]),
+            memberCount: 1,
+            fetchMembers: async () => {
+                fetchCalls += 1;
+                throw new Error('should not fetch when cache is complete');
+            },
+        });
+
+        const preview = await buildFinalProbotMigrationPreview(guild);
+        const record = preview.records.find(item => item.userId === 'cached-user');
+
+        assert.equal(fetchCalls, 0);
+        assert.equal(preview.evidence.memberFetch.source, 'cache_complete');
+        assert.equal(preview.evidence.complete, true);
+        assert.equal(record.roleMinLevel, 10);
+    });
+});
+
+test('final ProBot preview marks incomplete member lists as partial and non-authoritative', async () => {
+    await withIsolatedStore(async ({ store }) => {
+        const { buildFinalProbotMigrationPreview } = require('../utils/probotFinalMigration');
+        await store.upsertLevelRoleMapping({
+            guildId: 'guild',
+            roleId: 'level-5',
+            minimumLevel: 5,
+            createdBy: 'admin',
+        });
+        const member = fakeMember('partial-user', ['level-5']);
+        const partialMembers = new Map([[member.id, member]]);
+        const guild = fakeGuild({
+            members: new Map(),
+            memberCount: 2,
+            fetchMembers: async () => partialMembers,
+        });
+
+        const preview = await buildFinalProbotMigrationPreview(guild);
+        const record = preview.records.find(item => item.userId === 'partial-user');
+
+        assert.equal(preview.authoritative, false);
+        assert.equal(preview.canApply, false);
+        assert.equal(preview.evidence.complete, false);
+        assert.match(preview.evidence.error, /Fetched 1 of 2/);
+        assert.equal(preview.summary.countsArePartial, true);
+        assert.equal(record.roleMinLevel, 5);
+        assert.ok(record.confidenceWarnings.includes('member_fetch_was_partial'));
+    });
+});
+
+test('final ProBot preview uses partial cache after failed fetch without making counts authoritative', async () => {
+    await withIsolatedStore(async ({ store }) => {
+        const { buildFinalProbotMigrationPreview } = require('../utils/probotFinalMigration');
+        await store.upsertLevelRoleMapping({
+            guildId: 'guild',
+            roleId: 'level-7',
+            minimumLevel: 7,
+            createdBy: 'admin',
+        });
+        const member = fakeMember('cached-partial-user', ['level-7']);
+        const guild = fakeGuild({
+            members: new Map([[member.id, member]]),
+            memberCount: 2,
+            fetchMembers: async () => {
+                throw new Error('gateway unavailable');
+            },
+        });
+
+        const preview = await buildFinalProbotMigrationPreview(guild, {
+            memberFetch: { maxRetries: 0 },
+        });
+        const record = preview.records.find(item => item.userId === 'cached-partial-user');
+
+        assert.equal(preview.authoritative, false);
+        assert.equal(preview.canApply, false);
+        assert.equal(preview.evidence.memberFetch.source, 'cache_partial_after_fetch_error');
+        assert.match(preview.evidence.error, /gateway unavailable/);
+        assert.equal(record.roleMinLevel, 7);
+        assert.ok(preview.warnings.some(warning => warning.includes('Preview counts are partial')));
+    });
+});
+
+test('current-members-only final ProBot apply rejects incomplete member fetch before writing XP', async () => {
+    await withIsolatedStore(async ({ store }) => {
+        const userId = 'current-user';
+        const { applyFinalProbotMigration } = require('../utils/probotFinalMigration');
+        await seedAnnouncement(store, userId, 5);
+        await store.setUserXp({ guildId: 'guild', userId, textXp: 3, voiceXp: 0, source: 'seed' });
+        const member = fakeMember(userId);
+        const guild = fakeGuild({
+            members: new Map([[member.id, member]]),
+            memberCount: 2,
+            fetchMembers: async () => {
+                throw new Error('guild member fetch failed');
+            },
+        });
+
+        await assert.rejects(
+            () => applyFinalProbotMigration(guild, {
+                currentMemberOnly: true,
+                adminId: 'admin',
+                memberFetch: { maxRetries: 0 },
+            }),
+            error => {
+                assert.equal(error.code, 'FINAL_PROBOT_MIGRATION_EVIDENCE_INCOMPLETE');
+                assert.match(error.message, /current-member filter/i);
+                return true;
+            },
+        );
+        const record = await store.getUserLevelRecord('guild', userId);
+        const batches = await store.listLevelProbotMigrationBatches('guild');
+
+        assert.equal(record.textXp, 3);
+        assert.equal(batches.length, 0);
+    });
+});
+
+test('final ProBot apply rejects incomplete role evidence before writing XP', async () => {
+    await withIsolatedStore(async ({ store }) => {
+        const userId = 'role-blocked-user';
+        const { applyFinalProbotMigration } = require('../utils/probotFinalMigration');
+        await store.upsertLevelRoleMapping({
+            guildId: 'guild',
+            roleId: 'level-12',
+            minimumLevel: 12,
+            createdBy: 'admin',
+        });
+        await store.setUserXp({ guildId: 'guild', userId, textXp: 1, voiceXp: 0, source: 'seed' });
+        const member = fakeMember(userId, ['level-12']);
+        const guild = fakeGuild({
+            members: new Map([[member.id, member]]),
+            memberCount: 2,
+            fetchMembers: async () => {
+                throw new Error('member list unavailable');
+            },
+        });
+
+        await assert.rejects(
+            () => applyFinalProbotMigration(guild, {
+                adminId: 'admin',
+                memberFetch: { maxRetries: 0 },
+            }),
+            error => {
+                assert.equal(error.code, 'FINAL_PROBOT_MIGRATION_EVIDENCE_INCOMPLETE');
+                assert.match(error.message, /role evidence/i);
+                return true;
+            },
+        );
+        const record = await store.getUserLevelRecord('guild', userId);
+        const batches = await store.listLevelProbotMigrationBatches('guild');
+
+        assert.equal(record.textXp, 1);
+        assert.equal(batches.length, 0);
     });
 });
