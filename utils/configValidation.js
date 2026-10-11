@@ -35,6 +35,8 @@ function validateObject(errors, config, path) {
         return false;
     }
     return value === undefined || isPlainObject(value);
+}
+
 function validateUrl(errors, config, path, { required = false, protocols = ['http:', 'https:'] } = {}) {
     const value = path.split('.').reduce((current, part) => current?.[part], config);
     if (value === undefined || value === null || value === '') {
