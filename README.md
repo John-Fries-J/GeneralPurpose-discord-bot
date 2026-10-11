@@ -300,6 +300,9 @@ Config:
 - `/level probot-final-preview`, `/level probot-final-test`, `/level probot-final-apply confirm:APPLY_PROBOT_FINAL`, and `/level probot-final-rollback confirm:ROLLBACK_PROBOT_FINAL` safely apply confirmed ProBot level recovery to live XP records without changing roles.
 - `/level role-map-add role level`, `/level role-map-view`, and `/level role-recovery-preview` recover minimum levels from existing reward roles.
 - `/level test set`, `/level test xp`, `/level test preview`, `/level test sync-roles`, `/level test reset`, and `/level test rollback` smoke-test leveling changes with persistent rollback sessions.
+- `/rank user` shows a graphical rank card for yourself or another user.
+- `/rankcard set-background`, `/rankcard set-accent`, `/rankcard reset`, and `/rankcard view` let users customize their own rank cards.
+- `/rankcard server-add-background`, `/rankcard server-remove-background`, `/rankcard server-set-default`, and `/rankcard server-set-accent` manage server rank-card visuals. These require Manage Server or Administrator.
 - `/leaderboard type page current_members_only` shows paginated total, text, or voice XP leaders and can hide departed members while preserving their stored records.
 
 Music:
@@ -339,8 +342,14 @@ Leveling:
 - Rewards are based on total XP or configured levels and can grant roles automatically. Obsolete reward-role removal defaults to off and only touches registered leveling rewards.
 - Historical imports scan only channels and threads the bot can access with Discord's API. Deleted messages, unavailable history, and historical voice XP are not counted or fabricated.
 - Existing reward roles can be mapped to minimum levels. If a member has Level 5, 10, and 20 roles, recovery infers level 20, not level 35.
-- Rank cards include avatar, level, XP, progress, server rank, and text/voice breakdown, with an embed fallback.
+- Rank cards are rendered as PNG images with avatar, display name, level, current XP, XP to next level, progress, server rank, and text/voice breakdown. User uploads are validated, resized, and stored under `data/rank-cards`; generated cards are cached there and pruned automatically.
 - More migration detail is in `docs/LEVELING_MIGRATION.md`.
+
+Rank card assets:
+
+- Custom user backgrounds and server-provided backgrounds accept PNG, JPEG, or WebP images up to 4 MB.
+- Processed background files and generated card cache files live in the persistent Docker data volume at `/app/data/rank-cards`.
+- The Docker image includes Noto fonts for Unicode display names in rendered cards.
 
 ## Editing Text
 
