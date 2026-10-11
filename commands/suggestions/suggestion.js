@@ -9,7 +9,7 @@ async function updateSuggestion(interaction, status) {
     const reason = interaction.options.getString('reason') || 'No reason provided.';
 
     if (!config.suggestionID) {
-        return interaction.reply({ content: 'Suggestion channel is not set up. Check config.json.', flags: 64 });
+        return interaction.reply({ content: 'Suggestion channel is not set up. Check the bot config file.', flags: 64 });
     }
 
     const channel = await interaction.client.channels.fetch(config.suggestionID).catch(() => null);

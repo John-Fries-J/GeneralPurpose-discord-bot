@@ -3,13 +3,13 @@ services:
     build: .
     container_name: generalpurpose-discord-bot
     restart: unless-stopped
-    expose:
-      - "3000"
+    ports:
+      - "127.0.0.1:3000:3000"
     volumes:
-      - ./config.json:/app/config.json:ro
       - ./language.json:/app/language.json
       - ./data:/app/data
     environment:
+      CONFIG_PATH: "${CONFIG_PATH:-/app/data/config.json}"
       DASHBOARD_ENABLED: "true"
       DASHBOARD_HOST: "0.0.0.0"
       DASHBOARD_PORT: "3000"

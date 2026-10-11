@@ -1,5 +1,7 @@
 const { makeId } = require('./ids');
 const historyRepository = require('./historyRepository');
+const honeypotLimitedAccountsRepository = require('./honeypotLimitedAccountsRepository');
+const rankCardRepository = require('./rankCardRepository');
 const { now, parseJson, pruneTableByNewest, stringify } = require('./shared');
 
 function mapCase(row) {
@@ -149,6 +151,301 @@ function mapConfigAudit(row) {
     };
 }
 
+function mapLevelXpEvent(row) {
+    if (!row) return null;
+    return {
+        id: row.id,
+        guildId: row.guild_id,
+        userId: row.user_id,
+        userTag: row.user_tag,
+        source: row.source,
+        sourceKey: row.source_key,
+        xpType: row.xp_type,
+        amount: row.amount,
+        previousTextXp: row.previous_text_xp,
+        previousVoiceXp: row.previous_voice_xp,
+        newTextXp: row.new_text_xp,
+        newVoiceXp: row.new_voice_xp,
+        adminId: row.admin_id,
+        jobId: row.job_id,
+        metadata: parseJson(row.metadata_json, {}),
+        createdAt: row.created_at,
+    };
+}
+
+function mapLevelImportJob(row) {
+    if (!row) return null;
+    return {
+        id: row.id,
+        guildId: row.guild_id,
+        targetUserId: row.target_user_id,
+        status: row.status,
+        dryRun: row.dry_run !== 0,
+        profileHash: row.profile_hash,
+        profile: parseJson(row.profile_json, {}),
+        createdBy: row.created_by,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        startedAt: row.started_at,
+        completedAt: row.completed_at,
+        currentChannelId: row.current_channel_id,
+        channelsTotal: row.channels_total,
+        channelsScanned: row.channels_scanned,
+        messagesSeen: row.messages_seen,
+        messagesEligible: row.messages_eligible,
+        membersSeen: row.members_seen,
+        xpEstimated: row.xp_estimated,
+        xpApplied: row.xp_applied,
+        skippedChannels: parseJson(row.skipped_channels_json, []),
+        errors: parseJson(row.errors_json, []),
+        cancelRequested: row.cancel_requested !== 0,
+        provenance: parseJson(row.provenance_json, {}),
+        result: parseJson(row.result_json, {}),
+    };
+}
+
+function mapLevelImportCheckpoint(row) {
+    if (!row) return null;
+    return {
+        jobId: row.job_id,
+        guildId: row.guild_id,
+        channelId: row.channel_id,
+        parentChannelId: row.parent_channel_id,
+        beforeMessageId: row.before_message_id,
+        oldestMessageId: row.oldest_message_id,
+        status: row.status,
+        messagesSeen: row.messages_seen,
+        messagesEligible: row.messages_eligible,
+        error: row.error,
+        updatedAt: row.updated_at,
+    };
+}
+
+function mapLevelImportMessage(row) {
+    if (!row) return null;
+    return {
+        jobId: row.job_id,
+        guildId: row.guild_id,
+        messageId: row.message_id,
+        userId: row.user_id,
+        userTag: row.user_tag,
+        channelId: row.channel_id,
+        createdAt: row.created_at,
+        xpAmount: row.xp_amount,
+        eligible: row.eligible !== 0,
+        skipReason: row.skip_reason,
+    };
+}
+
+function mapLevelCalibrationJob(row) {
+    if (!row) return null;
+    return {
+        id: row.id,
+        guildId: row.guild_id,
+        importJobId: row.import_job_id,
+        kind: row.kind,
+        status: row.status,
+        createdBy: row.created_by,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        startedAt: row.started_at,
+        completedAt: row.completed_at,
+        profile: parseJson(row.profile_json, {}),
+        options: parseJson(row.options_json, {}),
+        progress: parseJson(row.progress_json, {}),
+        result: parseJson(row.result_json, {}),
+        error: row.error,
+        cancelRequested: row.cancel_requested !== 0,
+    };
+}
+
+function mapLevelProbotScanJob(row) {
+    if (!row) return null;
+    return {
+        id: row.id,
+        guildId: row.guild_id,
+        sourceChannelId: row.source_channel_id,
+        sourceChannelIds: parseJson(row.source_channel_ids_json, []),
+        probotAuthorId: row.probot_author_id,
+        status: row.status,
+        createdBy: row.created_by,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        startedAt: row.started_at,
+        completedAt: row.completed_at,
+        currentChannelId: row.current_channel_id,
+        channelsTotal: row.channels_total,
+        channelsScanned: row.channels_scanned,
+        scannedCount: row.scanned_count,
+        matchedCount: row.matched_count,
+        verifiedCount: row.verified_count,
+        unresolvedCount: row.unresolved_count,
+        invalidCount: row.invalid_count,
+        skippedCount: row.skipped_count,
+        duplicateCount: row.duplicate_count,
+        oldestScannedAt: row.oldest_scanned_at,
+        newestScannedAt: row.newest_scanned_at,
+        errors: parseJson(row.errors_json, []),
+        cancelRequested: row.cancel_requested !== 0,
+        result: parseJson(row.result_json, {}),
+    };
+}
+
+function mapLevelProbotScanCheckpoint(row) {
+    if (!row) return null;
+    return {
+        jobId: row.job_id,
+        guildId: row.guild_id,
+        channelId: row.channel_id,
+        parentChannelId: row.parent_channel_id,
+        beforeMessageId: row.before_message_id,
+        oldestMessageId: row.oldest_message_id,
+        status: row.status,
+        scannedCount: row.scanned_count,
+        matchedCount: row.matched_count,
+        verifiedCount: row.verified_count,
+        unresolvedCount: row.unresolved_count,
+        invalidCount: row.invalid_count,
+        skippedCount: row.skipped_count,
+        duplicateCount: row.duplicate_count,
+        oldestScannedAt: row.oldest_scanned_at,
+        newestScannedAt: row.newest_scanned_at,
+        error: row.error,
+        updatedAt: row.updated_at,
+    };
+}
+
+function mapLevelProbotAnnouncement(row) {
+    if (!row) return null;
+    return {
+        guildId: row.guild_id,
+        sourceChannelId: row.source_channel_id,
+        messageId: row.message_id,
+        jobId: row.job_id,
+        probotAuthorId: row.probot_author_id,
+        targetUserId: row.target_user_id,
+        announcedLevel: row.announced_level,
+        announcementTimestamp: row.announcement_timestamp,
+        parserVersion: row.parser_version,
+        parseStatus: row.parse_status,
+        confidence: row.confidence,
+        contentSource: row.content_source,
+        diagnostic: parseJson(row.diagnostic_json, {}),
+        createdAt: row.created_at,
+    };
+}
+
+function mapLevelProbotMigrationBatch(row) {
+    if (!row) return null;
+    return {
+        id: row.id,
+        guildId: row.guild_id,
+        mode: row.mode,
+        status: row.status,
+        targetUserId: row.target_user_id,
+        currentMemberOnly: row.current_member_only !== 0,
+        importJobId: row.import_job_id,
+        createdBy: row.created_by,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        appliedAt: row.applied_at,
+        rolledBackAt: row.rolled_back_at,
+        recordsTotal: row.records_total,
+        affectedCount: row.affected_count,
+        rollbackCount: row.rollback_count,
+        xpDelta: row.xp_delta,
+        policy: parseJson(row.policy_json, {}),
+        result: parseJson(row.result_json, {}),
+        error: row.error,
+    };
+}
+
+function mapLevelProbotMigrationSnapshot(row) {
+    if (!row) return null;
+    return {
+        batchId: row.batch_id,
+        guildId: row.guild_id,
+        userId: row.user_id,
+        userTag: row.user_tag,
+        previousTextXp: row.previous_text_xp,
+        previousVoiceXp: row.previous_voice_xp,
+        previousLastTextXpAt: row.previous_last_text_xp_at,
+        previousCreatedAt: row.previous_created_at,
+        previousUpdatedAt: row.previous_updated_at,
+        targetTextXp: row.target_text_xp,
+        targetVoiceXp: row.target_voice_xp,
+        textDelta: row.text_delta,
+        confirmedLevel: row.confirmed_level,
+        requiredTotalXp: row.required_total_xp,
+        liveTextXp: row.live_text_xp,
+        priorHistoricalTextXp: row.prior_historical_text_xp,
+        priorFinalTextXp: row.prior_final_text_xp,
+        evidence: parseJson(row.evidence_json, {}),
+        appliedAt: row.applied_at,
+        rolledBackAt: row.rolled_back_at,
+        rollbackTextXp: row.rollback_text_xp,
+        rollbackVoiceXp: row.rollback_voice_xp,
+    };
+}
+
+function mapLevelRoleMapping(row) {
+    if (!row) return null;
+    return {
+        guildId: row.guild_id,
+        roleId: row.role_id,
+        minimumLevel: row.minimum_level,
+        createdBy: row.created_by,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+    };
+}
+
+function mapLevelReconciliation(row) {
+    if (!row) return null;
+    return {
+        id: row.id,
+        jobId: row.job_id,
+        guildId: row.guild_id,
+        userId: row.user_id,
+        userTag: row.user_tag,
+        existingXp: row.existing_xp,
+        messageEstimatedXp: row.message_estimated_xp,
+        messageEstimatedLevel: row.message_estimated_level,
+        roleMinLevel: row.role_min_level,
+        roleMinXp: row.role_min_xp,
+        finalXp: row.final_xp,
+        policy: row.policy,
+        dryRun: row.dry_run !== 0,
+        applied: row.applied !== 0,
+        metadata: parseJson(row.metadata_json, {}),
+        createdAt: row.created_at,
+    };
+}
+
+function mapLevelTestSession(row) {
+    if (!row) return null;
+    return {
+        id: row.id,
+        guildId: row.guild_id,
+        userId: row.user_id,
+        userTag: row.user_tag,
+        adminId: row.admin_id,
+        status: row.status,
+        previewOnly: row.preview_only !== 0,
+        previousTextXp: row.previous_text_xp,
+        previousVoiceXp: row.previous_voice_xp,
+        xpDelta: row.xp_delta,
+        xpType: row.xp_type,
+        managedRoleIds: parseJson(row.managed_role_ids_json, []),
+        addedRoleIds: parseJson(row.added_role_ids_json, []),
+        removedRoleIds: parseJson(row.removed_role_ids_json, []),
+        metadata: parseJson(row.metadata_json, {}),
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        rolledBackAt: row.rolled_back_at,
+    };
+}
+
 function readState(db) {
     return {
         cases: db.prepare('SELECT * FROM moderation_cases ORDER BY id ASC').all().map(mapCase),
@@ -173,6 +470,23 @@ function readState(db) {
         guildLogChannels: listAllGuildLogChannels(db),
         guildLevelRewards: listAllGuildLevelRewards(db),
         configAudit: listConfigAudit(db, null, { limit: 1000 }),
+        limitedAccounts: honeypotLimitedAccountsRepository.listLimitedAccounts(db),
+        rankCardPreferences: rankCardRepository.listRankCardPreferences(db),
+        rankCardBackgrounds: rankCardRepository.listRankCardBackgrounds(db),
+        levelXpEvents: listLevelXpEvents(db, null, { limit: 1000 }),
+        levelImportJobs: listLevelImportJobs(db, null, { limit: 1000 }),
+        levelImportCheckpoints: listLevelImportCheckpoints(db),
+        levelImportMessages: listLevelImportMessages(db, null, { limit: 1000 }),
+        levelCalibrationJobs: listLevelCalibrationJobs(db, null, { limit: 1000 }),
+        levelProbotScanJobs: listLevelProbotScanJobs(db, null, { limit: 1000 }),
+        levelProbotScanCheckpoints: listLevelProbotScanCheckpoints(db),
+        levelProbotAnnouncements: db.prepare('SELECT * FROM level_probot_announcements ORDER BY announcement_timestamp DESC LIMIT 1000').all().map(mapLevelProbotAnnouncement),
+        levelProbotMigrationBatches: listLevelProbotMigrationBatches(db, null, { limit: 1000 }),
+        levelProbotMigrationSnapshots: listLevelProbotMigrationSnapshots(db, null, { limit: 1000 }),
+        levelProcessedMessages: listLevelProcessedMessages(db, null, { limit: 1000 }),
+        levelRoleMappings: listLevelRoleMappings(db),
+        levelReconciliationRecords: listLevelReconciliationRecords(db, null, { limit: 1000 }),
+        levelTestSessions: listLevelTestSessions(db, null, { limit: 1000 }),
     };
 }
 
@@ -431,9 +745,1508 @@ function getUserLevelRecord(db, guildId, userId) {
     return db.prepare('SELECT guild_id guildId, user_id userId, user_tag userTag, text_xp textXp, voice_xp voiceXp, last_text_xp_at lastTextXpAt, created_at createdAt, updated_at updatedAt FROM levels WHERE guild_id = ? AND user_id = ?').get(guildId, userId) || null;
 }
 
-function listLevelLeaderboard(db, guildId, limit = 10, mode = 'total') {
+function listLevelLeaderboard(db, guildId, limit = 10, mode = 'total', offset = 0) {
     const order = mode === 'text' ? 'text_xp' : (mode === 'voice' ? 'voice_xp' : '(text_xp + voice_xp)');
-    return db.prepare(`SELECT guild_id guildId, user_id userId, user_tag userTag, text_xp textXp, voice_xp voiceXp, last_text_xp_at lastTextXpAt, created_at createdAt, updated_at updatedAt FROM levels WHERE guild_id = ? AND ${order} > 0 ORDER BY ${order} DESC LIMIT ?`).all(guildId, limit);
+    const safeOffset = Math.max(0, Number(offset || 0));
+    return db.prepare(`SELECT guild_id guildId, user_id userId, user_tag userTag, text_xp textXp, voice_xp voiceXp, last_text_xp_at lastTextXpAt, created_at createdAt, updated_at updatedAt FROM levels WHERE guild_id = ? AND ${order} > 0 ORDER BY ${order} DESC, user_id ASC LIMIT ? OFFSET ?`).all(guildId, limit, safeOffset);
+}
+
+function getLevelScoreExpression(mode = 'total') {
+    if (mode === 'text') return 'text_xp';
+    if (mode === 'voice') return 'voice_xp';
+    return '(text_xp + voice_xp)';
+}
+
+function getLevelRank(db, guildId, userId, mode = 'total') {
+    const record = getUserLevelRecord(db, guildId, userId);
+    if (!record) return null;
+    const score = mode === 'text'
+        ? Number(record.textXp || 0)
+        : (mode === 'voice' ? Number(record.voiceXp || 0) : Number(record.textXp || 0) + Number(record.voiceXp || 0));
+    if (score <= 0) return null;
+
+    const expression = getLevelScoreExpression(mode);
+    const row = db.prepare(`SELECT COUNT(*) + 1 AS rank FROM levels WHERE guild_id = ? AND (${expression} > ? OR (${expression} = ? AND user_id < ?))`)
+        .get(guildId, score, score, userId);
+    return row?.rank || null;
+}
+
+function upsertLevelRecord(db, record) {
+    const timestamp = now();
+    const existing = getUserLevelRecord(db, record.guildId, record.userId);
+    const createdAt = record.createdAt || existing?.createdAt || timestamp;
+    db.prepare(`
+        INSERT INTO levels (guild_id, user_id, user_tag, text_xp, voice_xp, last_text_xp_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(guild_id, user_id) DO UPDATE SET
+            user_tag = excluded.user_tag,
+            text_xp = excluded.text_xp,
+            voice_xp = excluded.voice_xp,
+            last_text_xp_at = excluded.last_text_xp_at,
+            updated_at = excluded.updated_at
+    `).run(
+        record.guildId,
+        record.userId,
+        record.userTag || existing?.userTag || null,
+        Math.max(0, Math.floor(Number(record.textXp || 0))),
+        Math.max(0, Math.floor(Number(record.voiceXp || 0))),
+        Number(record.lastTextXpAt ?? existing?.lastTextXpAt ?? 0),
+        createdAt,
+        record.updatedAt || timestamp,
+    );
+    return getUserLevelRecord(db, record.guildId, record.userId);
+}
+
+function insertLevelXpEvent(db, event) {
+    const timestamp = event.createdAt || now();
+    const result = db.prepare(`
+        INSERT OR IGNORE INTO level_xp_events (
+            guild_id, user_id, user_tag, source, source_key, xp_type, amount,
+            previous_text_xp, previous_voice_xp, new_text_xp, new_voice_xp,
+            admin_id, job_id, metadata_json, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+        event.guildId,
+        event.userId,
+        event.userTag || null,
+        event.source,
+        event.sourceKey || null,
+        event.xpType || 'text',
+        Number(event.amount || 0),
+        Number(event.previousTextXp || 0),
+        Number(event.previousVoiceXp || 0),
+        Number(event.newTextXp || 0),
+        Number(event.newVoiceXp || 0),
+        event.adminId || null,
+        event.jobId || null,
+        stringify(event.metadata, {}),
+        timestamp,
+    );
+    if (!result.changes && event.sourceKey) return null;
+    return mapLevelXpEvent(db.prepare('SELECT * FROM level_xp_events WHERE id = ?').get(result.lastInsertRowid));
+}
+
+function adjustUserXp(db, record) {
+    return db.transaction(() => {
+        const timestamp = record.createdAt || now();
+        const previous = getUserLevelRecord(db, record.guildId, record.userId) || {
+            guildId: record.guildId,
+            userId: record.userId,
+            userTag: record.userTag || null,
+            textXp: 0,
+            voiceXp: 0,
+            lastTextXpAt: 0,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+        };
+        const amount = Math.trunc(Number(record.amount || 0));
+        const xpType = record.xpType === 'voice' ? 'voice' : 'text';
+        const next = {
+            ...previous,
+            userTag: record.userTag || previous.userTag || null,
+            textXp: Math.max(0, Number(previous.textXp || 0) + (xpType === 'text' ? amount : 0)),
+            voiceXp: Math.max(0, Number(previous.voiceXp || 0) + (xpType === 'voice' ? amount : 0)),
+            lastTextXpAt: record.lastTextXpAt ?? previous.lastTextXpAt ?? 0,
+            updatedAt: timestamp,
+        };
+
+        const updated = upsertLevelRecord(db, next);
+        insertLevelXpEvent(db, {
+            guildId: record.guildId,
+            userId: record.userId,
+            userTag: record.userTag || previous.userTag || null,
+            source: record.source || 'adjustment',
+            sourceKey: record.sourceKey || null,
+            xpType,
+            amount,
+            previousTextXp: previous.textXp,
+            previousVoiceXp: previous.voiceXp,
+            newTextXp: updated.textXp,
+            newVoiceXp: updated.voiceXp,
+            adminId: record.adminId || null,
+            jobId: record.jobId || null,
+            metadata: record.metadata || {},
+            createdAt: timestamp,
+        });
+        return updated;
+    })();
+}
+
+function setUserXp(db, record) {
+    return db.transaction(() => {
+        const timestamp = record.createdAt || now();
+        const previous = getUserLevelRecord(db, record.guildId, record.userId) || {
+            guildId: record.guildId,
+            userId: record.userId,
+            userTag: record.userTag || null,
+            textXp: 0,
+            voiceXp: 0,
+            lastTextXpAt: 0,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+        };
+        const next = {
+            ...previous,
+            userTag: record.userTag || previous.userTag || null,
+            textXp: Math.max(0, Math.floor(Number(record.textXp ?? previous.textXp ?? 0))),
+            voiceXp: Math.max(0, Math.floor(Number(record.voiceXp ?? previous.voiceXp ?? 0))),
+            lastTextXpAt: record.lastTextXpAt ?? previous.lastTextXpAt ?? 0,
+            updatedAt: timestamp,
+        };
+        const updated = upsertLevelRecord(db, next);
+        insertLevelXpEvent(db, {
+            guildId: record.guildId,
+            userId: record.userId,
+            userTag: record.userTag || previous.userTag || null,
+            source: record.source || 'set',
+            sourceKey: record.sourceKey || null,
+            xpType: record.xpType || 'combined',
+            amount: (Number(updated.textXp || 0) + Number(updated.voiceXp || 0)) - (Number(previous.textXp || 0) + Number(previous.voiceXp || 0)),
+            previousTextXp: previous.textXp,
+            previousVoiceXp: previous.voiceXp,
+            newTextXp: updated.textXp,
+            newVoiceXp: updated.voiceXp,
+            adminId: record.adminId || null,
+            jobId: record.jobId || null,
+            metadata: record.metadata || {},
+            createdAt: timestamp,
+        });
+        return updated;
+    })();
+}
+
+function setUserXpMinimum(db, record) {
+    const previous = getUserLevelRecord(db, record.guildId, record.userId);
+    const currentTotal = Number(previous?.textXp || 0) + Number(previous?.voiceXp || 0);
+    const minimumTotal = Math.max(0, Math.floor(Number(record.minimumTotalXp || 0)));
+    if (currentTotal >= minimumTotal) return previous;
+    return setUserXp(db, {
+        ...record,
+        textXp: minimumTotal,
+        voiceXp: 0,
+        source: record.source || 'minimum',
+        xpType: 'combined',
+        metadata: {
+            ...(record.metadata || {}),
+            previousTotalXp: currentTotal,
+            minimumTotalXp: minimumTotal,
+        },
+    });
+}
+
+function listLevelXpEvents(db, guildId = null, options = {}) {
+    const limit = Math.max(1, Math.min(5000, Number(options.limit || 100)));
+    const userId = options.userId || null;
+    if (guildId && userId) {
+        return db.prepare('SELECT * FROM level_xp_events WHERE guild_id = ? AND user_id = ? ORDER BY created_at DESC, id DESC LIMIT ?')
+            .all(guildId, userId, limit)
+            .map(mapLevelXpEvent);
+    }
+    if (guildId) {
+        return db.prepare('SELECT * FROM level_xp_events WHERE guild_id = ? ORDER BY created_at DESC, id DESC LIMIT ?')
+            .all(guildId, limit)
+            .map(mapLevelXpEvent);
+    }
+    return db.prepare('SELECT * FROM level_xp_events ORDER BY created_at DESC, id DESC LIMIT ?')
+        .all(limit)
+        .map(mapLevelXpEvent);
+}
+
+function getActiveLevelImportJob(db, guildId) {
+    return mapLevelImportJob(db.prepare("SELECT * FROM level_import_jobs WHERE guild_id = ? AND status IN ('queued', 'running', 'cancelling') ORDER BY updated_at DESC LIMIT 1").get(guildId));
+}
+
+function createLevelImportJob(db, record) {
+    const timestamp = now();
+    try {
+        return db.transaction(() => {
+            const active = getActiveLevelImportJob(db, record.guildId);
+            if (active) return { ok: false, job: active, reason: 'active_job' };
+
+            const job = {
+                id: record.id || makeId(),
+                guildId: record.guildId,
+                targetUserId: record.targetUserId || null,
+                status: record.status || 'queued',
+                dryRun: record.dryRun !== false,
+                profileHash: record.profileHash,
+                profile: record.profile || {},
+                createdBy: record.createdBy || null,
+                provenance: record.provenance || {},
+                createdAt: record.createdAt || timestamp,
+            };
+            db.prepare(`
+                INSERT INTO level_import_jobs (
+                    id, guild_id, target_user_id, status, dry_run, profile_hash, profile_json,
+                    created_by, created_at, updated_at, provenance_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+                job.id,
+                job.guildId,
+                job.targetUserId,
+                job.status,
+                job.dryRun ? 1 : 0,
+                job.profileHash,
+                stringify(job.profile, {}),
+                job.createdBy,
+                job.createdAt,
+                timestamp,
+                stringify(job.provenance, {}),
+            );
+            return { ok: true, job: getLevelImportJob(db, job.id) };
+        })();
+    } catch (error) {
+        if (error?.code === 'SQLITE_CONSTRAINT_UNIQUE' || error?.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') {
+            const active = getActiveLevelImportJob(db, record.guildId);
+            if (active) return { ok: false, job: active, reason: 'active_job' };
+        }
+        throw error;
+    }
+}
+
+function getLevelImportJob(db, id) {
+    return mapLevelImportJob(db.prepare('SELECT * FROM level_import_jobs WHERE id = ?').get(id));
+}
+
+function listLevelImportJobs(db, guildId = null, options = {}) {
+    const limit = Math.max(1, Math.min(1000, Number(options.limit || 50)));
+    const statuses = Array.isArray(options.statuses) ? options.statuses.filter(Boolean) : [];
+    if (guildId && statuses.length) {
+        const placeholders = statuses.map(() => '?').join(', ');
+        return db.prepare(`SELECT * FROM level_import_jobs WHERE guild_id = ? AND status IN (${placeholders}) ORDER BY updated_at DESC LIMIT ?`)
+            .all(guildId, ...statuses, limit)
+            .map(mapLevelImportJob);
+    }
+    if (guildId) {
+        return db.prepare('SELECT * FROM level_import_jobs WHERE guild_id = ? ORDER BY updated_at DESC LIMIT ?')
+            .all(guildId, limit)
+            .map(mapLevelImportJob);
+    }
+    if (statuses.length) {
+        const placeholders = statuses.map(() => '?').join(', ');
+        return db.prepare(`SELECT * FROM level_import_jobs WHERE status IN (${placeholders}) ORDER BY updated_at DESC LIMIT ?`)
+            .all(...statuses, limit)
+            .map(mapLevelImportJob);
+    }
+    return db.prepare('SELECT * FROM level_import_jobs ORDER BY updated_at DESC LIMIT ?').all(limit).map(mapLevelImportJob);
+}
+
+function updateLevelImportJob(db, id, patch = {}) {
+    const existing = getLevelImportJob(db, id);
+    if (!existing) return null;
+    const next = { ...existing, ...patch, updatedAt: patch.updatedAt || now() };
+    db.prepare(`
+        UPDATE level_import_jobs
+        SET status = ?, dry_run = ?, profile_hash = ?, profile_json = ?, updated_at = ?,
+            started_at = ?, completed_at = ?, current_channel_id = ?,
+            channels_total = ?, channels_scanned = ?, messages_seen = ?, messages_eligible = ?,
+            members_seen = ?, xp_estimated = ?, xp_applied = ?, skipped_channels_json = ?,
+            errors_json = ?, cancel_requested = ?, provenance_json = ?, result_json = ?
+        WHERE id = ?
+    `).run(
+        next.status,
+        next.dryRun ? 1 : 0,
+        next.profileHash,
+        stringify(next.profile, {}),
+        next.updatedAt,
+        next.startedAt || null,
+        next.completedAt || null,
+        next.currentChannelId || null,
+        Number(next.channelsTotal || 0),
+        Number(next.channelsScanned || 0),
+        Number(next.messagesSeen || 0),
+        Number(next.messagesEligible || 0),
+        Number(next.membersSeen || 0),
+        Number(next.xpEstimated || 0),
+        Number(next.xpApplied || 0),
+        stringify(next.skippedChannels, []),
+        stringify(next.errors, []),
+        next.cancelRequested ? 1 : 0,
+        stringify(next.provenance, {}),
+        stringify(next.result, {}),
+        id,
+    );
+    return getLevelImportJob(db, id);
+}
+
+function requestCancelLevelImportJob(db, id) {
+    const job = getLevelImportJob(db, id);
+    if (!job) return null;
+    const status = ['completed', 'cancelled', 'failed', 'needs_confirmation'].includes(job.status) ? job.status : 'cancelling';
+    return updateLevelImportJob(db, id, { status, cancelRequested: true });
+}
+
+function getActiveLevelCalibrationJob(db, guildId, importJobId = null) {
+    if (importJobId) {
+        return mapLevelCalibrationJob(db.prepare(`
+            SELECT * FROM level_calibration_jobs
+            WHERE guild_id = ? AND import_job_id = ? AND status IN ('queued', 'running', 'cancelling')
+            ORDER BY updated_at DESC
+            LIMIT 1
+        `).get(guildId, importJobId));
+    }
+    return mapLevelCalibrationJob(db.prepare(`
+        SELECT * FROM level_calibration_jobs
+        WHERE guild_id = ? AND status IN ('queued', 'running', 'cancelling')
+        ORDER BY updated_at DESC
+        LIMIT 1
+    `).get(guildId));
+}
+
+function createLevelCalibrationJob(db, record) {
+    const timestamp = now();
+    try {
+        return db.transaction(() => {
+            const active = getActiveLevelCalibrationJob(db, record.guildId, record.importJobId);
+            if (active) return { ok: false, job: active, reason: 'active_job' };
+
+            const job = {
+                id: record.id || makeId(),
+                guildId: record.guildId,
+                importJobId: record.importJobId,
+                kind: record.kind || 'preview',
+                status: record.status || 'queued',
+                createdBy: record.createdBy || null,
+                createdAt: record.createdAt || timestamp,
+                profile: record.profile || {},
+                options: record.options || {},
+                progress: record.progress || {},
+                result: record.result || {},
+            };
+            db.prepare(`
+                INSERT INTO level_calibration_jobs (
+                    id, guild_id, import_job_id, kind, status, created_by,
+                    created_at, updated_at, started_at, completed_at,
+                    profile_json, options_json, progress_json, result_json, error, cancel_requested
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, NULL, 0)
+            `).run(
+                job.id,
+                job.guildId,
+                job.importJobId,
+                job.kind,
+                job.status,
+                job.createdBy,
+                job.createdAt,
+                timestamp,
+                stringify(job.profile, {}),
+                stringify(job.options, {}),
+                stringify(job.progress, {}),
+                stringify(job.result, {}),
+            );
+            return { ok: true, job: getLevelCalibrationJob(db, job.id) };
+        })();
+    } catch (error) {
+        if (error?.code === 'SQLITE_CONSTRAINT_UNIQUE' || error?.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') {
+            const active = getActiveLevelCalibrationJob(db, record.guildId, record.importJobId);
+            if (active) return { ok: false, job: active, reason: 'active_job' };
+        }
+        throw error;
+    }
+}
+
+function getLevelCalibrationJob(db, id) {
+    return mapLevelCalibrationJob(db.prepare('SELECT * FROM level_calibration_jobs WHERE id = ?').get(id));
+}
+
+function listLevelCalibrationJobs(db, guildId = null, options = {}) {
+    const limit = Math.max(1, Math.min(1000, Number(options.limit || 50)));
+    const statuses = Array.isArray(options.statuses) ? options.statuses.filter(Boolean) : [];
+    const importJobId = options.importJobId || null;
+    const clauses = [];
+    const params = [];
+
+    if (guildId) {
+        clauses.push('guild_id = ?');
+        params.push(guildId);
+    }
+    if (importJobId) {
+        clauses.push('import_job_id = ?');
+        params.push(importJobId);
+    }
+    if (statuses.length) {
+        clauses.push(`status IN (${statuses.map(() => '?').join(', ')})`);
+        params.push(...statuses);
+    }
+
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    return db.prepare(`SELECT * FROM level_calibration_jobs ${where} ORDER BY updated_at DESC LIMIT ?`)
+        .all(...params, limit)
+        .map(mapLevelCalibrationJob);
+}
+
+function updateLevelCalibrationJob(db, id, patch = {}) {
+    const existing = getLevelCalibrationJob(db, id);
+    if (!existing) return null;
+    const next = { ...existing, ...patch, updatedAt: patch.updatedAt || now() };
+    db.prepare(`
+        UPDATE level_calibration_jobs
+        SET kind = ?, status = ?, updated_at = ?, started_at = ?, completed_at = ?,
+            profile_json = ?, options_json = ?, progress_json = ?, result_json = ?,
+            error = ?, cancel_requested = ?
+        WHERE id = ?
+    `).run(
+        next.kind,
+        next.status,
+        next.updatedAt,
+        next.startedAt || null,
+        next.completedAt || null,
+        stringify(next.profile, {}),
+        stringify(next.options, {}),
+        stringify(next.progress, {}),
+        stringify(next.result, {}),
+        next.error || null,
+        next.cancelRequested ? 1 : 0,
+        id,
+    );
+    return getLevelCalibrationJob(db, id);
+}
+
+function requestCancelLevelCalibrationJob(db, id) {
+    const job = getLevelCalibrationJob(db, id);
+    if (!job) return null;
+    const status = ['completed', 'cancelled', 'failed'].includes(job.status) ? job.status : 'cancelling';
+    return updateLevelCalibrationJob(db, id, { status, cancelRequested: true });
+}
+
+function getActiveLevelProbotScanJob(db, guildId, sourceChannelId = null) {
+    if (sourceChannelId) {
+        return mapLevelProbotScanJob(db.prepare(`
+            SELECT * FROM level_probot_scan_jobs
+            WHERE guild_id = ? AND source_channel_id = ? AND status IN ('queued', 'running', 'cancelling')
+            ORDER BY updated_at DESC
+            LIMIT 1
+        `).get(guildId, sourceChannelId));
+    }
+    return mapLevelProbotScanJob(db.prepare(`
+        SELECT * FROM level_probot_scan_jobs
+        WHERE guild_id = ? AND status IN ('queued', 'running', 'cancelling')
+        ORDER BY updated_at DESC
+        LIMIT 1
+    `).get(guildId));
+}
+
+function createLevelProbotScanJob(db, record) {
+    const timestamp = now();
+    try {
+        return db.transaction(() => {
+            const active = getActiveLevelProbotScanJob(db, record.guildId, record.sourceChannelId);
+            if (active) return { ok: false, job: active, reason: 'active_job' };
+
+            const sourceChannelIds = [...new Set((record.sourceChannelIds?.length ? record.sourceChannelIds : [record.sourceChannelId]).map(String))];
+            const job = {
+                id: record.id || makeId(),
+                guildId: record.guildId,
+                sourceChannelId: record.sourceChannelId,
+                sourceChannelIds,
+                probotAuthorId: record.probotAuthorId,
+                status: record.status || 'queued',
+                createdBy: record.createdBy || null,
+                createdAt: record.createdAt || timestamp,
+                result: record.result || {},
+            };
+            db.prepare(`
+                INSERT INTO level_probot_scan_jobs (
+                    id, guild_id, source_channel_id, source_channel_ids_json, probot_author_id,
+                    status, created_by, created_at, updated_at, channels_total, result_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+                job.id,
+                job.guildId,
+                job.sourceChannelId,
+                stringify(job.sourceChannelIds, []),
+                job.probotAuthorId,
+                job.status,
+                job.createdBy,
+                job.createdAt,
+                timestamp,
+                sourceChannelIds.length,
+                stringify(job.result, {}),
+            );
+            return { ok: true, job: getLevelProbotScanJob(db, job.id) };
+        })();
+    } catch (error) {
+        if (error?.code === 'SQLITE_CONSTRAINT_UNIQUE' || error?.code === 'SQLITE_CONSTRAINT_PRIMARYKEY') {
+            const active = getActiveLevelProbotScanJob(db, record.guildId, record.sourceChannelId);
+            if (active) return { ok: false, job: active, reason: 'active_job' };
+        }
+        throw error;
+    }
+}
+
+function getLevelProbotScanJob(db, id) {
+    return mapLevelProbotScanJob(db.prepare('SELECT * FROM level_probot_scan_jobs WHERE id = ?').get(id));
+}
+
+function listLevelProbotScanJobs(db, guildId = null, options = {}) {
+    const limit = Math.max(1, Math.min(1000, Number(options.limit || 50)));
+    const statuses = Array.isArray(options.statuses) ? options.statuses.filter(Boolean) : [];
+    const clauses = [];
+    const params = [];
+
+    if (guildId) {
+        clauses.push('guild_id = ?');
+        params.push(guildId);
+    }
+    if (statuses.length) {
+        clauses.push(`status IN (${statuses.map(() => '?').join(', ')})`);
+        params.push(...statuses);
+    }
+
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    return db.prepare(`SELECT * FROM level_probot_scan_jobs ${where} ORDER BY updated_at DESC LIMIT ?`)
+        .all(...params, limit)
+        .map(mapLevelProbotScanJob);
+}
+
+function updateLevelProbotScanJob(db, id, patch = {}) {
+    const existing = getLevelProbotScanJob(db, id);
+    if (!existing) return null;
+    const next = { ...existing, ...patch, updatedAt: patch.updatedAt || now() };
+    db.prepare(`
+        UPDATE level_probot_scan_jobs
+        SET source_channel_ids_json = ?, probot_author_id = ?, status = ?, updated_at = ?,
+            started_at = ?, completed_at = ?, current_channel_id = ?,
+            channels_total = ?, channels_scanned = ?, scanned_count = ?, matched_count = ?,
+            verified_count = ?, unresolved_count = ?, invalid_count = ?, skipped_count = ?,
+            duplicate_count = ?, oldest_scanned_at = ?, newest_scanned_at = ?,
+            errors_json = ?, cancel_requested = ?, result_json = ?
+        WHERE id = ?
+    `).run(
+        stringify(next.sourceChannelIds, []),
+        next.probotAuthorId,
+        next.status,
+        next.updatedAt,
+        next.startedAt || null,
+        next.completedAt || null,
+        next.currentChannelId || null,
+        Number(next.channelsTotal || 0),
+        Number(next.channelsScanned || 0),
+        Number(next.scannedCount || 0),
+        Number(next.matchedCount || 0),
+        Number(next.verifiedCount || 0),
+        Number(next.unresolvedCount || 0),
+        Number(next.invalidCount || 0),
+        Number(next.skippedCount || 0),
+        Number(next.duplicateCount || 0),
+        next.oldestScannedAt || null,
+        next.newestScannedAt || null,
+        stringify(next.errors, []),
+        next.cancelRequested ? 1 : 0,
+        stringify(next.result, {}),
+        id,
+    );
+    return getLevelProbotScanJob(db, id);
+}
+
+function requestCancelLevelProbotScanJob(db, id) {
+    const job = getLevelProbotScanJob(db, id);
+    if (!job) return null;
+    const status = ['completed', 'cancelled', 'failed'].includes(job.status) ? job.status : 'cancelling';
+    return updateLevelProbotScanJob(db, id, { status, cancelRequested: true });
+}
+
+function upsertLevelProbotScanCheckpoint(db, record) {
+    const timestamp = record.updatedAt || now();
+    db.prepare(`
+        INSERT INTO level_probot_scan_checkpoints (
+            job_id, guild_id, channel_id, parent_channel_id, before_message_id,
+            oldest_message_id, status, scanned_count, matched_count, verified_count,
+            unresolved_count, invalid_count, skipped_count, duplicate_count,
+            oldest_scanned_at, newest_scanned_at, error, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(job_id, channel_id) DO UPDATE SET
+            parent_channel_id = excluded.parent_channel_id,
+            before_message_id = excluded.before_message_id,
+            oldest_message_id = excluded.oldest_message_id,
+            status = excluded.status,
+            scanned_count = excluded.scanned_count,
+            matched_count = excluded.matched_count,
+            verified_count = excluded.verified_count,
+            unresolved_count = excluded.unresolved_count,
+            invalid_count = excluded.invalid_count,
+            skipped_count = excluded.skipped_count,
+            duplicate_count = excluded.duplicate_count,
+            oldest_scanned_at = excluded.oldest_scanned_at,
+            newest_scanned_at = excluded.newest_scanned_at,
+            error = excluded.error,
+            updated_at = excluded.updated_at
+    `).run(
+        record.jobId,
+        record.guildId,
+        record.channelId,
+        record.parentChannelId || null,
+        record.beforeMessageId || null,
+        record.oldestMessageId || null,
+        record.status || 'pending',
+        Number(record.scannedCount || 0),
+        Number(record.matchedCount || 0),
+        Number(record.verifiedCount || 0),
+        Number(record.unresolvedCount || 0),
+        Number(record.invalidCount || 0),
+        Number(record.skippedCount || 0),
+        Number(record.duplicateCount || 0),
+        record.oldestScannedAt || null,
+        record.newestScannedAt || null,
+        record.error || null,
+        timestamp,
+    );
+    return mapLevelProbotScanCheckpoint(db.prepare('SELECT * FROM level_probot_scan_checkpoints WHERE job_id = ? AND channel_id = ?').get(record.jobId, record.channelId));
+}
+
+function listLevelProbotScanCheckpoints(db, jobId = null) {
+    const rows = jobId
+        ? db.prepare('SELECT * FROM level_probot_scan_checkpoints WHERE job_id = ? ORDER BY updated_at DESC').all(jobId)
+        : db.prepare('SELECT * FROM level_probot_scan_checkpoints ORDER BY updated_at DESC LIMIT 1000').all();
+    return rows.map(mapLevelProbotScanCheckpoint);
+}
+
+function hasVerifiedProbotAnnouncementLevel(db, guildId, userId, level, excludeMessageId = null) {
+    const row = excludeMessageId
+        ? db.prepare(`
+            SELECT 1 present
+            FROM level_probot_announcements
+            WHERE guild_id = ? AND target_user_id = ? AND announced_level = ?
+                AND parse_status IN ('verified', 'repeated_verified')
+                AND message_id != ?
+            LIMIT 1
+        `).get(guildId, userId, Number(level), excludeMessageId)
+        : db.prepare(`
+            SELECT 1 present
+            FROM level_probot_announcements
+            WHERE guild_id = ? AND target_user_id = ? AND announced_level = ?
+                AND parse_status IN ('verified', 'repeated_verified')
+            LIMIT 1
+        `).get(guildId, userId, Number(level));
+    return Boolean(row);
+}
+
+function isVerifiedProbotParseStatus(status) {
+    return status === 'verified' || status === 'repeated_verified';
+}
+
+function insertLevelProbotAnnouncement(db, record) {
+    let parseStatus = record.parseStatus;
+    if (
+        parseStatus === 'verified'
+        && record.targetUserId
+        && Number(record.announcedLevel || 0) > 0
+        && hasVerifiedProbotAnnouncementLevel(db, record.guildId, record.targetUserId, record.announcedLevel, record.messageId)
+    ) {
+        parseStatus = 'repeated_verified';
+    }
+
+    const existing = db.prepare('SELECT * FROM level_probot_announcements WHERE guild_id = ? AND message_id = ?').get(record.guildId, record.messageId);
+    const result = db.prepare(`
+        INSERT INTO level_probot_announcements (
+            guild_id, source_channel_id, message_id, job_id, probot_author_id,
+            target_user_id, announced_level, announcement_timestamp, parser_version,
+            parse_status, confidence, content_source, diagnostic_json, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(guild_id, message_id) DO UPDATE SET
+            source_channel_id = excluded.source_channel_id,
+            job_id = excluded.job_id,
+            probot_author_id = excluded.probot_author_id,
+            target_user_id = excluded.target_user_id,
+            announced_level = excluded.announced_level,
+            announcement_timestamp = excluded.announcement_timestamp,
+            parser_version = excluded.parser_version,
+            parse_status = excluded.parse_status,
+            confidence = excluded.confidence,
+            content_source = excluded.content_source,
+            diagnostic_json = excluded.diagnostic_json
+        WHERE level_probot_announcements.parse_status NOT IN ('verified', 'repeated_verified')
+            AND excluded.parse_status IN ('verified', 'repeated_verified')
+    `).run(
+        record.guildId,
+        record.sourceChannelId,
+        record.messageId,
+        record.jobId || null,
+        record.probotAuthorId,
+        record.targetUserId || null,
+        record.announcedLevel === null || record.announcedLevel === undefined ? null : Number(record.announcedLevel),
+        Number(record.announcementTimestamp || 0),
+        record.parserVersion,
+        parseStatus,
+        record.confidence || 'none',
+        record.contentSource || null,
+        stringify(record.diagnostic, {}),
+        record.createdAt || now(),
+    );
+    const saved = db.prepare('SELECT * FROM level_probot_announcements WHERE guild_id = ? AND message_id = ?').get(record.guildId, record.messageId);
+    return {
+        inserted: !existing && result.changes > 0,
+        updated: Boolean(existing && result.changes > 0 && !isVerifiedProbotParseStatus(existing.parse_status)),
+        repeated: saved?.parse_status === 'repeated_verified',
+        record: mapLevelProbotAnnouncement(saved),
+    };
+}
+
+function listLevelProbotAnnouncements(db, guildId, options = {}) {
+    const limit = Math.max(1, Math.min(100000, Number(options.limit || 1000)));
+    const statuses = Array.isArray(options.statuses) ? options.statuses.filter(Boolean) : [];
+    const userId = options.userId || null;
+    const clauses = ['guild_id = ?'];
+    const params = [guildId];
+
+    if (userId) {
+        clauses.push('target_user_id = ?');
+        params.push(userId);
+    }
+    if (statuses.length) {
+        clauses.push(`parse_status IN (${statuses.map(() => '?').join(', ')})`);
+        params.push(...statuses);
+    }
+
+    return db.prepare(`
+        SELECT * FROM level_probot_announcements
+        WHERE ${clauses.join(' AND ')}
+        ORDER BY announcement_timestamp DESC, message_id DESC
+        LIMIT ?
+    `).all(...params, limit).map(mapLevelProbotAnnouncement);
+}
+
+function listHighestProbotAnnouncementLevels(db, guildId, options = {}) {
+    const userIds = Array.isArray(options.userIds) ? [...new Set(options.userIds.map(String).filter(Boolean))] : [];
+    const params = [guildId];
+    const userWhere = userIds.length ? `AND target_user_id IN (${userIds.map(() => '?').join(', ')})` : '';
+    params.push(...userIds);
+    return db.prepare(`
+        SELECT
+            guild_id guildId,
+            target_user_id userId,
+            MAX(announced_level) announcementLevel,
+            COUNT(*) announcementCount,
+            MIN(announcement_timestamp) firstAnnouncementAt,
+            MAX(announcement_timestamp) lastAnnouncementAt
+        FROM level_probot_announcements
+        WHERE guild_id = ?
+            AND target_user_id IS NOT NULL
+            AND announced_level > 0
+            AND parse_status IN ('verified', 'repeated_verified')
+            ${userWhere}
+        GROUP BY guild_id, target_user_id
+        ORDER BY announcementLevel DESC, target_user_id ASC
+    `).all(...params);
+}
+
+function summarizeProbotAnnouncementEvidence(db, guildId) {
+    const row = db.prepare(`
+        SELECT
+            COUNT(*) totalRecords,
+            SUM(CASE WHEN parse_status IN ('verified', 'repeated_verified') THEN 1 ELSE 0 END) verifiedAnnouncements,
+            COUNT(DISTINCT CASE WHEN parse_status IN ('verified', 'repeated_verified') THEN target_user_id END) uniqueVerifiedMembers,
+            SUM(CASE WHEN parse_status = 'unresolved_identity' THEN 1 ELSE 0 END) unresolvedIdentities,
+            SUM(CASE WHEN parse_status NOT IN ('verified', 'repeated_verified', 'unresolved_identity') THEN 1 ELSE 0 END) invalidRecords,
+            SUM(CASE WHEN parse_status = 'repeated_verified' THEN 1 ELSE 0 END) repeatedAnnouncements,
+            MAX(CASE WHEN parse_status IN ('verified', 'repeated_verified') THEN announced_level ELSE 0 END) highestRecoveredLevel
+        FROM level_probot_announcements
+        WHERE guild_id = ?
+    `).get(guildId);
+    return {
+        totalRecords: Number(row?.totalRecords || 0),
+        verifiedAnnouncements: Number(row?.verifiedAnnouncements || 0),
+        uniqueVerifiedMembers: Number(row?.uniqueVerifiedMembers || 0),
+        unresolvedIdentities: Number(row?.unresolvedIdentities || 0),
+        invalidRecords: Number(row?.invalidRecords || 0),
+        repeatedAnnouncements: Number(row?.repeatedAnnouncements || 0),
+        highestRecoveredLevel: Number(row?.highestRecoveredLevel || 0),
+    };
+}
+
+function upsertLevelImportCheckpoint(db, record) {
+    const timestamp = record.updatedAt || now();
+    db.prepare(`
+        INSERT INTO level_import_checkpoints (
+            job_id, guild_id, channel_id, parent_channel_id, before_message_id,
+            oldest_message_id, status, messages_seen, messages_eligible, error, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(job_id, channel_id) DO UPDATE SET
+            parent_channel_id = excluded.parent_channel_id,
+            before_message_id = excluded.before_message_id,
+            oldest_message_id = excluded.oldest_message_id,
+            status = excluded.status,
+            messages_seen = excluded.messages_seen,
+            messages_eligible = excluded.messages_eligible,
+            error = excluded.error,
+            updated_at = excluded.updated_at
+    `).run(
+        record.jobId,
+        record.guildId,
+        record.channelId,
+        record.parentChannelId || null,
+        record.beforeMessageId || null,
+        record.oldestMessageId || null,
+        record.status || 'pending',
+        Number(record.messagesSeen || 0),
+        Number(record.messagesEligible || 0),
+        record.error || null,
+        timestamp,
+    );
+    return mapLevelImportCheckpoint(db.prepare('SELECT * FROM level_import_checkpoints WHERE job_id = ? AND channel_id = ?').get(record.jobId, record.channelId));
+}
+
+function listLevelImportCheckpoints(db, jobId = null) {
+    const rows = jobId
+        ? db.prepare('SELECT * FROM level_import_checkpoints WHERE job_id = ? ORDER BY updated_at DESC').all(jobId)
+        : db.prepare('SELECT * FROM level_import_checkpoints ORDER BY updated_at DESC LIMIT 1000').all();
+    return rows.map(mapLevelImportCheckpoint);
+}
+
+function insertLevelImportMessage(db, record) {
+    const result = db.prepare(`
+        INSERT OR IGNORE INTO level_import_messages (
+            job_id, guild_id, message_id, user_id, user_tag, channel_id,
+            created_at, xp_amount, eligible, skip_reason
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+        record.jobId,
+        record.guildId,
+        record.messageId,
+        record.userId,
+        record.userTag || null,
+        record.channelId,
+        Number(record.createdAt || 0),
+        Number(record.xpAmount || 0),
+        record.eligible === false ? 0 : 1,
+        record.skipReason || null,
+    );
+    return result.changes > 0;
+}
+
+function listLevelImportMessages(db, jobId = null, options = {}) {
+    const requestedLimit = Number(options.limit || 10000);
+    const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.floor(requestedLimit)) : 10000;
+    const userId = options.userId || null;
+    if (jobId && userId) {
+        return db.prepare('SELECT * FROM level_import_messages WHERE job_id = ? AND user_id = ? ORDER BY created_at ASC, message_id ASC LIMIT ?')
+            .all(jobId, userId, limit)
+            .map(mapLevelImportMessage);
+    }
+    if (jobId) {
+        return db.prepare('SELECT * FROM level_import_messages WHERE job_id = ? ORDER BY created_at ASC, message_id ASC LIMIT ?')
+            .all(jobId, limit)
+            .map(mapLevelImportMessage);
+    }
+    return db.prepare('SELECT * FROM level_import_messages ORDER BY created_at DESC LIMIT ?').all(limit).map(mapLevelImportMessage);
+}
+
+function listLevelImportMessagesPage(db, jobId, options = {}) {
+    const requestedLimit = Number(options.limit || 1000);
+    const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(10000, Math.floor(requestedLimit))) : 1000;
+    const afterCreatedAt = options.afterCreatedAt === undefined ? null : Number(options.afterCreatedAt);
+    const afterMessageId = options.afterMessageId || '';
+    const userId = options.userId || null;
+
+    if (userId && afterCreatedAt !== null) {
+        return db.prepare(`
+            SELECT * FROM level_import_messages
+            WHERE job_id = ?
+                AND user_id = ?
+                AND (created_at > ? OR (created_at = ? AND message_id > ?))
+            ORDER BY created_at ASC, message_id ASC
+            LIMIT ?
+        `).all(jobId, userId, afterCreatedAt, afterCreatedAt, afterMessageId, limit).map(mapLevelImportMessage);
+    }
+
+    if (userId) {
+        return db.prepare(`
+            SELECT * FROM level_import_messages
+            WHERE job_id = ? AND user_id = ?
+            ORDER BY created_at ASC, message_id ASC
+            LIMIT ?
+        `).all(jobId, userId, limit).map(mapLevelImportMessage);
+    }
+
+    if (afterCreatedAt !== null) {
+        return db.prepare(`
+            SELECT * FROM level_import_messages
+            WHERE job_id = ?
+                AND (created_at > ? OR (created_at = ? AND message_id > ?))
+            ORDER BY created_at ASC, message_id ASC
+            LIMIT ?
+        `).all(jobId, afterCreatedAt, afterCreatedAt, afterMessageId, limit).map(mapLevelImportMessage);
+    }
+
+    return db.prepare(`
+        SELECT * FROM level_import_messages
+        WHERE job_id = ?
+        ORDER BY created_at ASC, message_id ASC
+        LIMIT ?
+    `).all(jobId, limit).map(mapLevelImportMessage);
+}
+
+function countProcessedLevelMessage(db, guildId, messageId, profileHash) {
+    return db.prepare('SELECT COUNT(*) count FROM level_import_processed_messages WHERE guild_id = ? AND message_id = ? AND profile_hash = ?')
+        .get(guildId, messageId, profileHash).count;
+}
+
+function markLevelImportMessageProcessed(db, record) {
+    const result = db.prepare(`
+        INSERT OR IGNORE INTO level_import_processed_messages (
+            guild_id, message_id, profile_hash, job_id, user_id, channel_id, xp_amount, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+        record.guildId,
+        record.messageId,
+        record.profileHash,
+        record.jobId,
+        record.userId,
+        record.channelId,
+        Number(record.xpAmount || 0),
+        record.createdAt || now(),
+    );
+    return result.changes > 0;
+}
+
+function listLevelProcessedMessages(db, guildId = null, options = {}) {
+    const limit = Math.max(1, Math.min(100000, Number(options.limit || 10000)));
+    const rows = guildId
+        ? db.prepare('SELECT guild_id guildId, message_id messageId, profile_hash profileHash, job_id jobId, user_id userId, channel_id channelId, xp_amount xpAmount, created_at createdAt FROM level_import_processed_messages WHERE guild_id = ? ORDER BY created_at DESC LIMIT ?').all(guildId, limit)
+        : db.prepare('SELECT guild_id guildId, message_id messageId, profile_hash profileHash, job_id jobId, user_id userId, channel_id channelId, xp_amount xpAmount, created_at createdAt FROM level_import_processed_messages ORDER BY created_at DESC LIMIT ?').all(limit);
+    return rows;
+}
+
+function upsertLevelRoleMapping(db, record) {
+    const timestamp = now();
+    db.prepare(`
+        INSERT INTO level_role_level_mappings (guild_id, role_id, minimum_level, created_by, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(guild_id, role_id) DO UPDATE SET
+            minimum_level = excluded.minimum_level,
+            created_by = excluded.created_by,
+            updated_at = excluded.updated_at
+    `).run(record.guildId, record.roleId, Number(record.minimumLevel || 0), record.createdBy || null, record.createdAt || timestamp, timestamp);
+    return mapLevelRoleMapping(db.prepare('SELECT * FROM level_role_level_mappings WHERE guild_id = ? AND role_id = ?').get(record.guildId, record.roleId));
+}
+
+function removeLevelRoleMapping(db, guildId, roleId) {
+    return db.prepare('DELETE FROM level_role_level_mappings WHERE guild_id = ? AND role_id = ?').run(guildId, roleId).changes;
+}
+
+function listLevelRoleMappings(db, guildId = null) {
+    const rows = guildId
+        ? db.prepare('SELECT * FROM level_role_level_mappings WHERE guild_id = ? ORDER BY minimum_level ASC, role_id ASC').all(guildId)
+        : db.prepare('SELECT * FROM level_role_level_mappings ORDER BY guild_id ASC, minimum_level ASC, role_id ASC').all();
+    return rows.map(mapLevelRoleMapping);
+}
+
+function insertLevelReconciliationRecord(db, record) {
+    const timestamp = record.createdAt || now();
+    const result = db.prepare(`
+        INSERT INTO level_reconciliation_records (
+            job_id, guild_id, user_id, user_tag, existing_xp, message_estimated_xp,
+            message_estimated_level, role_min_level, role_min_xp, final_xp,
+            policy, dry_run, applied, metadata_json, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+        record.jobId || null,
+        record.guildId,
+        record.userId,
+        record.userTag || null,
+        Number(record.existingXp || 0),
+        Number(record.messageEstimatedXp || 0),
+        Number(record.messageEstimatedLevel || 0),
+        Number(record.roleMinLevel || 0),
+        Number(record.roleMinXp || 0),
+        Number(record.finalXp || 0),
+        record.policy || 'max',
+        record.dryRun === false ? 0 : 1,
+        record.applied ? 1 : 0,
+        stringify(record.metadata, {}),
+        timestamp,
+    );
+    return mapLevelReconciliation(db.prepare('SELECT * FROM level_reconciliation_records WHERE id = ?').get(result.lastInsertRowid));
+}
+
+function listLevelReconciliationRecords(db, jobId = null, options = {}) {
+    const limit = Math.max(1, Math.min(5000, Number(options.limit || 100)));
+    const rows = jobId
+        ? db.prepare('SELECT * FROM level_reconciliation_records WHERE job_id = ? ORDER BY created_at DESC, id DESC LIMIT ?').all(jobId, limit)
+        : db.prepare('SELECT * FROM level_reconciliation_records ORDER BY created_at DESC, id DESC LIMIT ?').all(limit);
+    return rows.map(mapLevelReconciliation);
+}
+
+const historicalLevelSources = ['historical_import', 'role_recovery'];
+
+function getPriorHistoricalTextXp(db, guildId, userId) {
+    const row = db.prepare(`
+        SELECT COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0) amount
+        FROM level_xp_events
+        WHERE guild_id = ?
+            AND user_id = ?
+            AND source IN (${historicalLevelSources.map(() => '?').join(', ')})
+    `).get(guildId, userId, ...historicalLevelSources);
+    return Number(row?.amount || 0);
+}
+
+function getActiveProbotMigrationTextXp(db, guildId, userId) {
+    const row = db.prepare(`
+        SELECT COALESCE(SUM(text_delta), 0) amount
+        FROM level_probot_migration_snapshots
+        WHERE guild_id = ?
+            AND user_id = ?
+            AND rolled_back_at IS NULL
+    `).get(guildId, userId);
+    return Number(row?.amount || 0);
+}
+
+function getLevelProbotMigrationBatch(db, id) {
+    return mapLevelProbotMigrationBatch(db.prepare('SELECT * FROM level_probot_migration_batches WHERE id = ?').get(id));
+}
+
+function listLevelProbotMigrationBatches(db, guildId = null, options = {}) {
+    const limit = Math.max(1, Math.min(1000, Number(options.limit || 50)));
+    const statuses = Array.isArray(options.statuses) ? options.statuses.filter(Boolean) : [];
+    const clauses = [];
+    const params = [];
+    if (guildId) {
+        clauses.push('guild_id = ?');
+        params.push(guildId);
+    }
+    if (statuses.length) {
+        clauses.push(`status IN (${statuses.map(() => '?').join(', ')})`);
+        params.push(...statuses);
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    return db.prepare(`SELECT * FROM level_probot_migration_batches ${where} ORDER BY updated_at DESC LIMIT ?`)
+        .all(...params, limit)
+        .map(mapLevelProbotMigrationBatch);
+}
+
+function listLevelProbotMigrationSnapshots(db, batchId = null, options = {}) {
+    const limit = Math.max(1, Math.min(100000, Number(options.limit || 10000)));
+    const guildId = options.guildId || null;
+    const userId = options.userId || null;
+    const clauses = [];
+    const params = [];
+    if (batchId) {
+        clauses.push('batch_id = ?');
+        params.push(batchId);
+    }
+    if (guildId) {
+        clauses.push('guild_id = ?');
+        params.push(guildId);
+    }
+    if (userId) {
+        clauses.push('user_id = ?');
+        params.push(userId);
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+    return db.prepare(`SELECT * FROM level_probot_migration_snapshots ${where} ORDER BY applied_at DESC, user_id ASC LIMIT ?`)
+        .all(...params, limit)
+        .map(mapLevelProbotMigrationSnapshot);
+}
+
+function updateLevelProbotMigrationBatch(db, id, patch = {}) {
+    const existing = getLevelProbotMigrationBatch(db, id);
+    if (!existing) return null;
+    const next = { ...existing, ...patch, updatedAt: patch.updatedAt || now() };
+    db.prepare(`
+        UPDATE level_probot_migration_batches
+        SET mode = ?, status = ?, target_user_id = ?, current_member_only = ?,
+            import_job_id = ?, created_by = ?, updated_at = ?, applied_at = ?,
+            rolled_back_at = ?, records_total = ?, affected_count = ?,
+            rollback_count = ?, xp_delta = ?, policy_json = ?, result_json = ?, error = ?
+        WHERE id = ?
+    `).run(
+        next.mode,
+        next.status,
+        next.targetUserId || null,
+        next.currentMemberOnly ? 1 : 0,
+        next.importJobId || null,
+        next.createdBy || null,
+        next.updatedAt,
+        next.appliedAt || null,
+        next.rolledBackAt || null,
+        Number(next.recordsTotal || 0),
+        Number(next.affectedCount || 0),
+        Number(next.rollbackCount || 0),
+        Number(next.xpDelta || 0),
+        stringify(next.policy, {}),
+        stringify(next.result, {}),
+        next.error || null,
+        id,
+    );
+    return getLevelProbotMigrationBatch(db, id);
+}
+
+function insertLevelProbotMigrationBatch(db, record, timestamp) {
+    const batch = {
+        id: record.id || makeId(),
+        guildId: record.guildId,
+        mode: record.mode || 'server_apply',
+        status: record.status || 'applying',
+        targetUserId: record.targetUserId || null,
+        currentMemberOnly: record.currentMemberOnly === true,
+        importJobId: record.importJobId || null,
+        createdBy: record.createdBy || null,
+        createdAt: record.createdAt || timestamp,
+        appliedAt: record.appliedAt || null,
+        rolledBackAt: record.rolledBackAt || null,
+        recordsTotal: Number(record.recordsTotal || 0),
+        affectedCount: Number(record.affectedCount || 0),
+        rollbackCount: Number(record.rollbackCount || 0),
+        xpDelta: Number(record.xpDelta || 0),
+        policy: record.policy || {},
+        result: record.result || {},
+        error: record.error || null,
+    };
+    db.prepare(`
+        INSERT INTO level_probot_migration_batches (
+            id, guild_id, mode, status, target_user_id, current_member_only,
+            import_job_id, created_by, created_at, updated_at, policy_json, result_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO NOTHING
+    `).run(
+        batch.id,
+        batch.guildId,
+        batch.mode,
+        batch.status,
+        batch.targetUserId,
+        batch.currentMemberOnly ? 1 : 0,
+        batch.importJobId,
+        batch.createdBy,
+        batch.createdAt,
+        timestamp,
+        stringify(batch.policy, {}),
+        stringify(batch.result, {}),
+    );
+    updateLevelProbotMigrationBatch(db, batch.id, batch);
+    return getLevelProbotMigrationBatch(db, batch.id);
+}
+
+function calculateProbotMigrationTarget(db, proposal, previous) {
+    const currentText = Number(previous?.textXp || 0);
+    const currentVoice = Number(previous?.voiceXp || 0);
+    const requiredTotalXp = Math.max(0, Math.floor(Number(proposal.requiredTotalXp || 0)));
+    const priorHistoricalTextXp = getPriorHistoricalTextXp(db, proposal.guildId, proposal.userId);
+    const priorFinalTextXp = getActiveProbotMigrationTextXp(db, proposal.guildId, proposal.userId);
+    const liveTextXp = Math.max(0, currentText - priorHistoricalTextXp - priorFinalTextXp);
+    const targetTextXp = proposal.confirmedLevel > 0
+        ? Math.max(currentText, requiredTotalXp + liveTextXp)
+        : currentText;
+
+    return {
+        currentText,
+        currentVoice,
+        requiredTotalXp,
+        priorHistoricalTextXp,
+        priorFinalTextXp,
+        liveTextXp,
+        targetTextXp,
+        targetVoiceXp: currentVoice,
+        textDelta: Math.max(0, targetTextXp - currentText),
+    };
+}
+
+function insertLevelProbotMigrationSnapshot(db, batch, proposal, previous, target, timestamp) {
+    db.prepare(`
+        INSERT INTO level_probot_migration_snapshots (
+            batch_id, guild_id, user_id, user_tag, previous_text_xp,
+            previous_voice_xp, previous_last_text_xp_at, previous_created_at,
+            previous_updated_at, target_text_xp, target_voice_xp, text_delta,
+            confirmed_level, required_total_xp, live_text_xp,
+            prior_historical_text_xp, prior_final_text_xp, evidence_json,
+            applied_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+        batch.id,
+        proposal.guildId,
+        proposal.userId,
+        proposal.userTag || previous?.userTag || null,
+        Number(previous?.textXp || 0),
+        Number(previous?.voiceXp || 0),
+        Number(previous?.lastTextXpAt || 0),
+        previous?.createdAt || null,
+        previous?.updatedAt || null,
+        target.targetTextXp,
+        target.targetVoiceXp,
+        target.textDelta,
+        Number(proposal.confirmedLevel || 0),
+        target.requiredTotalXp,
+        target.liveTextXp,
+        target.priorHistoricalTextXp,
+        target.priorFinalTextXp,
+        stringify(proposal.evidence, {}),
+        timestamp,
+    );
+    return mapLevelProbotMigrationSnapshot(db.prepare('SELECT * FROM level_probot_migration_snapshots WHERE batch_id = ? AND user_id = ?').get(batch.id, proposal.userId));
+}
+
+function applyLevelProbotFinalMigration(db, record) {
+    return db.transaction(() => {
+        const timestamp = record.createdAt || now();
+        const proposals = Array.isArray(record.proposals) ? record.proposals : [];
+        const batch = insertLevelProbotMigrationBatch(db, {
+            ...record,
+            status: 'applying',
+        }, timestamp);
+        let affectedCount = 0;
+        let xpDelta = 0;
+        const snapshots = [];
+
+        for (const proposal of proposals) {
+            const normalized = {
+                ...proposal,
+                guildId: record.guildId,
+                userId: proposal.userId,
+                confirmedLevel: Math.max(0, Math.floor(Number(proposal.confirmedLevel || 0))),
+                requiredTotalXp: Math.max(0, Math.floor(Number(proposal.requiredTotalXp || 0))),
+            };
+            const previous = getUserLevelRecord(db, normalized.guildId, normalized.userId);
+            const base = previous || {
+                guildId: normalized.guildId,
+                userId: normalized.userId,
+                userTag: normalized.userTag || null,
+                textXp: 0,
+                voiceXp: 0,
+                lastTextXpAt: 0,
+                createdAt: timestamp,
+                updatedAt: timestamp,
+            };
+            const target = calculateProbotMigrationTarget(db, normalized, base);
+            if (target.textDelta <= 0) continue;
+
+            const updated = upsertLevelRecord(db, {
+                ...base,
+                userTag: normalized.userTag || base.userTag || null,
+                textXp: target.targetTextXp,
+                voiceXp: target.targetVoiceXp,
+                updatedAt: timestamp,
+            });
+            insertLevelXpEvent(db, {
+                guildId: normalized.guildId,
+                userId: normalized.userId,
+                userTag: normalized.userTag || base.userTag || null,
+                source: 'probot_final_migration',
+                sourceKey: `${batch.id}:${normalized.userId}:apply`,
+                xpType: 'text',
+                amount: target.textDelta,
+                previousTextXp: Number(base.textXp || 0),
+                previousVoiceXp: Number(base.voiceXp || 0),
+                newTextXp: updated.textXp,
+                newVoiceXp: updated.voiceXp,
+                adminId: record.createdBy || null,
+                jobId: batch.id,
+                metadata: {
+                    policy: record.policy || {},
+                    confirmedLevel: normalized.confirmedLevel,
+                    requiredTotalXp: target.requiredTotalXp,
+                    liveTextXp: target.liveTextXp,
+                    priorHistoricalTextXp: target.priorHistoricalTextXp,
+                    priorFinalTextXp: target.priorFinalTextXp,
+                    evidence: normalized.evidence || {},
+                },
+                createdAt: timestamp,
+            });
+            snapshots.push(insertLevelProbotMigrationSnapshot(db, batch, normalized, previous, target, timestamp));
+            affectedCount += 1;
+            xpDelta += target.textDelta;
+        }
+
+        const applied = updateLevelProbotMigrationBatch(db, batch.id, {
+            status: 'applied',
+            appliedAt: timestamp,
+            recordsTotal: proposals.length,
+            affectedCount,
+            xpDelta,
+            result: {
+                ...(record.result || {}),
+                affectedCount,
+                xpDelta,
+            },
+        });
+        return { batch: applied, snapshots };
+    })();
+}
+
+function rollbackLevelProbotFinalMigration(db, batchId, options = {}) {
+    return db.transaction(() => {
+        const timestamp = options.createdAt || now();
+        const batch = getLevelProbotMigrationBatch(db, batchId);
+        if (!batch) return null;
+        if (batch.status === 'rolled_back') {
+            return {
+                batch,
+                snapshots: listLevelProbotMigrationSnapshots(db, batchId),
+                rollbackCount: 0,
+                xpDelta: 0,
+            };
+        }
+
+        const snapshots = listLevelProbotMigrationSnapshots(db, batchId, { limit: 100000 })
+            .filter(snapshot => !snapshot.rolledBackAt);
+        let rollbackCount = 0;
+        let xpDelta = 0;
+        const updatedSnapshots = [];
+
+        for (const snapshot of snapshots) {
+            const current = getUserLevelRecord(db, snapshot.guildId, snapshot.userId);
+            if (!current) continue;
+            const rollbackTextXp = Math.max(
+                Number(snapshot.previousTextXp || 0),
+                Number(current.textXp || 0) - Number(snapshot.textDelta || 0),
+            );
+            const rollbackVoiceXp = Number(current.voiceXp || 0);
+            const updated = upsertLevelRecord(db, {
+                ...current,
+                textXp: rollbackTextXp,
+                voiceXp: rollbackVoiceXp,
+                updatedAt: timestamp,
+            });
+            const amount = Number(updated.textXp || 0) - Number(current.textXp || 0);
+            insertLevelXpEvent(db, {
+                guildId: snapshot.guildId,
+                userId: snapshot.userId,
+                userTag: current.userTag || snapshot.userTag || null,
+                source: 'probot_final_migration_rollback',
+                sourceKey: `${batch.id}:${snapshot.userId}:rollback`,
+                xpType: 'text',
+                amount,
+                previousTextXp: current.textXp,
+                previousVoiceXp: current.voiceXp,
+                newTextXp: updated.textXp,
+                newVoiceXp: updated.voiceXp,
+                adminId: options.adminId || null,
+                jobId: batch.id,
+                metadata: {
+                    restoredFromBatch: batch.id,
+                    originalTextDelta: snapshot.textDelta,
+                    previousTextXp: snapshot.previousTextXp,
+                    preservedLiveTextXp: Math.max(0, Number(current.textXp || 0) - Number(snapshot.targetTextXp || 0)),
+                },
+                createdAt: timestamp,
+            });
+            db.prepare(`
+                UPDATE level_probot_migration_snapshots
+                SET rolled_back_at = ?, rollback_text_xp = ?, rollback_voice_xp = ?
+                WHERE batch_id = ? AND user_id = ?
+            `).run(timestamp, updated.textXp, updated.voiceXp, snapshot.batchId, snapshot.userId);
+            updatedSnapshots.push(mapLevelProbotMigrationSnapshot(db.prepare('SELECT * FROM level_probot_migration_snapshots WHERE batch_id = ? AND user_id = ?').get(snapshot.batchId, snapshot.userId)));
+            rollbackCount += 1;
+            xpDelta += amount;
+        }
+
+        const rolledBack = updateLevelProbotMigrationBatch(db, batch.id, {
+            status: 'rolled_back',
+            rolledBackAt: timestamp,
+            rollbackCount,
+            result: {
+                ...(batch.result || {}),
+                rollbackCount,
+                rollbackXpDelta: xpDelta,
+            },
+        });
+        return { batch: rolledBack, snapshots: updatedSnapshots, rollbackCount, xpDelta };
+    })();
+}
+
+function createLevelTestSession(db, record) {
+    const timestamp = record.createdAt || now();
+    const session = {
+        id: record.id || makeId(),
+        guildId: record.guildId,
+        userId: record.userId,
+        userTag: record.userTag || null,
+        adminId: record.adminId,
+        status: record.status || (record.previewOnly ? 'preview' : 'active'),
+        previewOnly: record.previewOnly !== false,
+        previousTextXp: Number(record.previousTextXp || 0),
+        previousVoiceXp: Number(record.previousVoiceXp || 0),
+        xpDelta: Number(record.xpDelta || 0),
+        xpType: record.xpType || 'text',
+        managedRoleIds: record.managedRoleIds || [],
+        addedRoleIds: record.addedRoleIds || [],
+        removedRoleIds: record.removedRoleIds || [],
+        metadata: record.metadata || {},
+        createdAt: timestamp,
+    };
+    db.prepare(`
+        INSERT INTO level_test_sessions (
+            id, guild_id, user_id, user_tag, admin_id, status, preview_only,
+            previous_text_xp, previous_voice_xp, xp_delta, xp_type,
+            managed_role_ids_json, added_role_ids_json, removed_role_ids_json,
+            metadata_json, created_at, updated_at, rolled_back_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+    `).run(
+        session.id,
+        session.guildId,
+        session.userId,
+        session.userTag,
+        session.adminId,
+        session.status,
+        session.previewOnly ? 1 : 0,
+        session.previousTextXp,
+        session.previousVoiceXp,
+        session.xpDelta,
+        session.xpType,
+        stringify(session.managedRoleIds, []),
+        stringify(session.addedRoleIds, []),
+        stringify(session.removedRoleIds, []),
+        stringify(session.metadata, {}),
+        session.createdAt,
+        timestamp,
+    );
+    return getLevelTestSession(db, session.id);
+}
+
+function getLevelTestSession(db, id) {
+    return mapLevelTestSession(db.prepare('SELECT * FROM level_test_sessions WHERE id = ?').get(id));
+}
+
+function listLevelTestSessions(db, guildId = null, options = {}) {
+    const limit = Math.max(1, Math.min(1000, Number(options.limit || 50)));
+    const userId = options.userId || null;
+    if (guildId && userId) {
+        return db.prepare('SELECT * FROM level_test_sessions WHERE guild_id = ? AND user_id = ? ORDER BY created_at DESC LIMIT ?')
+            .all(guildId, userId, limit)
+            .map(mapLevelTestSession);
+    }
+    if (guildId) {
+        return db.prepare('SELECT * FROM level_test_sessions WHERE guild_id = ? ORDER BY created_at DESC LIMIT ?')
+            .all(guildId, limit)
+            .map(mapLevelTestSession);
+    }
+    return db.prepare('SELECT * FROM level_test_sessions ORDER BY created_at DESC LIMIT ?').all(limit).map(mapLevelTestSession);
+}
+
+function updateLevelTestSession(db, id, patch = {}) {
+    const existing = getLevelTestSession(db, id);
+    if (!existing) return null;
+    const next = { ...existing, ...patch, updatedAt: patch.updatedAt || now() };
+    db.prepare(`
+        UPDATE level_test_sessions
+        SET status = ?, preview_only = ?, xp_delta = ?, xp_type = ?,
+            managed_role_ids_json = ?, added_role_ids_json = ?, removed_role_ids_json = ?,
+            metadata_json = ?, updated_at = ?, rolled_back_at = ?
+        WHERE id = ?
+    `).run(
+        next.status,
+        next.previewOnly ? 1 : 0,
+        Number(next.xpDelta || 0),
+        next.xpType || 'text',
+        stringify(next.managedRoleIds, []),
+        stringify(next.addedRoleIds, []),
+        stringify(next.removedRoleIds, []),
+        stringify(next.metadata, {}),
+        next.updatedAt,
+        next.rolledBackAt || null,
+        id,
+    );
+    return getLevelTestSession(db, id);
 }
 
 function createScheduledMessage(db, record) {
@@ -736,7 +2549,13 @@ function replaceGuildLevelRewards(db, guildId, rewards = [], updatedBy = null) {
         guildId,
         section: 'leveling',
         key: 'roleRewards',
-        value: rewards.map(reward => ({ xp: Number(reward.xp || 0), roleId: reward.roleId })).filter(reward => reward.roleId),
+        value: rewards
+            .map(reward => ({
+                xp: Number(reward.xp || 0),
+                level: reward.level === undefined ? undefined : Number(reward.level || 0),
+                roleId: reward.roleId,
+            }))
+            .filter(reward => reward.roleId),
         updatedBy,
         createdAt: timestamp,
         updatedAt: timestamp,
@@ -881,17 +2700,78 @@ function importState(db, state = {}) {
         `).run(record.guildId, record.roleId, Number(record.xp || 0), record.updatedBy || null, record.createdAt || now(), record.updatedAt || now());
     });
     count('configAudit', state.configAudit, record => addConfigAuditEntries(db, [record]));
+    count('limitedAccounts', state.limitedAccounts, record => honeypotLimitedAccountsRepository.upsertLimitedAccount(db, record));
+    count('rankCardPreferences', state.rankCardPreferences, record => rankCardRepository.upsertRankCardPreference(db, record));
+    count('rankCardBackgrounds', state.rankCardBackgrounds, record => rankCardRepository.upsertRankCardBackground(db, record));
+    count('levelXpEvents', state.levelXpEvents, record => insertLevelXpEvent(db, record));
+    count('levelImportJobs', state.levelImportJobs, record => createLevelImportJob(db, record));
+    count('levelImportCheckpoints', state.levelImportCheckpoints, record => upsertLevelImportCheckpoint(db, record));
+    count('levelImportMessages', state.levelImportMessages, record => insertLevelImportMessage(db, record));
+    count('levelCalibrationJobs', state.levelCalibrationJobs, record => createLevelCalibrationJob(db, record));
+    count('levelProbotScanJobs', state.levelProbotScanJobs, record => createLevelProbotScanJob(db, record));
+    count('levelProbotScanCheckpoints', state.levelProbotScanCheckpoints, record => upsertLevelProbotScanCheckpoint(db, record));
+    count('levelProbotAnnouncements', state.levelProbotAnnouncements, record => insertLevelProbotAnnouncement(db, record));
+    count('levelProbotMigrationBatches', state.levelProbotMigrationBatches, record => insertLevelProbotMigrationBatch(db, record, record.createdAt || now()));
+    count('levelProbotMigrationSnapshots', state.levelProbotMigrationSnapshots, record => {
+        db.prepare(`
+            INSERT OR IGNORE INTO level_probot_migration_snapshots (
+                batch_id, guild_id, user_id, user_tag, previous_text_xp,
+                previous_voice_xp, previous_last_text_xp_at, previous_created_at,
+                previous_updated_at, target_text_xp, target_voice_xp, text_delta,
+                confirmed_level, required_total_xp, live_text_xp,
+                prior_historical_text_xp, prior_final_text_xp, evidence_json,
+                applied_at, rolled_back_at, rollback_text_xp, rollback_voice_xp
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+            record.batchId,
+            record.guildId,
+            record.userId,
+            record.userTag || null,
+            Number(record.previousTextXp || 0),
+            Number(record.previousVoiceXp || 0),
+            Number(record.previousLastTextXpAt || 0),
+            record.previousCreatedAt || null,
+            record.previousUpdatedAt || null,
+            Number(record.targetTextXp || 0),
+            Number(record.targetVoiceXp || 0),
+            Number(record.textDelta || 0),
+            Number(record.confirmedLevel || 0),
+            Number(record.requiredTotalXp || 0),
+            Number(record.liveTextXp || 0),
+            Number(record.priorHistoricalTextXp || 0),
+            Number(record.priorFinalTextXp || 0),
+            stringify(record.evidence, {}),
+            record.appliedAt || null,
+            record.rolledBackAt || null,
+            record.rollbackTextXp ?? null,
+            record.rollbackVoiceXp ?? null,
+        );
+    });
+    count('levelProcessedMessages', state.levelProcessedMessages, record => markLevelImportMessageProcessed(db, record));
+    count('levelRoleMappings', state.levelRoleMappings, record => upsertLevelRoleMapping(db, record));
+    count('levelReconciliationRecords', state.levelReconciliationRecords, record => insertLevelReconciliationRecord(db, record));
+    count('levelTestSessions', state.levelTestSessions, record => createLevelTestSession(db, record));
 
     return counts;
 }
 
 module.exports = {
+    ...honeypotLimitedAccountsRepository,
+    ...rankCardRepository,
     addModNote,
     addUserHistory,
     addUserXp,
+    adjustUserXp,
+    applyLevelProbotFinalMigration,
     appendVoiceActivity,
     clearWarningCases,
     countActiveModerationCases,
+    countProcessedLevelMessage,
+    createLevelCalibrationJob,
+    createLevelImportJob,
+    createLevelProbotScanJob,
+    createLevelTestSession,
     createModerationCase,
     createReminder,
     createScheduledMessage,
@@ -906,7 +2786,17 @@ module.exports = {
     getTempVoiceChannel,
     getTicketRecord,
     getTicketTranscript,
+    getLevelCalibrationJob,
+    getLevelImportJob,
+    getLevelProbotMigrationBatch,
+    getLevelProbotScanJob,
+    getLevelRank,
+    getLevelTestSession,
     getUserLevelRecord,
+    insertLevelImportMessage,
+    insertLevelProbotAnnouncement,
+    insertLevelReconciliationRecord,
+    insertLevelXpEvent,
     importState,
     listConfigAudit,
     listCommandStats,
@@ -921,6 +2811,22 @@ module.exports = {
     listGuildLogChannels,
     listGuildSettings,
     listLevelLeaderboard,
+    listLevelCalibrationJobs,
+    listLevelImportCheckpoints,
+    listLevelImportJobs,
+    listLevelImportMessages,
+    listLevelImportMessagesPage,
+    listLevelProbotAnnouncements,
+    listLevelProbotMigrationBatches,
+    listLevelProbotMigrationSnapshots,
+    listLevelProbotScanCheckpoints,
+    listLevelProbotScanJobs,
+    listHighestProbotAnnouncementLevels,
+    listLevelProcessedMessages,
+    listLevelReconciliationRecords,
+    listLevelRoleMappings,
+    listLevelTestSessions,
+    listLevelXpEvents,
     listModNotes,
     listReminders,
     listScheduledJobStatus,
@@ -937,13 +2843,29 @@ module.exports = {
     removeTempMute,
     removeTempRole,
     removeTempVoiceChannel,
+    removeLevelRoleMapping,
+    rollbackLevelProbotFinalMigration,
+    requestCancelLevelImportJob,
+    requestCancelLevelProbotScanJob,
+    requestCancelLevelCalibrationJob,
+    summarizeProbotAnnouncementEvidence,
+    markLevelImportMessageProcessed,
     updateModerationCaseReason,
     updateReminderStatus,
     markScheduledJobFinish,
     markScheduledJobStart,
     saveGuildConfigurationSection,
+    setUserXp,
+    setUserXpMinimum,
+    updateLevelImportJob,
+    updateLevelProbotScanJob,
+    updateLevelCalibrationJob,
+    updateLevelTestSession,
     updateScheduledMessageStatus,
     upsertEmbedTemplate,
+    upsertLevelImportCheckpoint,
+    upsertLevelProbotScanCheckpoint,
+    upsertLevelRoleMapping,
     upsertStarboardMessage,
     upsertTempBan,
     upsertTempMute,

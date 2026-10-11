@@ -4,10 +4,23 @@ const {
     formatXp,
     formatProgressBar,
     getGuildLevelingConfig,
+    getLevelRank,
     getLevelProgress,
     getUserLevelRecord,
-    listLevelLeaderboard,
 } = require('../../utils/leveling');
+const { createRankCardAttachment } = require('../../utils/rankCard');
+const { getRankCardPreference, listRankCardBackgrounds } = require('../../utils/store');
+
+function displayUserForRank(user, member) {
+    return {
+        id: user.id,
+        username: user.username,
+        tag: user.tag,
+        globalName: user.globalName,
+        displayName: member?.displayName || user.globalName || user.username || user.tag || user.id,
+        displayAvatarURL: options => member?.displayAvatarURL?.(options) || user.displayAvatarURL?.(options),
+    };
+}
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -19,6 +32,8 @@ module.exports = {
 
     async execute(interaction) {
         const user = interaction.options.getUser('user') || interaction.user;
+        const member = interaction.options.getMember('user') || (user.id === interaction.user.id ? interaction.member : null);
+        const displayUser = displayUserForRank(user, member);
         const record = await getUserLevelRecord(interaction.guild.id, user.id);
 
         if (!record) {
@@ -33,8 +48,7 @@ module.exports = {
         const settings = await getGuildLevelingConfig(interaction.guild.id);
         const progress = getLevelProgress(record, settings);
         const percent = Math.floor(progress.percent * 100);
-        const leaderboard = await listLevelLeaderboard(interaction.guild.id, 1000, 'total');
-        const placement = leaderboard.findIndex(item => item.userId === user.id);
+        const placement = await getLevelRank(interaction.guild.id, user.id, 'total');
         const textXp = Number(record.textXp || 0);
         const voiceXp = Number(record.voiceXp || 0);
         const total = Math.max(1, textXp + voiceXp);
@@ -42,12 +56,12 @@ module.exports = {
         const voicePercent = Math.round((voiceXp / total) * 100);
 
         const embed = createEmbed({
-            title: `${user.username}'s Rank`,
+            title: `${displayUser.displayName}'s Rank`,
             color: 'blue',
-            thumbnail: user.displayAvatarURL({ extension: 'png', size: 128 }),
+            thumbnail: displayUser.displayAvatarURL({ extension: 'png', size: 128 }),
             description: [
                 `**Level ${progress.level}** with **${formatXp(progress.totalXp)} XP**`,
-                `Server placement: **${placement === -1 ? 'Unranked' : `#${placement + 1}`}**`,
+                `Server placement: **${placement ? `#${placement}` : 'Unranked'}**`,
             ].join('\n'),
             fields: [
                 { name: 'Next Level', value: `${formatXp(progress.progressXp)} / ${formatXp(progress.neededXp)} XP (${percent}%)`, inline: false },
@@ -70,6 +84,30 @@ module.exports = {
                 },
             ],
         });
+
+        if (settings.rankCard?.enabled !== false) {
+            await interaction.deferReply();
+            try {
+                const [preference, backgrounds] = await Promise.all([
+                    getRankCardPreference(interaction.guild.id, user.id),
+                    listRankCardBackgrounds(interaction.guild.id),
+                ]);
+                const attachment = await createRankCardAttachment({
+                    guildId: interaction.guild.id,
+                    user: displayUser,
+                    progress,
+                    rank: placement,
+                    record,
+                    settings,
+                    preference,
+                    backgrounds,
+                });
+                return await interaction.editReply({ files: [attachment] });
+            } catch (error) {
+                console.error('Failed to send graphical rank card, using embed fallback:', error);
+                return interaction.editReply({ embeds: [embed] });
+            }
+        }
 
         return interaction.reply({ embeds: [embed] });
     },

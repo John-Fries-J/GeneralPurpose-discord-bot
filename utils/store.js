@@ -39,6 +39,23 @@ function createEmptyState() {
         guildLogChannels: [],
         guildLevelRewards: [],
         configAudit: [],
+        limitedAccounts: [],
+        rankCardPreferences: [],
+        rankCardBackgrounds: [],
+        levelXpEvents: [],
+        levelImportJobs: [],
+        levelImportCheckpoints: [],
+        levelImportMessages: [],
+        levelCalibrationJobs: [],
+        levelProbotScanJobs: [],
+        levelProbotScanCheckpoints: [],
+        levelProbotAnnouncements: [],
+        levelProbotMigrationBatches: [],
+        levelProbotMigrationSnapshots: [],
+        levelProcessedMessages: [],
+        levelRoleMappings: [],
+        levelReconciliationRecords: [],
+        levelTestSessions: [],
     };
 }
 
@@ -249,6 +266,23 @@ function clearNormalizedState(db) {
         DELETE FROM guild_level_rewards;
         DELETE FROM guild_log_channels;
         DELETE FROM guild_settings;
+        DELETE FROM honeypot_limited_accounts;
+        DELETE FROM rank_card_preferences;
+        DELETE FROM rank_card_backgrounds;
+        DELETE FROM level_xp_events;
+        DELETE FROM level_import_messages;
+        DELETE FROM level_import_checkpoints;
+        DELETE FROM level_import_processed_messages;
+        DELETE FROM level_calibration_jobs;
+        DELETE FROM level_probot_migration_snapshots;
+        DELETE FROM level_probot_migration_batches;
+        DELETE FROM level_probot_announcements;
+        DELETE FROM level_probot_scan_checkpoints;
+        DELETE FROM level_probot_scan_jobs;
+        DELETE FROM level_import_jobs;
+        DELETE FROM level_role_level_mappings;
+        DELETE FROM level_reconciliation_records;
+        DELETE FROM level_test_sessions;
     `);
 }
 
@@ -330,6 +364,236 @@ async function getTempMute(guildId, userId) {
     const settings = getStorageSettings();
     if (settings.provider === 'sqlite') return repository.getTempMute(await getSqliteDb(), guildId, userId);
     return (await readState()).tempMutes.find(item => item.guildId === guildId && item.userId === userId) || null;
+}
+
+function normalizeLimitedAccount(record, overrides = {}) {
+    const timestamp = overrides.timestamp || Date.now();
+    return {
+        guildId: record.guildId,
+        userId: record.userId,
+        previousRoleIds: Array.isArray(record.previousRoleIds) ? [...new Set(record.previousRoleIds.map(String))] : [],
+        limitedRoleId: record.limitedRoleId,
+        limitedChannelId: record.limitedChannelId || null,
+        limitedBy: record.limitedBy || null,
+        limitedAt: record.limitedAt || timestamp,
+        restoredBy: record.restoredBy || null,
+        restoredAt: record.restoredAt || null,
+        restorationSource: record.restorationSource || null,
+        status: record.status || 'active',
+        createdAt: record.createdAt || timestamp,
+        updatedAt: record.updatedAt || timestamp,
+    };
+}
+
+async function getLimitedAccount(guildId, userId) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.getLimitedAccount(await getSqliteDb(), guildId, userId);
+    return ((await readState()).limitedAccounts || []).find(item => item.guildId === guildId && item.userId === userId) || null;
+}
+
+async function listLimitedAccounts(guildId = null) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listLimitedAccounts(await getSqliteDb(), guildId);
+    return ((await readState()).limitedAccounts || [])
+        .filter(item => !guildId || item.guildId === guildId)
+        .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
+}
+
+async function upsertLimitedAccount(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.upsertLimitedAccount(await getSqliteDb(), record);
+
+    let saved = null;
+    await useLegacyStateMutation(state => {
+        state.limitedAccounts ||= [];
+        saved = normalizeLimitedAccount(record);
+        state.limitedAccounts = state.limitedAccounts.filter(item => !(item.guildId === saved.guildId && item.userId === saved.userId));
+        state.limitedAccounts.push(saved);
+        return state;
+    });
+    return saved;
+}
+
+async function beginLimitedAccount(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.beginLimitedAccount(await getSqliteDb(), record);
+
+    let result = null;
+    await useLegacyStateMutation(state => {
+        state.limitedAccounts ||= [];
+        const existing = state.limitedAccounts.find(item => item.guildId === record.guildId && item.userId === record.userId) || null;
+        if (existing?.status === 'active') {
+            result = { ok: false, record: existing };
+            return state;
+        }
+
+        const account = normalizeLimitedAccount({
+            ...record,
+            restoredBy: null,
+            restoredAt: null,
+            restorationSource: null,
+            status: 'active',
+        });
+        state.limitedAccounts = state.limitedAccounts.filter(item => !(item.guildId === account.guildId && item.userId === account.userId));
+        state.limitedAccounts.push(account);
+        result = { ok: true, record: account };
+        return state;
+    });
+    return result;
+}
+
+async function markLimitedAccountRestored(guildId, userId, options = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.markLimitedAccountRestored(await getSqliteDb(), guildId, userId, options);
+
+    let updated = null;
+    await useLegacyStateMutation(state => {
+        state.limitedAccounts ||= [];
+        const record = state.limitedAccounts.find(item => item.guildId === guildId && item.userId === userId) || null;
+        if (!record) return state;
+        if (record.status === 'restored') {
+            updated = record;
+            return state;
+        }
+
+        const timestamp = options.restoredAt || Date.now();
+        record.status = 'restored';
+        record.restoredBy = options.restoredBy || null;
+        record.restoredAt = timestamp;
+        record.restorationSource = options.restorationSource || 'unknown';
+        record.updatedAt = timestamp;
+        updated = record;
+        return state;
+    });
+    return updated;
+}
+
+async function markLimitedAccountFailed(guildId, userId, options = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.markLimitedAccountFailed(await getSqliteDb(), guildId, userId, options);
+
+    let updated = null;
+    await useLegacyStateMutation(state => {
+        state.limitedAccounts ||= [];
+        const record = state.limitedAccounts.find(item => item.guildId === guildId && item.userId === userId) || null;
+        if (!record) return state;
+        record.status = 'failed';
+        record.restorationSource = options.source || 'limit_failed';
+        record.updatedAt = options.updatedAt || Date.now();
+        updated = record;
+        return state;
+    });
+    return updated;
+}
+
+function normalizeRankCardPreference(record, timestamp = Date.now()) {
+    return {
+        guildId: record.guildId,
+        userId: record.userId,
+        backgroundType: record.backgroundType || 'default',
+        backgroundKey: record.backgroundKey || null,
+        accentColor: record.accentColor || null,
+        createdAt: record.createdAt || timestamp,
+        updatedAt: record.updatedAt || timestamp,
+    };
+}
+
+async function getRankCardPreference(guildId, userId) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.getRankCardPreference(await getSqliteDb(), guildId, userId);
+    return ((await readState()).rankCardPreferences || []).find(item => item.guildId === guildId && item.userId === userId) || null;
+}
+
+async function listRankCardPreferences(guildId = null) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listRankCardPreferences(await getSqliteDb(), guildId);
+    return ((await readState()).rankCardPreferences || [])
+        .filter(item => !guildId || item.guildId === guildId)
+        .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
+}
+
+async function upsertRankCardPreference(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.upsertRankCardPreference(await getSqliteDb(), record);
+
+    let saved = null;
+    await useLegacyStateMutation(state => {
+        state.rankCardPreferences ||= [];
+        const existing = state.rankCardPreferences.find(item => item.guildId === record.guildId && item.userId === record.userId);
+        saved = normalizeRankCardPreference({
+            ...record,
+            createdAt: record.createdAt || existing?.createdAt,
+        });
+        state.rankCardPreferences = state.rankCardPreferences.filter(item => !(item.guildId === saved.guildId && item.userId === saved.userId));
+        state.rankCardPreferences.push(saved);
+        return state;
+    });
+    return saved;
+}
+
+async function deleteRankCardPreference(guildId, userId) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.deleteRankCardPreference(await getSqliteDb(), guildId, userId);
+    return useLegacyStateMutation(state => {
+        state.rankCardPreferences ||= [];
+        state.rankCardPreferences = state.rankCardPreferences.filter(item => !(item.guildId === guildId && item.userId === userId));
+        return state;
+    });
+}
+
+function normalizeRankCardBackground(record, timestamp = Date.now()) {
+    return {
+        guildId: record.guildId,
+        backgroundId: record.backgroundId,
+        name: record.name,
+        assetPath: record.assetPath,
+        createdBy: record.createdBy || null,
+        createdAt: record.createdAt || timestamp,
+        updatedAt: record.updatedAt || timestamp,
+    };
+}
+
+async function getRankCardBackground(guildId, backgroundId) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.getRankCardBackground(await getSqliteDb(), guildId, backgroundId);
+    return ((await readState()).rankCardBackgrounds || []).find(item => item.guildId === guildId && item.backgroundId === backgroundId) || null;
+}
+
+async function listRankCardBackgrounds(guildId = null) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listRankCardBackgrounds(await getSqliteDb(), guildId);
+    return ((await readState()).rankCardBackgrounds || [])
+        .filter(item => !guildId || item.guildId === guildId)
+        .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+}
+
+async function upsertRankCardBackground(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.upsertRankCardBackground(await getSqliteDb(), record);
+
+    let saved = null;
+    await useLegacyStateMutation(state => {
+        state.rankCardBackgrounds ||= [];
+        const existing = state.rankCardBackgrounds.find(item => item.guildId === record.guildId && item.backgroundId === record.backgroundId);
+        saved = normalizeRankCardBackground({
+            ...record,
+            createdAt: record.createdAt || existing?.createdAt,
+        });
+        state.rankCardBackgrounds = state.rankCardBackgrounds.filter(item => !(item.guildId === saved.guildId && item.backgroundId === saved.backgroundId));
+        state.rankCardBackgrounds.push(saved);
+        return state;
+    });
+    return saved;
+}
+
+async function deleteRankCardBackground(guildId, backgroundId) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.deleteRankCardBackground(await getSqliteDb(), guildId, backgroundId);
+    return useLegacyStateMutation(state => {
+        state.rankCardBackgrounds ||= [];
+        state.rankCardBackgrounds = state.rankCardBackgrounds.filter(item => !(item.guildId === guildId && item.backgroundId === backgroundId));
+        return state;
+    });
 }
 
 async function createModerationCase(record) {
@@ -673,20 +937,921 @@ async function getUserLevelRecord(guildId, userId) {
     return (await readState()).levels.find(item => item.guildId === guildId && item.userId === userId) || null;
 }
 
-async function listLevelLeaderboard(guildId, limit = 10, mode = 'total') {
-    const settings = getStorageSettings();
-    if (settings.provider === 'sqlite') return repository.listLevelLeaderboard(await getSqliteDb(), guildId, limit, mode);
-    const score = record => {
-        if (mode === 'text') return Number(record.textXp || 0);
-        if (mode === 'voice') return Number(record.voiceXp || 0);
-        return Number(record.textXp || 0) + Number(record.voiceXp || 0);
+function levelScore(record, mode = 'total') {
+    if (!record) return 0;
+    if (mode === 'text') return Number(record.textXp || 0);
+    if (mode === 'voice') return Number(record.voiceXp || 0);
+    return Number(record.textXp || 0) + Number(record.voiceXp || 0);
+}
+
+function normalizeLevelRecord(record, timestamp = Date.now()) {
+    return {
+        guildId: record.guildId,
+        userId: record.userId,
+        userTag: record.userTag || null,
+        textXp: Math.max(0, Math.floor(Number(record.textXp || 0))),
+        voiceXp: Math.max(0, Math.floor(Number(record.voiceXp || 0))),
+        lastTextXpAt: Number(record.lastTextXpAt || 0),
+        createdAt: record.createdAt || timestamp,
+        updatedAt: record.updatedAt || timestamp,
     };
+}
+
+async function listLevelLeaderboard(guildId, limit = 10, mode = 'total', offset = 0) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listLevelLeaderboard(await getSqliteDb(), guildId, limit, mode, offset);
 
     return (await readState()).levels
         .filter(item => item.guildId === guildId)
-        .filter(item => score(item) > 0)
-        .sort((a, b) => score(b) - score(a))
+        .filter(item => levelScore(item, mode) > 0)
+        .sort((a, b) => levelScore(b, mode) - levelScore(a, mode) || String(a.userId).localeCompare(String(b.userId)))
+        .slice(Math.max(0, Number(offset || 0)), Math.max(0, Number(offset || 0)) + limit);
+}
+
+async function getLevelRank(guildId, userId, mode = 'total') {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.getLevelRank(await getSqliteDb(), guildId, userId, mode);
+    const state = await readState();
+    const record = state.levels.find(item => item.guildId === guildId && item.userId === userId);
+    const score = levelScore(record, mode);
+    if (!record || score <= 0) return null;
+    return state.levels
+        .filter(item => item.guildId === guildId)
+        .filter(item => levelScore(item, mode) > score || (levelScore(item, mode) === score && String(item.userId).localeCompare(String(userId)) < 0))
+        .length + 1;
+}
+
+async function insertLevelXpEvent(event) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.insertLevelXpEvent(await getSqliteDb(), event);
+    const timestamp = event.createdAt || Date.now();
+    let saved = null;
+    await useLegacyStateMutation(state => {
+        state.levelXpEvents ||= [];
+        if (event.sourceKey && state.levelXpEvents.some(item => item.guildId === event.guildId && item.source === event.source && item.sourceKey === event.sourceKey)) {
+            return state;
+        }
+        saved = {
+            id: state.levelXpEvents.length + 1,
+            guildId: event.guildId,
+            userId: event.userId,
+            userTag: event.userTag || null,
+            source: event.source,
+            sourceKey: event.sourceKey || null,
+            xpType: event.xpType || 'text',
+            amount: Number(event.amount || 0),
+            previousTextXp: Number(event.previousTextXp || 0),
+            previousVoiceXp: Number(event.previousVoiceXp || 0),
+            newTextXp: Number(event.newTextXp || 0),
+            newVoiceXp: Number(event.newVoiceXp || 0),
+            adminId: event.adminId || null,
+            jobId: event.jobId || null,
+            metadata: event.metadata || {},
+            createdAt: timestamp,
+        };
+        state.levelXpEvents.push(saved);
+        return state;
+    });
+    return saved;
+}
+
+async function adjustUserXp(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.adjustUserXp(await getSqliteDb(), record);
+    const timestamp = record.createdAt || Date.now();
+    let updated = null;
+    await useLegacyStateMutation(state => {
+        state.levels ||= [];
+        let current = state.levels.find(item => item.guildId === record.guildId && item.userId === record.userId);
+        if (!current) {
+            current = normalizeLevelRecord({ guildId: record.guildId, userId: record.userId, userTag: record.userTag }, timestamp);
+            state.levels.push(current);
+        }
+        const previous = { ...current };
+        const amount = Math.trunc(Number(record.amount || 0));
+        const xpType = record.xpType === 'voice' ? 'voice' : 'text';
+        if (xpType === 'voice') current.voiceXp = Math.max(0, Number(current.voiceXp || 0) + amount);
+        else current.textXp = Math.max(0, Number(current.textXp || 0) + amount);
+        current.userTag = record.userTag || current.userTag;
+        current.updatedAt = timestamp;
+        state.levelXpEvents ||= [];
+        if (!record.sourceKey || !state.levelXpEvents.some(item => item.guildId === record.guildId && item.source === (record.source || 'adjustment') && item.sourceKey === record.sourceKey)) {
+            state.levelXpEvents.push({
+                id: state.levelXpEvents.length + 1,
+                guildId: record.guildId,
+                userId: record.userId,
+                userTag: current.userTag,
+                source: record.source || 'adjustment',
+                sourceKey: record.sourceKey || null,
+                xpType,
+                amount,
+                previousTextXp: previous.textXp,
+                previousVoiceXp: previous.voiceXp,
+                newTextXp: current.textXp,
+                newVoiceXp: current.voiceXp,
+                adminId: record.adminId || null,
+                jobId: record.jobId || null,
+                metadata: record.metadata || {},
+                createdAt: timestamp,
+            });
+        }
+        updated = { ...current };
+        return state;
+    });
+    return updated;
+}
+
+async function setUserXp(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.setUserXp(await getSqliteDb(), record);
+    const timestamp = record.createdAt || Date.now();
+    let updated = null;
+    await useLegacyStateMutation(state => {
+        state.levels ||= [];
+        let current = state.levels.find(item => item.guildId === record.guildId && item.userId === record.userId);
+        if (!current) {
+            current = normalizeLevelRecord({ guildId: record.guildId, userId: record.userId, userTag: record.userTag }, timestamp);
+            state.levels.push(current);
+        }
+        const previous = { ...current };
+        current.textXp = Math.max(0, Math.floor(Number(record.textXp ?? current.textXp ?? 0)));
+        current.voiceXp = Math.max(0, Math.floor(Number(record.voiceXp ?? current.voiceXp ?? 0)));
+        current.lastTextXpAt = Number(record.lastTextXpAt ?? current.lastTextXpAt ?? 0);
+        current.userTag = record.userTag || current.userTag;
+        current.updatedAt = timestamp;
+        state.levelXpEvents ||= [];
+        state.levelXpEvents.push({
+            id: state.levelXpEvents.length + 1,
+            guildId: record.guildId,
+            userId: record.userId,
+            userTag: current.userTag,
+            source: record.source || 'set',
+            sourceKey: record.sourceKey || null,
+            xpType: record.xpType || 'combined',
+            amount: levelScore(current) - levelScore(previous),
+            previousTextXp: previous.textXp,
+            previousVoiceXp: previous.voiceXp,
+            newTextXp: current.textXp,
+            newVoiceXp: current.voiceXp,
+            adminId: record.adminId || null,
+            jobId: record.jobId || null,
+            metadata: record.metadata || {},
+            createdAt: timestamp,
+        });
+        updated = { ...current };
+        return state;
+    });
+    return updated;
+}
+
+async function setUserXpMinimum(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.setUserXpMinimum(await getSqliteDb(), record);
+    const current = await getUserLevelRecord(record.guildId, record.userId);
+    if (levelScore(current) >= Number(record.minimumTotalXp || 0)) return current;
+    return setUserXp({
+        ...record,
+        textXp: Math.max(0, Math.floor(Number(record.minimumTotalXp || 0))),
+        voiceXp: 0,
+        source: record.source || 'minimum',
+    });
+}
+
+async function listLevelXpEvents(guildId = null, options = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listLevelXpEvents(await getSqliteDb(), guildId, options);
+    const limit = Math.max(1, Number(options.limit || 100));
+    return ((await readState()).levelXpEvents || [])
+        .filter(item => !guildId || item.guildId === guildId)
+        .filter(item => !options.userId || item.userId === options.userId)
+        .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))
         .slice(0, limit);
+}
+
+async function createLevelImportJob(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.createLevelImportJob(await getSqliteDb(), record);
+    const timestamp = Date.now();
+    let result = null;
+    await useLegacyStateMutation(state => {
+        state.levelImportJobs ||= [];
+        const active = state.levelImportJobs.find(item => item.guildId === record.guildId && ['queued', 'running', 'cancelling'].includes(item.status));
+        if (active) {
+            result = { ok: false, job: active, reason: 'active_job' };
+            return state;
+        }
+        const job = {
+            id: record.id || makeId(),
+            guildId: record.guildId,
+            targetUserId: record.targetUserId || null,
+            status: record.status || 'queued',
+            dryRun: record.dryRun !== false,
+            profileHash: record.profileHash,
+            profile: record.profile || {},
+            createdBy: record.createdBy || null,
+            createdAt: record.createdAt || timestamp,
+            updatedAt: timestamp,
+            startedAt: null,
+            completedAt: null,
+            currentChannelId: null,
+            channelsTotal: 0,
+            channelsScanned: 0,
+            messagesSeen: 0,
+            messagesEligible: 0,
+            membersSeen: 0,
+            xpEstimated: 0,
+            xpApplied: 0,
+            skippedChannels: [],
+            errors: [],
+            cancelRequested: false,
+            provenance: record.provenance || {},
+            result: {},
+        };
+        state.levelImportJobs.push(job);
+        result = { ok: true, job };
+        return state;
+    });
+    return result;
+}
+
+async function getLevelImportJob(id) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.getLevelImportJob(await getSqliteDb(), id);
+    return ((await readState()).levelImportJobs || []).find(item => item.id === id) || null;
+}
+
+async function listLevelImportJobs(guildId = null, options = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listLevelImportJobs(await getSqliteDb(), guildId, options);
+    const limit = Math.max(1, Number(options.limit || 50));
+    const statuses = Array.isArray(options.statuses) ? new Set(options.statuses) : null;
+    return ((await readState()).levelImportJobs || [])
+        .filter(item => !guildId || item.guildId === guildId)
+        .filter(item => !statuses || statuses.has(item.status))
+        .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0))
+        .slice(0, limit);
+}
+
+async function updateLevelImportJob(id, patch = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.updateLevelImportJob(await getSqliteDb(), id, patch);
+    let updated = null;
+    await useLegacyStateMutation(state => {
+        const job = (state.levelImportJobs || []).find(item => item.id === id);
+        if (!job) return state;
+        Object.assign(job, patch, { updatedAt: patch.updatedAt || Date.now() });
+        updated = { ...job };
+        return state;
+    });
+    return updated;
+}
+
+async function requestCancelLevelImportJob(id) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.requestCancelLevelImportJob(await getSqliteDb(), id);
+    const job = await getLevelImportJob(id);
+    if (!job) return null;
+    return updateLevelImportJob(id, {
+        status: ['completed', 'cancelled', 'failed', 'needs_confirmation'].includes(job.status) ? job.status : 'cancelling',
+        cancelRequested: true,
+    });
+}
+
+async function createLevelCalibrationJob(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.createLevelCalibrationJob(await getSqliteDb(), record);
+    const timestamp = Date.now();
+    let result = null;
+    await useLegacyStateMutation(state => {
+        state.levelCalibrationJobs ||= [];
+        const active = state.levelCalibrationJobs.find(item => (
+            item.guildId === record.guildId
+            && item.importJobId === record.importJobId
+            && ['queued', 'running', 'cancelling'].includes(item.status)
+        ));
+        if (active) {
+            result = { ok: false, job: active, reason: 'active_job' };
+            return state;
+        }
+        const job = {
+            id: record.id || makeId(),
+            guildId: record.guildId,
+            importJobId: record.importJobId,
+            kind: record.kind || 'preview',
+            status: record.status || 'queued',
+            createdBy: record.createdBy || null,
+            createdAt: record.createdAt || timestamp,
+            updatedAt: timestamp,
+            startedAt: null,
+            completedAt: null,
+            profile: record.profile || {},
+            options: record.options || {},
+            progress: record.progress || {},
+            result: record.result || {},
+            error: null,
+            cancelRequested: false,
+        };
+        state.levelCalibrationJobs.push(job);
+        result = { ok: true, job };
+        return state;
+    });
+    return result;
+}
+
+async function getLevelCalibrationJob(id) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.getLevelCalibrationJob(await getSqliteDb(), id);
+    return ((await readState()).levelCalibrationJobs || []).find(item => item.id === id) || null;
+}
+
+async function listLevelCalibrationJobs(guildId = null, options = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listLevelCalibrationJobs(await getSqliteDb(), guildId, options);
+    const limit = Math.max(1, Number(options.limit || 50));
+    const statuses = Array.isArray(options.statuses) ? new Set(options.statuses) : null;
+    return ((await readState()).levelCalibrationJobs || [])
+        .filter(item => !guildId || item.guildId === guildId)
+        .filter(item => !options.importJobId || item.importJobId === options.importJobId)
+        .filter(item => !statuses || statuses.has(item.status))
+        .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0))
+        .slice(0, limit);
+}
+
+async function updateLevelCalibrationJob(id, patch = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.updateLevelCalibrationJob(await getSqliteDb(), id, patch);
+    let updated = null;
+    await useLegacyStateMutation(state => {
+        const job = (state.levelCalibrationJobs || []).find(item => item.id === id);
+        if (!job) return state;
+        Object.assign(job, patch, { updatedAt: patch.updatedAt || Date.now() });
+        updated = { ...job };
+        return state;
+    });
+    return updated;
+}
+
+async function requestCancelLevelCalibrationJob(id) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.requestCancelLevelCalibrationJob(await getSqliteDb(), id);
+    const job = await getLevelCalibrationJob(id);
+    if (!job) return null;
+    return updateLevelCalibrationJob(id, {
+        status: ['completed', 'cancelled', 'failed'].includes(job.status) ? job.status : 'cancelling',
+        cancelRequested: true,
+    });
+}
+
+async function createLevelProbotScanJob(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.createLevelProbotScanJob(await getSqliteDb(), record);
+    const timestamp = Date.now();
+    let result = null;
+    await useLegacyStateMutation(state => {
+        state.levelProbotScanJobs ||= [];
+        const active = state.levelProbotScanJobs.find(item => (
+            item.guildId === record.guildId
+            && item.sourceChannelId === record.sourceChannelId
+            && ['queued', 'running', 'cancelling'].includes(item.status)
+        ));
+        if (active) {
+            result = { ok: false, job: active, reason: 'active_job' };
+            return state;
+        }
+        const sourceChannelIds = [...new Set((record.sourceChannelIds?.length ? record.sourceChannelIds : [record.sourceChannelId]).map(String))];
+        const job = {
+            id: record.id || makeId(),
+            guildId: record.guildId,
+            sourceChannelId: record.sourceChannelId,
+            sourceChannelIds,
+            probotAuthorId: record.probotAuthorId,
+            status: record.status || 'queued',
+            createdBy: record.createdBy || null,
+            createdAt: record.createdAt || timestamp,
+            updatedAt: timestamp,
+            startedAt: null,
+            completedAt: null,
+            currentChannelId: null,
+            channelsTotal: sourceChannelIds.length,
+            channelsScanned: 0,
+            scannedCount: 0,
+            matchedCount: 0,
+            verifiedCount: 0,
+            unresolvedCount: 0,
+            invalidCount: 0,
+            skippedCount: 0,
+            duplicateCount: 0,
+            oldestScannedAt: null,
+            newestScannedAt: null,
+            errors: [],
+            cancelRequested: false,
+            result: record.result || {},
+        };
+        state.levelProbotScanJobs.push(job);
+        result = { ok: true, job };
+        return state;
+    });
+    return result;
+}
+
+async function getLevelProbotScanJob(id) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.getLevelProbotScanJob(await getSqliteDb(), id);
+    return ((await readState()).levelProbotScanJobs || []).find(item => item.id === id) || null;
+}
+
+async function listLevelProbotScanJobs(guildId = null, options = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listLevelProbotScanJobs(await getSqliteDb(), guildId, options);
+    const limit = Math.max(1, Number(options.limit || 50));
+    const statuses = Array.isArray(options.statuses) ? new Set(options.statuses) : null;
+    return ((await readState()).levelProbotScanJobs || [])
+        .filter(item => !guildId || item.guildId === guildId)
+        .filter(item => !statuses || statuses.has(item.status))
+        .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0))
+        .slice(0, limit);
+}
+
+async function updateLevelProbotScanJob(id, patch = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.updateLevelProbotScanJob(await getSqliteDb(), id, patch);
+    let updated = null;
+    await useLegacyStateMutation(state => {
+        const job = (state.levelProbotScanJobs || []).find(item => item.id === id);
+        if (!job) return state;
+        Object.assign(job, patch, { updatedAt: patch.updatedAt || Date.now() });
+        updated = { ...job };
+        return state;
+    });
+    return updated;
+}
+
+async function requestCancelLevelProbotScanJob(id) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.requestCancelLevelProbotScanJob(await getSqliteDb(), id);
+    const job = await getLevelProbotScanJob(id);
+    if (!job) return null;
+    return updateLevelProbotScanJob(id, {
+        status: ['completed', 'cancelled', 'failed'].includes(job.status) ? job.status : 'cancelling',
+        cancelRequested: true,
+    });
+}
+
+async function upsertLevelProbotScanCheckpoint(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.upsertLevelProbotScanCheckpoint(await getSqliteDb(), record);
+    let saved = null;
+    await useLegacyStateMutation(state => {
+        state.levelProbotScanCheckpoints ||= [];
+        saved = {
+            jobId: record.jobId,
+            guildId: record.guildId,
+            channelId: record.channelId,
+            parentChannelId: record.parentChannelId || null,
+            beforeMessageId: record.beforeMessageId || null,
+            oldestMessageId: record.oldestMessageId || null,
+            status: record.status || 'pending',
+            scannedCount: Number(record.scannedCount || 0),
+            matchedCount: Number(record.matchedCount || 0),
+            verifiedCount: Number(record.verifiedCount || 0),
+            unresolvedCount: Number(record.unresolvedCount || 0),
+            invalidCount: Number(record.invalidCount || 0),
+            skippedCount: Number(record.skippedCount || 0),
+            duplicateCount: Number(record.duplicateCount || 0),
+            oldestScannedAt: record.oldestScannedAt || null,
+            newestScannedAt: record.newestScannedAt || null,
+            error: record.error || null,
+            updatedAt: record.updatedAt || Date.now(),
+        };
+        state.levelProbotScanCheckpoints = state.levelProbotScanCheckpoints.filter(item => !(item.jobId === saved.jobId && item.channelId === saved.channelId));
+        state.levelProbotScanCheckpoints.push(saved);
+        return state;
+    });
+    return saved;
+}
+
+async function listLevelProbotScanCheckpoints(jobId = null) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listLevelProbotScanCheckpoints(await getSqliteDb(), jobId);
+    return ((await readState()).levelProbotScanCheckpoints || [])
+        .filter(item => !jobId || item.jobId === jobId)
+        .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
+}
+
+async function insertLevelProbotAnnouncement(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.insertLevelProbotAnnouncement(await getSqliteDb(), record);
+    let result = null;
+    await useLegacyStateMutation(state => {
+        state.levelProbotAnnouncements ||= [];
+        const existing = state.levelProbotAnnouncements.find(item => item.guildId === record.guildId && item.messageId === record.messageId);
+        if (existing) {
+            result = { inserted: false, repeated: existing.parseStatus === 'repeated_verified', record: existing };
+            return state;
+        }
+        const repeated = record.parseStatus === 'verified'
+            && record.targetUserId
+            && state.levelProbotAnnouncements.some(item => (
+                item.guildId === record.guildId
+                && item.targetUserId === record.targetUserId
+                && Number(item.announcedLevel || 0) === Number(record.announcedLevel || 0)
+                && ['verified', 'repeated_verified'].includes(item.parseStatus)
+            ));
+        const saved = {
+            guildId: record.guildId,
+            sourceChannelId: record.sourceChannelId,
+            messageId: record.messageId,
+            jobId: record.jobId || null,
+            probotAuthorId: record.probotAuthorId,
+            targetUserId: record.targetUserId || null,
+            announcedLevel: record.announcedLevel === null || record.announcedLevel === undefined ? null : Number(record.announcedLevel),
+            announcementTimestamp: Number(record.announcementTimestamp || 0),
+            parserVersion: record.parserVersion,
+            parseStatus: repeated ? 'repeated_verified' : record.parseStatus,
+            confidence: record.confidence || 'none',
+            contentSource: record.contentSource || null,
+            diagnostic: record.diagnostic || {},
+            createdAt: record.createdAt || Date.now(),
+        };
+        state.levelProbotAnnouncements.push(saved);
+        result = { inserted: true, repeated, record: saved };
+        return state;
+    });
+    return result;
+}
+
+async function listLevelProbotAnnouncements(guildId, options = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listLevelProbotAnnouncements(await getSqliteDb(), guildId, options);
+    const limit = Math.max(1, Number(options.limit || 1000));
+    const statuses = Array.isArray(options.statuses) ? new Set(options.statuses) : null;
+    return ((await readState()).levelProbotAnnouncements || [])
+        .filter(item => item.guildId === guildId)
+        .filter(item => !options.userId || item.targetUserId === options.userId)
+        .filter(item => !statuses || statuses.has(item.parseStatus))
+        .sort((a, b) => Number(b.announcementTimestamp || 0) - Number(a.announcementTimestamp || 0))
+        .slice(0, limit);
+}
+
+async function listHighestProbotAnnouncementLevels(guildId, options = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listHighestProbotAnnouncementLevels(await getSqliteDb(), guildId, options);
+    const userFilter = Array.isArray(options.userIds) && options.userIds.length ? new Set(options.userIds.map(String)) : null;
+    const byUser = new Map();
+    for (const item of ((await readState()).levelProbotAnnouncements || [])) {
+        if (item.guildId !== guildId || !item.targetUserId || !['verified', 'repeated_verified'].includes(item.parseStatus)) continue;
+        if (userFilter && !userFilter.has(String(item.targetUserId))) continue;
+        const current = byUser.get(item.targetUserId) || {
+            guildId,
+            userId: item.targetUserId,
+            announcementLevel: 0,
+            announcementCount: 0,
+            firstAnnouncementAt: Number(item.announcementTimestamp || 0),
+            lastAnnouncementAt: Number(item.announcementTimestamp || 0),
+        };
+        current.announcementLevel = Math.max(current.announcementLevel, Number(item.announcedLevel || 0));
+        current.announcementCount += 1;
+        current.firstAnnouncementAt = Math.min(current.firstAnnouncementAt, Number(item.announcementTimestamp || 0));
+        current.lastAnnouncementAt = Math.max(current.lastAnnouncementAt, Number(item.announcementTimestamp || 0));
+        byUser.set(item.targetUserId, current);
+    }
+    return [...byUser.values()].sort((a, b) => b.announcementLevel - a.announcementLevel || String(a.userId).localeCompare(String(b.userId)));
+}
+
+async function summarizeProbotAnnouncementEvidence(guildId) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.summarizeProbotAnnouncementEvidence(await getSqliteDb(), guildId);
+    const records = (await readState()).levelProbotAnnouncements || [];
+    const guildRecords = records.filter(item => item.guildId === guildId);
+    const verified = guildRecords.filter(item => ['verified', 'repeated_verified'].includes(item.parseStatus));
+    return {
+        totalRecords: guildRecords.length,
+        verifiedAnnouncements: verified.length,
+        uniqueVerifiedMembers: new Set(verified.map(item => item.targetUserId).filter(Boolean)).size,
+        unresolvedIdentities: guildRecords.filter(item => item.parseStatus === 'unresolved_identity').length,
+        invalidRecords: guildRecords.filter(item => !['verified', 'repeated_verified', 'unresolved_identity'].includes(item.parseStatus)).length,
+        repeatedAnnouncements: guildRecords.filter(item => item.parseStatus === 'repeated_verified').length,
+        highestRecoveredLevel: verified.reduce((highest, item) => Math.max(highest, Number(item.announcedLevel || 0)), 0),
+    };
+}
+
+async function applyLevelProbotFinalMigration(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.applyLevelProbotFinalMigration(await getSqliteDb(), record);
+    throw new Error('Final ProBot XP migration requires SQLite storage.');
+}
+
+async function rollbackLevelProbotFinalMigration(batchId, options = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.rollbackLevelProbotFinalMigration(await getSqliteDb(), batchId, options);
+    throw new Error('Final ProBot XP migration rollback requires SQLite storage.');
+}
+
+async function getLevelProbotMigrationBatch(batchId) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.getLevelProbotMigrationBatch(await getSqliteDb(), batchId);
+    return ((await readState()).levelProbotMigrationBatches || []).find(item => item.id === batchId) || null;
+}
+
+async function listLevelProbotMigrationBatches(guildId = null, options = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listLevelProbotMigrationBatches(await getSqliteDb(), guildId, options);
+    const limit = Math.max(1, Number(options.limit || 50));
+    const statuses = Array.isArray(options.statuses) ? new Set(options.statuses) : null;
+    return ((await readState()).levelProbotMigrationBatches || [])
+        .filter(item => !guildId || item.guildId === guildId)
+        .filter(item => !statuses || statuses.has(item.status))
+        .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0))
+        .slice(0, limit);
+}
+
+async function listLevelProbotMigrationSnapshots(batchId = null, options = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listLevelProbotMigrationSnapshots(await getSqliteDb(), batchId, options);
+    const limit = Math.max(1, Number(options.limit || 10000));
+    return ((await readState()).levelProbotMigrationSnapshots || [])
+        .filter(item => !batchId || item.batchId === batchId)
+        .filter(item => !options.guildId || item.guildId === options.guildId)
+        .filter(item => !options.userId || item.userId === options.userId)
+        .sort((a, b) => Number(b.appliedAt || 0) - Number(a.appliedAt || 0))
+        .slice(0, limit);
+}
+
+async function upsertLevelImportCheckpoint(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.upsertLevelImportCheckpoint(await getSqliteDb(), record);
+    let saved = null;
+    await useLegacyStateMutation(state => {
+        state.levelImportCheckpoints ||= [];
+        const timestamp = record.updatedAt || Date.now();
+        saved = {
+            jobId: record.jobId,
+            guildId: record.guildId,
+            channelId: record.channelId,
+            parentChannelId: record.parentChannelId || null,
+            beforeMessageId: record.beforeMessageId || null,
+            oldestMessageId: record.oldestMessageId || null,
+            status: record.status || 'pending',
+            messagesSeen: Number(record.messagesSeen || 0),
+            messagesEligible: Number(record.messagesEligible || 0),
+            error: record.error || null,
+            updatedAt: timestamp,
+        };
+        state.levelImportCheckpoints = state.levelImportCheckpoints.filter(item => !(item.jobId === saved.jobId && item.channelId === saved.channelId));
+        state.levelImportCheckpoints.push(saved);
+        return state;
+    });
+    return saved;
+}
+
+async function listLevelImportCheckpoints(jobId = null) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listLevelImportCheckpoints(await getSqliteDb(), jobId);
+    return ((await readState()).levelImportCheckpoints || [])
+        .filter(item => !jobId || item.jobId === jobId)
+        .sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
+}
+
+async function insertLevelImportMessage(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.insertLevelImportMessage(await getSqliteDb(), record);
+    let inserted = false;
+    await useLegacyStateMutation(state => {
+        state.levelImportMessages ||= [];
+        if (state.levelImportMessages.some(item => item.jobId === record.jobId && item.messageId === record.messageId)) return state;
+        state.levelImportMessages.push({
+            jobId: record.jobId,
+            guildId: record.guildId,
+            messageId: record.messageId,
+            userId: record.userId,
+            userTag: record.userTag || null,
+            channelId: record.channelId,
+            createdAt: Number(record.createdAt || 0),
+            xpAmount: Number(record.xpAmount || 0),
+            eligible: record.eligible !== false,
+            skipReason: record.skipReason || null,
+        });
+        inserted = true;
+        return state;
+    });
+    return inserted;
+}
+
+async function listLevelImportMessages(jobId = null, options = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listLevelImportMessages(await getSqliteDb(), jobId, options);
+    const limit = Math.max(1, Number(options.limit || 10000));
+    return ((await readState()).levelImportMessages || [])
+        .filter(item => !jobId || item.jobId === jobId)
+        .filter(item => !options.userId || item.userId === options.userId)
+        .sort((a, b) => Number(a.createdAt || 0) - Number(b.createdAt || 0) || String(a.messageId).localeCompare(String(b.messageId)))
+        .slice(0, limit);
+}
+
+async function listLevelImportMessagesPage(jobId, options = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listLevelImportMessagesPage(await getSqliteDb(), jobId, options);
+    const requestedLimit = Number(options.limit || 1000);
+    const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(10000, Math.floor(requestedLimit))) : 1000;
+    const afterCreatedAt = options.afterCreatedAt === undefined ? null : Number(options.afterCreatedAt);
+    const afterMessageId = options.afterMessageId || '';
+    return ((await readState()).levelImportMessages || [])
+        .filter(item => item.jobId === jobId)
+        .filter(item => !options.userId || item.userId === options.userId)
+        .filter(item => afterCreatedAt === null
+            || Number(item.createdAt || 0) > afterCreatedAt
+            || (Number(item.createdAt || 0) === afterCreatedAt && String(item.messageId).localeCompare(afterMessageId) > 0))
+        .sort((a, b) => Number(a.createdAt || 0) - Number(b.createdAt || 0) || String(a.messageId).localeCompare(String(b.messageId)))
+        .slice(0, limit);
+}
+
+async function countProcessedLevelMessage(guildId, messageId, profileHash) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.countProcessedLevelMessage(await getSqliteDb(), guildId, messageId, profileHash);
+    return ((await readState()).levelProcessedMessages || [])
+        .filter(item => item.guildId === guildId && item.messageId === messageId && item.profileHash === profileHash)
+        .length;
+}
+
+async function markLevelImportMessageProcessed(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.markLevelImportMessageProcessed(await getSqliteDb(), record);
+    let inserted = false;
+    await useLegacyStateMutation(state => {
+        state.levelProcessedMessages ||= [];
+        if (state.levelProcessedMessages.some(item => item.guildId === record.guildId && item.messageId === record.messageId && item.profileHash === record.profileHash)) return state;
+        state.levelProcessedMessages.push({
+            guildId: record.guildId,
+            messageId: record.messageId,
+            profileHash: record.profileHash,
+            jobId: record.jobId,
+            userId: record.userId,
+            channelId: record.channelId,
+            xpAmount: Number(record.xpAmount || 0),
+            createdAt: record.createdAt || Date.now(),
+        });
+        inserted = true;
+        return state;
+    });
+    return inserted;
+}
+
+async function listLevelProcessedMessages(guildId = null, options = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listLevelProcessedMessages(await getSqliteDb(), guildId, options);
+    const limit = Math.max(1, Number(options.limit || 10000));
+    return ((await readState()).levelProcessedMessages || [])
+        .filter(item => !guildId || item.guildId === guildId)
+        .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))
+        .slice(0, limit);
+}
+
+async function upsertLevelRoleMapping(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.upsertLevelRoleMapping(await getSqliteDb(), record);
+    let saved = null;
+    await useLegacyStateMutation(state => {
+        state.levelRoleMappings ||= [];
+        const timestamp = Date.now();
+        saved = {
+            guildId: record.guildId,
+            roleId: record.roleId,
+            minimumLevel: Number(record.minimumLevel || 0),
+            createdBy: record.createdBy || null,
+            createdAt: record.createdAt || timestamp,
+            updatedAt: timestamp,
+        };
+        state.levelRoleMappings = state.levelRoleMappings.filter(item => !(item.guildId === saved.guildId && item.roleId === saved.roleId));
+        state.levelRoleMappings.push(saved);
+        return state;
+    });
+    return saved;
+}
+
+async function removeLevelRoleMapping(guildId, roleId) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.removeLevelRoleMapping(await getSqliteDb(), guildId, roleId);
+    let changes = 0;
+    await useLegacyStateMutation(state => {
+        const before = (state.levelRoleMappings || []).length;
+        state.levelRoleMappings = (state.levelRoleMappings || []).filter(item => !(item.guildId === guildId && item.roleId === roleId));
+        changes = before - state.levelRoleMappings.length;
+        return state;
+    });
+    return changes;
+}
+
+async function listLevelRoleMappings(guildId = null) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listLevelRoleMappings(await getSqliteDb(), guildId);
+    return ((await readState()).levelRoleMappings || [])
+        .filter(item => !guildId || item.guildId === guildId)
+        .sort((a, b) => Number(a.minimumLevel || 0) - Number(b.minimumLevel || 0) || String(a.roleId).localeCompare(String(b.roleId)));
+}
+
+async function insertLevelReconciliationRecord(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.insertLevelReconciliationRecord(await getSqliteDb(), record);
+    const timestamp = record.createdAt || Date.now();
+    let saved = null;
+    await useLegacyStateMutation(state => {
+        state.levelReconciliationRecords ||= [];
+        saved = {
+            id: state.levelReconciliationRecords.length + 1,
+            jobId: record.jobId || null,
+            guildId: record.guildId,
+            userId: record.userId,
+            userTag: record.userTag || null,
+            existingXp: Number(record.existingXp || 0),
+            messageEstimatedXp: Number(record.messageEstimatedXp || 0),
+            messageEstimatedLevel: Number(record.messageEstimatedLevel || 0),
+            roleMinLevel: Number(record.roleMinLevel || 0),
+            roleMinXp: Number(record.roleMinXp || 0),
+            finalXp: Number(record.finalXp || 0),
+            policy: record.policy || 'max',
+            dryRun: record.dryRun !== false,
+            applied: record.applied === true,
+            metadata: record.metadata || {},
+            createdAt: timestamp,
+        };
+        state.levelReconciliationRecords.push(saved);
+        return state;
+    });
+    return saved;
+}
+
+async function listLevelReconciliationRecords(jobId = null, options = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listLevelReconciliationRecords(await getSqliteDb(), jobId, options);
+    const limit = Math.max(1, Number(options.limit || 100));
+    return ((await readState()).levelReconciliationRecords || [])
+        .filter(item => !jobId || item.jobId === jobId)
+        .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))
+        .slice(0, limit);
+}
+
+async function createLevelTestSession(record) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.createLevelTestSession(await getSqliteDb(), record);
+    const timestamp = Date.now();
+    let saved = null;
+    await useLegacyStateMutation(state => {
+        state.levelTestSessions ||= [];
+        saved = {
+            id: record.id || makeId(),
+            guildId: record.guildId,
+            userId: record.userId,
+            userTag: record.userTag || null,
+            adminId: record.adminId,
+            status: record.status || (record.previewOnly ? 'preview' : 'active'),
+            previewOnly: record.previewOnly !== false,
+            previousTextXp: Number(record.previousTextXp || 0),
+            previousVoiceXp: Number(record.previousVoiceXp || 0),
+            xpDelta: Number(record.xpDelta || 0),
+            xpType: record.xpType || 'text',
+            managedRoleIds: record.managedRoleIds || [],
+            addedRoleIds: record.addedRoleIds || [],
+            removedRoleIds: record.removedRoleIds || [],
+            metadata: record.metadata || {},
+            createdAt: record.createdAt || timestamp,
+            updatedAt: timestamp,
+            rolledBackAt: null,
+        };
+        state.levelTestSessions.push(saved);
+        return state;
+    });
+    return saved;
+}
+
+async function getLevelTestSession(id) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.getLevelTestSession(await getSqliteDb(), id);
+    return ((await readState()).levelTestSessions || []).find(item => item.id === id) || null;
+}
+
+async function listLevelTestSessions(guildId = null, options = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.listLevelTestSessions(await getSqliteDb(), guildId, options);
+    const limit = Math.max(1, Number(options.limit || 50));
+    return ((await readState()).levelTestSessions || [])
+        .filter(item => !guildId || item.guildId === guildId)
+        .filter(item => !options.userId || item.userId === options.userId)
+        .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))
+        .slice(0, limit);
+}
+
+async function updateLevelTestSession(id, patch = {}) {
+    const settings = getStorageSettings();
+    if (settings.provider === 'sqlite') return repository.updateLevelTestSession(await getSqliteDb(), id, patch);
+    let updated = null;
+    await useLegacyStateMutation(state => {
+        const session = (state.levelTestSessions || []).find(item => item.id === id);
+        if (!session) return state;
+        Object.assign(session, patch, { updatedAt: patch.updatedAt || Date.now() });
+        updated = { ...session };
+        return state;
+    });
+    return updated;
 }
 
 async function createScheduledMessage(record) {
@@ -1125,7 +2290,11 @@ async function saveGuildConfigurationSection(guildId, section, payload = {}, met
 
         if (payload.levelRewards) {
             const rewards = payload.levelRewards
-                .map(reward => ({ xp: Number(reward.xp || 0), roleId: reward.roleId }))
+                .map(reward => ({
+                    xp: Number(reward.xp || 0),
+                    level: reward.level === undefined ? undefined : Number(reward.level || 0),
+                    roleId: reward.roleId,
+                }))
                 .filter(reward => reward.roleId);
             state.guildLevelRewards = state.guildLevelRewards.filter(item => item.guildId !== guildId);
             for (const reward of rewards) {
@@ -1191,14 +2360,23 @@ module.exports = {
     addUserHistory,
     addModNote,
     addUserXp,
+    adjustUserXp,
+    applyLevelProbotFinalMigration,
     appendVoiceActivity,
     clearWarningCases,
     countActiveModerationCases,
+    countProcessedLevelMessage,
+    createLevelCalibrationJob,
+    createLevelImportJob,
+    createLevelProbotScanJob,
+    createLevelTestSession,
     createModerationCase,
     createEmptyState,
     createReminder,
     createScheduledMessage,
     createTicketTranscript,
+    deleteRankCardBackground,
+    deleteRankCardPreference,
     deleteScheduledMessage,
     deleteEmbedTemplate,
     deleteModNote,
@@ -1206,6 +2384,15 @@ module.exports = {
     getTempMute,
     getModerationCase,
     getGuildConfigurationOverrides,
+    getLevelCalibrationJob,
+    getLevelImportJob,
+    getLevelProbotMigrationBatch,
+    getLevelProbotScanJob,
+    getLevelRank,
+    getLevelTestSession,
+    getLimitedAccount,
+    getRankCardBackground,
+    getRankCardPreference,
     getRetentionSettings,
     getTempVoiceChannel,
     getTicketRecord,
@@ -1219,32 +2406,77 @@ module.exports = {
     listExpiredTempBans,
     listExpiredTempMutes,
     listExpiredTempRoles,
+    listLimitedAccounts,
     listLevelLeaderboard,
     listDueScheduledMessages,
     listConfigAudit,
     listModNotes,
+    listRankCardBackgrounds,
+    listRankCardPreferences,
     listScheduledMessages,
     listScheduledJobStatus,
     listTicketRecords,
     listTicketTranscripts,
     listTempVoiceChannelsForGuild,
     listGuildHistory,
+    listLevelCalibrationJobs,
+    listLevelImportCheckpoints,
+    listLevelImportJobs,
+    listLevelImportMessages,
+    listLevelImportMessagesPage,
+    listLevelProbotAnnouncements,
+    listLevelProbotMigrationBatches,
+    listLevelProbotMigrationSnapshots,
+    listLevelProbotScanCheckpoints,
+    listLevelProbotScanJobs,
+    listHighestProbotAnnouncementLevels,
+    listLevelProcessedMessages,
+    listLevelReconciliationRecords,
+    listLevelRoleMappings,
+    listLevelTestSessions,
+    listLevelXpEvents,
     listUserHistory,
     listModerationCases,
     listVoiceActivity,
     readState,
     removeTempBan,
+    removeLevelRoleMapping,
     removeTempMute,
     removeTempRole,
     removeTempVoiceChannel,
+    rollbackLevelProbotFinalMigration,
     recordCommandUsage,
+    requestCancelLevelCalibrationJob,
+    requestCancelLevelImportJob,
+    requestCancelLevelProbotScanJob,
     saveGuildConfigurationSection,
+    setUserXp,
+    setUserXpMinimum,
+    summarizeProbotAnnouncementEvidence,
     updateReminderStatus,
+    updateLevelImportJob,
+    updateLevelProbotScanJob,
+    updateLevelCalibrationJob,
+    updateLevelTestSession,
     markScheduledJobFinish,
     markScheduledJobStart,
+    markLevelImportMessageProcessed,
+    insertLevelImportMessage,
+    insertLevelProbotAnnouncement,
+    insertLevelReconciliationRecord,
+    insertLevelXpEvent,
+    markLimitedAccountFailed,
+    markLimitedAccountRestored,
     updateScheduledMessageStatus,
     updateModerationCaseReason,
     upsertEmbedTemplate,
+    upsertRankCardBackground,
+    upsertRankCardPreference,
+    beginLimitedAccount,
+    upsertLevelImportCheckpoint,
+    upsertLevelProbotScanCheckpoint,
+    upsertLevelRoleMapping,
+    upsertLimitedAccount,
     upsertStarboardMessage,
     upsertTempBan,
     upsertTempMute,

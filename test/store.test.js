@@ -57,6 +57,75 @@ test('SQLite storage persists temporary mute records', async () => {
     }
 });
 
+test('SQLite storage persists limited account records and restoration state', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'bot-store-limited-'));
+    const sqlitePath = path.join(directory, 'limited.sqlite');
+    const { store, restore } = loadStoreWithEnvironment({
+        DATABASE_PROVIDER: 'sqlite',
+        DATABASE_SQLITE_PATH: sqlitePath,
+    });
+
+    try {
+        const started = await store.beginLimitedAccount({
+            guildId: 'guild',
+            userId: 'user',
+            previousRoleIds: ['role-a', 'role-b'],
+            limitedRoleId: 'limited',
+            limitedChannelId: 'recovery',
+            limitedBy: 'moderator',
+            limitedAt: 100,
+        });
+        const duplicate = await store.beginLimitedAccount({
+            guildId: 'guild',
+            userId: 'user',
+            previousRoleIds: [],
+            limitedRoleId: 'limited',
+        });
+
+        assert.equal(started.ok, true);
+        assert.equal(duplicate.ok, false);
+        assert.deepEqual((await store.getLimitedAccount('guild', 'user')).previousRoleIds, ['role-a', 'role-b']);
+
+        const restored = await store.markLimitedAccountRestored('guild', 'user', {
+            restoredBy: 'user',
+            restoredAt: 200,
+            restorationSource: 'self_service',
+        });
+
+        assert.equal(restored.status, 'restored');
+        assert.equal(restored.restoredAt, 200);
+        assert.equal(restored.restorationSource, 'self_service');
+        assert.equal((await store.listLimitedAccounts('guild')).length, 1);
+    } finally {
+        restore();
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
+test('JSON storage persists limited account records for legacy providers', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'bot-store-limited-json-'));
+    const jsonPath = path.join(directory, 'state.json');
+    const { store, restore } = loadStoreWithEnvironment({
+        DATABASE_PROVIDER: 'json',
+        DATABASE_JSON_PATH: jsonPath,
+    });
+
+    try {
+        await store.beginLimitedAccount({
+            guildId: 'guild',
+            userId: 'user',
+            previousRoleIds: ['role'],
+            limitedRoleId: 'limited',
+        });
+
+        assert.equal((await store.getLimitedAccount('guild', 'user')).status, 'active');
+        assert.equal(JSON.parse(fs.readFileSync(jsonPath, 'utf8')).limitedAccounts[0].userId, 'user');
+    } finally {
+        restore();
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
 test('SQLite storage lists expired temporary punishments through due-time queries', async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'bot-store-'));
     const sqlitePath = path.join(directory, 'state.sqlite');

@@ -148,6 +148,45 @@ test('routeInteraction executes user context commands through command routing', 
     }
 });
 
+test('routeInteraction does not attempt a second reply after an expired interaction token', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'bot-router-expired-'));
+    const restore = withEnvironment({
+        DATABASE_PROVIDER: 'sqlite',
+        DATABASE_SQLITE_PATH: path.join(directory, 'state.sqlite'),
+        DATABASE_JSON_PATH: path.join(directory, 'missing.json'),
+    });
+    let replies = 0;
+
+    try {
+        await routeInteraction({
+            commandName: 'expired',
+            guildId: 'guild',
+            channelId: 'channel',
+            user: { id: 'user', tag: 'User#0001' },
+            client: {
+                commands: new Map([['expired', {
+                    data: { name: 'expired', toJSON: () => ({ name: 'expired' }) },
+                    execute: async () => {
+                        const error = new Error('Unknown interaction');
+                        error.code = 10062;
+                        throw error;
+                    },
+                }]]),
+            },
+            isChatInputCommand: () => true,
+            inGuild: () => true,
+            reply: async () => {
+                replies += 1;
+            },
+        });
+
+        assert.equal(replies, 0);
+    } finally {
+        restore();
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+});
+
 test('routeInteraction handles persistent music buttons through the central router', async () => {
     const replies = [];
 

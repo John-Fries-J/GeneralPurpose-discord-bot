@@ -2,7 +2,7 @@
 
 A Discord.js v14 bot with common moderation, ticket, suggestion, welcome, logging, Twitch notification, utility commands, and an optional simple web dashboard.
 
-This project is meant to be easy to run and easy to edit. Runtime IDs and secrets live in `config.json`; public-facing text lives in `language.json`.
+This project is meant to be easy to run and easy to edit. Runtime IDs and secrets live in `config.json` by default; production Docker deployments can set `CONFIG_PATH` to use a mounted data directory instead. Public-facing text lives in `language.json`.
 
 ## Support
 
@@ -61,7 +61,7 @@ Copy-Item exampleconfig.json config.json
 npm run run
 ```
 
-The bot validates `config.json` on startup and the dashboard validates config edits before saving. If a value has the wrong shape, the error lists the exact field to fix.
+The bot validates the active config file on startup and the dashboard validates config edits before saving. If a value has the wrong shape, the error lists the exact field to fix.
 
 ## Docker
 
@@ -71,31 +71,38 @@ Build the image:
 docker build -t generalpurpose-discord-bot .
 ```
 
-Run with a mounted config:
+Run with a mounted data directory and config:
 
 ```bash
-docker run --rm -it -v "${PWD}/config.json:/app/config.json" generalpurpose-discord-bot
+mkdir -p data
+cp exampleconfig.json data/config.json
+docker run --rm -it \
+  -v "${PWD}/data:/app/data" \
+  -e CONFIG_PATH="/app/data/config.json" \
+  generalpurpose-discord-bot
 ```
 
 You can also provide the core Discord values with environment variables:
 
 ```bash
 docker run --rm -it \
+  -v "${PWD}/data:/app/data" \
+  -e CONFIG_PATH="/app/data/config.json" \
   -e DISCORD_TOKEN="your-token" \
   -e DISCORD_CLIENT_ID="your-client-id" \
   -e DISCORD_GUILD_ID="your-server-id" \
   generalpurpose-discord-bot
 ```
 
-Mount `config.json` when you need global channel IDs, roles, Twitch, or logging defaults.
+Do not bind-mount `/app/config.json` as a single writable file in production. The bot saves configuration atomically by writing a temporary file and renaming it over the configured path. Mount a writable directory such as `/app/data` and set `CONFIG_PATH=/app/data/config.json` so the rename stays inside the mounted directory. If `CONFIG_PATH` points at a missing file, the bot initializes it from `exampleconfig.json`; it will not overwrite an existing file.
 
 For the dashboard and longer temporary punishments, also mount `data/` and publish the dashboard port:
 
 ```bash
 docker run --rm -it \
   -p 3000:3000 \
-  -v "${PWD}/config.json:/app/config.json" \
   -v "${PWD}/data:/app/data" \
+  -e CONFIG_PATH="/app/data/config.json" \
   -e DASHBOARD_ENABLED="true" \
   -e DISCORD_OAUTH_CLIENT_ID="your-oauth-client-id" \
   -e DISCORD_OAUTH_CLIENT_SECRET="your-oauth-client-secret" \
@@ -105,33 +112,62 @@ docker run --rm -it \
 
 ### Dashboard With A Domain
 
-The included `docker-compose.dashboard.yml` runs the bot behind nginx. It expects TLS files at `deploy/certs/fullchain.pem` and `deploy/certs/privkey.pem`, which can come from certbot, Cloudflare origin certificates, or another certificate provider.
+The included `docker-compose.dashboard.yml` runs only the bot and binds the dashboard to `127.0.0.1:3000`, which is suitable when you already have nginx, Caddy, Traefik, Cloudflare Tunnel, or another reverse proxy on the host.
 
-1. Create a deployment env file:
+1. Create the production config under the persistent data mount:
+
+```bash
+mkdir -p data
+cp exampleconfig.json data/config.json
+```
+
+2. Create a deployment env file:
 
 ```bash
 cp deploy/dashboard.env.example .env
 ```
 
-2. Edit `.env` and set:
+3. Edit `.env` and set:
 
 ```bash
 DASHBOARD_DOMAIN=dashboard.example.com
+CONFIG_PATH=/app/data/config.json
 ```
 
-3. In the Discord Developer Portal, add this OAuth redirect URL:
+4. In the Discord Developer Portal, add this OAuth redirect URL:
 
 ```text
 https://dashboard.example.com/auth/discord/callback
 ```
 
-4. Start the dashboard stack:
+5. Start the dashboard container:
 
 ```bash
 docker compose -f docker-compose.dashboard.yml --env-file .env up -d --build
 ```
 
-5. Point your domain's DNS record at the server running Docker. nginx listens on ports `80` and `443` and proxies the dashboard to the bot container.
+6. Configure your existing reverse proxy to forward `https://dashboard.example.com` to `http://127.0.0.1:3000`.
+
+A production Compose service can be as small as:
+
+```yaml
+services:
+  bot:
+    image: generalpurpose-discord-bot
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./data:/app/data
+      - ./language.json:/app/language.json
+    environment:
+      CONFIG_PATH: /app/data/config.json
+      DASHBOARD_ENABLED: "true"
+      DASHBOARD_HOST: "0.0.0.0"
+      DASHBOARD_PORT: "3000"
+      DASHBOARD_PUBLIC_URL: "https://dashboard.example.com"
+      DISCORD_OAUTH_REDIRECT_URI: "https://dashboard.example.com/auth/discord/callback"
+```
 
 ## Web Dashboard
 
@@ -146,7 +182,7 @@ The dashboard is disabled by default.
 5. Set `dashboard.oauth.clientId` and `dashboard.oauth.clientSecret`, or use the environment variables shown above.
 6. Start the bot and open `http://localhost:3000`.
 
-Dashboard access requires Discord OAuth. Full dashboard administration is limited to users listed in `devs`, the configured guild owner, or members with `Administrator` in the configured `guildId`; `Manage Server` alone does not grant unrestricted dashboard access. The panel is split into focused pages for overview, modules, commands, community settings, tickets, temporary voice, leveling, music, language, message sending, config, backups, health, audit, and logs. It can edit structured per-guild settings, edit advanced `config.json` sections, toggle modules and commands, set per-command user/role access rules, edit `language.json` response text, send or schedule messages through the bot, manage embed templates, create redacted config backups, restore validated backups, and view recent bot/dashboard logs. Disabled commands are blocked immediately; restart the bot to refresh Discord's visible slash command list.
+Dashboard access requires Discord OAuth. Full dashboard administration is limited to users listed in `devs`, the configured guild owner, or members with `Administrator` in the configured `guildId`; `Manage Server` alone does not grant unrestricted dashboard access. The panel is split into focused pages for overview, modules, commands, community settings, tickets, temporary voice, leveling, music, language, message sending, config, backups, health, audit, and logs. It can edit structured per-guild settings, edit advanced config sections, toggle modules and commands, set per-command user/role access rules, edit `language.json` response text, send or schedule messages through the bot, manage embed templates, create redacted config backups, restore validated backups, and view recent bot/dashboard logs. Disabled commands are blocked immediately; restart the bot to refresh Discord's visible slash command list.
 
 The dashboard includes a light/dark theme toggle stored in the browser. Login sessions use signed cookies that last 30 days, so users do not need to re-authorize after every dashboard restart. Set `DASHBOARD_SESSION_SECRET` if you want a dedicated signing secret instead of using the configured dashboard OAuth secret or bot token.
 
@@ -156,6 +192,7 @@ The dashboard exposes unauthenticated `GET /health` and `GET /ready` for deploym
 
 Useful dashboard environment variables:
 
+- `CONFIG_PATH=/app/data/config.json`
 - `DASHBOARD_ENABLED=true`
 - `DASHBOARD_PORT=3000`
 - `DASHBOARD_PUBLIC_URL=http://localhost:3000`
@@ -270,10 +307,22 @@ Config:
 - `/jointocreate setup trigger_channel category name_format max_limit` enables join-to-create.
 - `/jointocreate disable` disables join-to-create.
 - `/voice limit amount`, `/voice name name`, `/voice lock`, `/voice unlock`, `/voice permit user`, and `/voice reject user` manage owned temporary voice channels.
-- `/levelconfig enable mode text_xp voice_xp cooldown` enables leveling.
+- `/levelconfig enable mode text_xp min_xp max_xp voice_xp cooldown` enables leveling.
+- `/levelconfig profile profile formula base factor confirm` previews or applies an XP curve change. Re-run with `confirm: APPLY` after reviewing the level thresholds.
 - `/levelconfig add-role xp role` adds an XP role reward.
+- `/levelconfig add-level-role level role` adds a level-based role reward.
 - `/levelconfig remove-role role` removes a reward.
-- `/leaderboard type` shows total, text, or voice XP leaders.
+- `/levelconfig role-sync` configures automatic reward-role granting/removal. Obsolete role removal is disabled unless explicitly enabled.
+- `/level import-preview` dry-runs historical XP reconstruction from accessible Discord message history.
+- `/level import-history apply:true confirm:APPLY` applies a historical XP import through a background job.
+- `/level import-status` and `/level import-cancel` monitor or cancel import jobs.
+- `/level probot-final-preview`, `/level probot-final-test`, `/level probot-final-apply confirm:APPLY_PROBOT_FINAL`, and `/level probot-final-rollback confirm:ROLLBACK_PROBOT_FINAL` safely apply confirmed ProBot level recovery to live XP records without changing roles.
+- `/level role-map-add role level`, `/level role-map-view`, and `/level role-recovery-preview` recover minimum levels from existing reward roles.
+- `/level test set`, `/level test xp`, `/level test preview`, `/level test sync-roles`, `/level test reset`, and `/level test rollback` smoke-test leveling changes with persistent rollback sessions.
+- `/rank user` shows a graphical rank card for yourself or another user.
+- `/rankcard set-background`, `/rankcard set-accent`, `/rankcard reset`, and `/rankcard view` let users customize their own rank cards.
+- `/rankcard server-add-background`, `/rankcard server-remove-background`, `/rankcard server-set-default`, and `/rankcard server-set-accent` manage server rank-card visuals. These require Manage Server or Administrator.
+- `/leaderboard type page current_members_only` shows paginated total, text, or voice XP leaders and can hide departed members while preserving their stored records.
 
 Music:
 
@@ -283,9 +332,9 @@ Music:
 
 Honeypot:
 
-- Messages in the configured honeypot channel are deleted with up to 10 recent messages from the same user across accessible server text channels.
-- A scam alert embed is sent to the alert channel with Softban, Ban, and Ignore buttons.
-- Softban and Ban use the reason `Scam`, check Discord hierarchy and bot permissions, and update the alert embed after success or failure.
+- Messages in the configured honeypot channel are deleted with up to 15 recent messages from the same user across accessible server text channels, with a delayed second cleanup pass.
+- A scam alert embed is sent to the alert channel with Limit User, Soft Ban, Time Out, and Ignore buttons.
+- Automatic and staff-triggered honeypot actions use the reason `Scam`, check Discord hierarchy and bot permissions, and update the alert embed after success or failure.
 
 Member Counters:
 
@@ -306,9 +355,20 @@ Join-to-Create:
 
 Leveling:
 
-- Text XP is awarded from messages with a configurable cooldown.
-- Voice XP is awarded once per minute to non-bot users in voice channels when voice mode is enabled.
-- Rewards are based on total XP and can grant roles automatically.
+- Text XP supports configurable min/max XP per eligible message, cooldowns, multipliers, exclusions, optional anti-farm checks, and legacy-compatible fixed XP.
+- XP curves support the legacy formula, linear, quadratic, exponential, and a ProBot-inspired estimate. The ProBot-inspired profile is not ProBot's private formula.
+- Voice XP is awarded once per minute to eligible non-bot users and can exclude AFK, deafened, or solo users. XP is not backfilled after restarts.
+- Rewards are based on total XP or configured levels and can grant roles automatically. Obsolete reward-role removal defaults to off and only touches registered leveling rewards.
+- Historical imports scan only channels and threads the bot can access with Discord's API. Deleted messages, unavailable history, and historical voice XP are not counted or fabricated.
+- Existing reward roles can be mapped to minimum levels. If a member has Level 5, 10, and 20 roles, recovery infers level 20, not level 35.
+- Rank cards are rendered as PNG images with avatar, display name, level, current XP, XP to next level, progress, server rank, and text/voice breakdown. User uploads are validated, resized, and stored under `data/rank-cards`; generated cards are cached there and pruned automatically.
+- More migration detail is in `docs/LEVELING_MIGRATION.md`.
+
+Rank card assets:
+
+- Custom user backgrounds and server-provided backgrounds accept PNG, JPEG, or WebP images up to 4 MB.
+- Processed background files and generated card cache files live in the persistent Docker data volume at `/app/data/rank-cards`.
+- The Docker image includes Noto fonts for Unicode display names in rendered cards.
 
 ## Editing Text
 

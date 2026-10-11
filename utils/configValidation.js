@@ -28,6 +28,15 @@ function validateInteger(errors, config, path, { min = Number.MIN_SAFE_INTEGER, 
     }
 }
 
+function validateObject(errors, config, path) {
+    const value = path.split('.').reduce((current, part) => current?.[part], config);
+    if (value !== undefined && !isPlainObject(value)) {
+        errors.push(`${path} must be an object.`);
+        return false;
+    }
+    return value === undefined || isPlainObject(value);
+}
+
 function validateUrl(errors, config, path, { required = false, protocols = ['http:', 'https:'] } = {}) {
     const value = path.split('.').reduce((current, part) => current?.[part], config);
     if (value === undefined || value === null || value === '') {
@@ -162,6 +171,24 @@ function validateConfig(config, options = {}) {
             if (config.honeypot.mentionType !== undefined && config.honeypot.mentionType !== '' && !['user', 'role'].includes(config.honeypot.mentionType)) {
                 errors.push('honeypot.mentionType must be "user", "role", or an empty string.');
             }
+            validateInteger(errors, config, 'honeypot.timeoutDurationMs', { min: 1_000, max: 2_419_200_000 });
+            validateInteger(errors, config, 'honeypot.cleanupDelayMs', { min: 0, max: 60_000 });
+
+            if (validateObject(errors, config, 'honeypot.actions') && config.honeypot.actions) {
+                validateBoolean(errors, config, 'honeypot.actions.limit');
+                validateBoolean(errors, config, 'honeypot.actions.softban');
+                validateBoolean(errors, config, 'honeypot.actions.timeout');
+                validateBoolean(errors, config, 'honeypot.actions.ignore');
+            }
+
+            if (validateObject(errors, config, 'honeypot.limitedAccount') && config.honeypot.limitedAccount) {
+                validateBoolean(errors, config, 'honeypot.limitedAccount.enabled');
+                validateString(errors, config, 'honeypot.limitedAccount.roleId');
+                validateString(errors, config, 'honeypot.limitedAccount.channelId');
+                validateString(errors, config, 'honeypot.limitedAccount.panelMessageId');
+                validateBoolean(errors, config, 'honeypot.limitedAccount.restoreButton');
+                validateBoolean(errors, config, 'honeypot.limitedAccount.removeExistingRoles');
+            }
         }
     }
 
@@ -216,8 +243,28 @@ function validateConfig(config, options = {}) {
             if (config.leveling.mode !== undefined && !['text', 'voice', 'both'].includes(config.leveling.mode)) {
                 errors.push('leveling.mode must be "text", "voice", or "both".');
             }
+            if (config.leveling.progressionFormula !== undefined && !['legacy', 'linear', 'quadratic', 'exponential', 'probot_inspired'].includes(config.leveling.progressionFormula)) {
+                errors.push('leveling.progressionFormula must be "legacy", "linear", "quadratic", "exponential", or "probot_inspired".');
+            }
+            if (config.leveling.xpProfile !== undefined && !['legacy', 'probot_inspired', 'custom'].includes(config.leveling.xpProfile)) {
+                errors.push('leveling.xpProfile must be "legacy", "probot_inspired", or "custom".');
+            }
+            validateInteger(errors, config, 'leveling.textXpPerMessage', { min: 0, max: 1000 });
+            validateInteger(errors, config, 'leveling.textXpMin', { min: 0, max: 1000 });
+            validateInteger(errors, config, 'leveling.textXpMax', { min: 0, max: 1000 });
+            validateInteger(errors, config, 'leveling.voiceXpPerMinute', { min: 0, max: 1000 });
+            validateInteger(errors, config, 'leveling.cooldownSeconds', { min: 0, max: 86400 });
+            validateInteger(errors, config, 'leveling.xpPerLevelBase', { min: 1, max: 1000000 });
             if (config.leveling.roleRewards !== undefined && !Array.isArray(config.leveling.roleRewards)) {
                 errors.push('leveling.roleRewards must be an array.');
+            }
+            for (const key of ['ignoredChannelIds', 'ignoredRoleIds', 'ignoredUserIds', 'roleMultipliers', 'channelMultipliers']) {
+                if (config.leveling[key] !== undefined && !Array.isArray(config.leveling[key])) {
+                    errors.push(`leveling.${key} must be an array.`);
+                }
+            }
+            for (const key of ['antiFarm', 'voiceEligibility', 'roleSync', 'rankCard']) {
+                validateObject(errors, config, `leveling.${key}`);
             }
         }
     }
@@ -329,7 +376,7 @@ function validateConfig(config, options = {}) {
 function assertValidConfig(config, options) {
     const errors = validateConfig(config, options);
     if (errors.length) {
-        throw new Error(`Invalid config.json:\n- ${errors.join('\n- ')}`);
+        throw new Error(`Invalid config file:\n- ${errors.join('\n- ')}`);
     }
 }
 

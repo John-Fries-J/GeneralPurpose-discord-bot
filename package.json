@@ -14,7 +14,8 @@
     "libsodium-wrappers": "^0.8.4",
     "mysql2": "^3.24.4",
     "opusscript": "^0.0.8",
-    "play-dl": "^1.9.7"
+    "play-dl": "^1.9.7",
+    "sharp": "^0.35.5"
   },
   "main": "index.js",
   "scripts": {

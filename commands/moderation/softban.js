@@ -16,6 +16,7 @@ module.exports = {
         .addIntegerOption(option => option.setName('delete_days').setDescription('Delete message history from the past 0-7 days.').setMinValue(0).setMaxValue(7)),
 
     async execute(interaction) {
+        await interaction.deferReply({ flags: 64 });
         const user = interaction.options.getUser('user', true);
         const reason = interaction.options.getString('reason') || language.general.noReason;
         const deleteDays = interaction.options.getInteger('delete_days') ?? 7;
@@ -24,7 +25,7 @@ module.exports = {
         if (member) {
             const target = await validateTarget(interaction, user, 'bannable');
             if (!target.ok) {
-                return interaction.reply({ content: target.message === language.moderation.cannotModerateUser ? language.moderation.cannotBan : target.message, flags: 64 });
+                return interaction.editReply({ content: target.message === language.moderation.cannotModerateUser ? language.moderation.cannotBan : target.message, flags: 64 });
             }
         }
 
@@ -35,7 +36,7 @@ module.exports = {
                 deleteMessageSeconds: deleteDays * 24 * 60 * 60,
             });
         } catch (error) {
-            return interaction.reply({ content: error.message || 'Softban failed.', flags: 64 });
+            return interaction.editReply({ content: error.message || 'Softban failed.', flags: 64 });
         }
 
         await logModerationAction(interaction, {
@@ -50,7 +51,7 @@ module.exports = {
             ],
         });
 
-        await interaction.reply({
+        await interaction.editReply({
             content: `${user.tag} has been softbanned.${result.dmSent ? '' : `\n${language.moderation.dmFailed}`}`,
             flags: 64,
         });

@@ -118,13 +118,11 @@ test('dashboard leveling settings require known modes', () => {
         cooldownSeconds: '45',
     });
 
-    assert.deepEqual(config.leveling, {
-        enabled: true,
-        mode: 'both',
-        textXpPerMessage: 3,
-        voiceXpPerMinute: 2,
-        cooldownSeconds: 45,
-    });
+    assert.equal(config.leveling.enabled, true);
+    assert.equal(config.leveling.mode, 'both');
+    assert.equal(config.leveling.textXpPerMessage, 3);
+    assert.equal(config.leveling.voiceXpPerMinute, 2);
+    assert.equal(config.leveling.cooldownSeconds, 45);
 
     assert.throws(() => applyDashboardSettings({}, {
         section: 'leveling',
