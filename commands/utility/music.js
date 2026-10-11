@@ -8,14 +8,18 @@ const {
     getQueueSummary,
     getYtDlpCookieStatus,
     resolvePlayableTrack,
-    skip,
-    stop,
 } = require('../../utils/music');
+const { MusicControlError, skipMusic, stopMusic } = require('../../services/musicControlService');
 const { createQueuePayload, createStatusPayload, createTrackPayload } = require('../../utils/musicMessages');
 
 function isRecognizedAudioAttachment(attachment) {
     return attachment.contentType?.startsWith('audio/')
         || /\.(mp3|wav|ogg|flac|m4a|aac)$/i.test(attachment.name || '');
+}
+
+function musicControlErrorMessage(error) {
+    if (error instanceof MusicControlError) return error.message;
+    return error?.message || 'There is no active music queue.';
 }
 
 module.exports = {
@@ -85,24 +89,28 @@ module.exports = {
         }
 
         if (subcommand === 'skip') {
-            const skipped = skip(interaction.guild.id);
+            const result = await skipMusic(interaction.client, interaction.guild.id, interaction.user.id)
+                .then(() => ({ ok: true }))
+                .catch(error => ({ ok: false, error }));
             return interaction.reply({
                 ...createStatusPayload(
-                    skipped ? 'Skipped' : 'Nothing Playing',
-                    skipped ? 'Skipped the current track.' : 'There is no active music queue.',
-                    { color: skipped ? 'blue' : 'orange' },
+                    result.ok ? 'Skipped' : 'Music Error',
+                    result.ok ? 'Skipped the current track.' : musicControlErrorMessage(result.error),
+                    { color: result.ok ? 'blue' : 'orange' },
                 ),
                 flags: MessageFlags.Ephemeral,
             });
         }
 
         if (subcommand === 'stop') {
-            const stopped = stop(interaction.guild.id);
+            const result = await stopMusic(interaction.client, interaction.guild.id, interaction.user.id)
+                .then(() => ({ ok: true }))
+                .catch(error => ({ ok: false, error }));
             return interaction.reply({
                 ...createStatusPayload(
-                    stopped ? 'Stopped' : 'Nothing Playing',
-                    stopped ? 'Stopped playback and left voice.' : 'There is no active music queue.',
-                    { color: stopped ? 'blue' : 'orange', disabled: true },
+                    result.ok ? 'Stopped' : 'Music Error',
+                    result.ok ? 'Stopped playback and left voice.' : musicControlErrorMessage(result.error),
+                    { color: result.ok ? 'blue' : 'orange', disabled: result.ok },
                 ),
                 flags: MessageFlags.Ephemeral,
             });

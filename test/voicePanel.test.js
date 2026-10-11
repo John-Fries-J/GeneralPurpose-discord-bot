@@ -83,32 +83,55 @@ test('voice panel delete button requires confirmation', async () => {
     });
 
     try {
+        const channel = {
+            id: '222222222222',
+            name: 'Focus Room',
+            members: new Map(),
+        };
+        const member = {
+            id: '111111111111',
+            user: { id: '111111111111', username: 'owner', bot: false },
+            voice: { channel, channelId: channel.id },
+        };
+        channel.members.set(member.id, member);
+        const guild = {
+            id: '999999999999',
+            channels: {
+                cache: new Map([[channel.id, channel]]),
+                fetch: async id => guild.channels.cache.get(id) || null,
+            },
+            members: {
+                cache: new Map([[member.id, member]]),
+                fetch: async id => guild.members.cache.get(id) || null,
+            },
+            roles: { everyone: { id: '999999999999' } },
+        };
+
         await upsertTempVoiceChannel({
-            guildId: 'guild',
-            channelId: 'voice',
-            ownerId: 'owner',
+            guildId: guild.id,
+            channelId: channel.id,
+            ownerId: member.id,
             name: 'Focus Room',
             createdAt: Date.now(),
         });
         const replies = [];
         const handled = await handleVoicePanelButton({
             customId: voicePanelCustomIds.delete,
-            guild: { id: 'guild' },
-            user: { id: 'owner' },
-            member: {
-                voice: {
-                    channel: {
-                        id: 'voice',
-                        name: 'Focus Room',
-                    },
+            client: {
+                guilds: {
+                    cache: new Map([[guild.id, guild]]),
+                    fetch: async id => guild.id === id ? guild : null,
                 },
             },
+            guild,
+            user: { id: member.id },
+            member,
             isButton: () => true,
             reply: async payload => replies.push(payload),
         });
 
         assert.equal(handled, true);
-        assert.match(replies[0].content, /Delete <#voice>/);
+        assert.match(replies[0].content, /Delete <#222222222222>/);
         assert.equal(replies[0].components[0].toJSON().components[0].custom_id, voicePanelCustomIds.confirmDelete);
     } finally {
         restore();

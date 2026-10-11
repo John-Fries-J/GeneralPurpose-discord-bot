@@ -17,6 +17,7 @@ const {
     VoiceConnectionStatus,
 } = require('@discordjs/voice');
 const play = require('play-dl');
+const { emitDomainEvent } = require('../services/domainEvents');
 
 const queues = new Map();
 const voiceConnectionAttempts = new Map();
@@ -84,12 +85,20 @@ function getQueue(guildId) {
             currentResource: null,
             textChannel: null,
             volume: 100,
+            startedAt: null,
+            pausedAt: null,
+            pausedAccumulatedMs: 0,
             waitingForReadyPlayback: false,
         };
 
         player.on(AudioPlayerStatus.Idle, () => {
+            const previous = queue.current;
             queue.current = null;
             queue.currentResource = null;
+            queue.startedAt = null;
+            queue.pausedAt = null;
+            queue.pausedAccumulatedMs = 0;
+            if (previous) emitMusicEvent('music:track-end', queue, { track: summarizeTrack(previous) });
             playNext(queue).catch(error => {
                 console.error('Music playback failed:', error);
                 queue.textChannel?.send(`Music playback failed: ${error.message}`).catch(() => null);
@@ -104,6 +113,30 @@ function getQueue(guildId) {
     }
 
     return queues.get(guildId);
+}
+
+function summarizeTrack(track) {
+    if (!track) return null;
+    return {
+        title: track.title || 'Unknown track',
+        url: track.url || null,
+        source: track.source || null,
+        requestedBy: track.requestedBy || null,
+        thumbnail: track.thumbnail || null,
+        durationMs: Number.isFinite(track.durationMs) ? track.durationMs : null,
+        author: track.author || null,
+    };
+}
+
+function emitMusicEvent(type, queue, payload = {}) {
+    if (!queue?.guildId) return null;
+    return emitDomainEvent(type, {
+        voiceChannelId: queue.connection?.joinConfig?.channelId || null,
+        ...payload,
+    }, {
+        guildId: queue.guildId,
+        channelId: queue.connection?.joinConfig?.channelId || null,
+    });
 }
 
 function isUrl(value) {
@@ -295,6 +328,8 @@ function createAttachmentTrack(attachment, requestedBy) {
         source: 'upload',
         requestedBy,
         thumbnail: attachment.thumbnail?.url || null,
+        durationMs: null,
+        author: null,
         streamFactory: async () => {
             const response = await fetch(attachment.url);
             if (!response.ok || !response.body) throw new Error(`Could not fetch uploaded file (${response.status}).`);
@@ -321,6 +356,8 @@ async function resolvePlayableTrack(query, requestedBy) {
     let source = 'url';
     let title = value;
     let thumbnail = null;
+    let durationMs = null;
+    let author = null;
 
     if (isUrl(value) && isSpotifyUrl(value)) {
         const searchQuery = await spotifyToSearch(value);
@@ -329,12 +366,16 @@ async function resolvePlayableTrack(query, requestedBy) {
             url = info.webpage_url || info.original_url || info.url;
             title = info.title || searchQuery;
             thumbnail = info.thumbnail || null;
+            durationMs = Number.isFinite(info.duration) ? Number(info.duration) * 1000 : null;
+            author = info.uploader || info.channel || null;
         } else {
             const results = await play.search(searchQuery, { limit: 1, source: { youtube: 'video' } });
             if (!results.length) throw new Error('No streamable result was found for that Spotify track.');
             url = results[0].url;
             title = results[0].title || searchQuery;
             thumbnail = results[0].thumbnails?.[0]?.url || null;
+            durationMs = Number.isFinite(results[0].durationInSec) ? Number(results[0].durationInSec) * 1000 : null;
+            author = results[0].channel?.name || null;
         }
         source = 'spotify';
     } else if (!isUrl(value)) {
@@ -343,12 +384,16 @@ async function resolvePlayableTrack(query, requestedBy) {
             url = info.webpage_url || info.original_url || info.url;
             title = info.title || value;
             thumbnail = info.thumbnail || null;
+            durationMs = Number.isFinite(info.duration) ? Number(info.duration) * 1000 : null;
+            author = info.uploader || info.channel || null;
         } else {
             const results = await play.search(value, { limit: 1, source: { youtube: 'video' } });
             if (!results.length) throw new Error('No playable result was found.');
             url = results[0].url;
             title = results[0].title || value;
             thumbnail = results[0].thumbnails?.[0]?.url || null;
+            durationMs = Number.isFinite(results[0].durationInSec) ? Number(results[0].durationInSec) * 1000 : null;
+            author = results[0].channel?.name || null;
         }
         source = 'search';
     } else if (isYoutubeUrl(value) && await hasYtDlp()) {
@@ -357,6 +402,8 @@ async function resolvePlayableTrack(query, requestedBy) {
         url = info.webpage_url || info.original_url || value;
         title = info.title || value;
         thumbnail = info.thumbnail || null;
+        durationMs = Number.isFinite(info.duration) ? Number(info.duration) * 1000 : null;
+        author = info.uploader || info.channel || null;
     } else {
         const validated = await play.validate(value);
         if (!validated || validated.includes('playlist') || validated.includes('album')) {
@@ -366,12 +413,16 @@ async function resolvePlayableTrack(query, requestedBy) {
 
     const info = title === value ? await play.video_basic_info(url).catch(() => null) : null;
     thumbnail = thumbnail || info?.video_details?.thumbnails?.at?.(-1)?.url || info?.video_details?.thumbnails?.[0]?.url || null;
+    durationMs = durationMs || (Number.isFinite(info?.video_details?.durationInSec) ? Number(info.video_details.durationInSec) * 1000 : null);
+    author = author || info?.video_details?.channel?.name || null;
     return {
         title: title || info?.video_details?.title || value,
         url,
         source,
         requestedBy,
         thumbnail,
+        durationMs,
+        author,
         streamFactory: async () => {
             if (await hasYtDlp()) {
                 return { stream: createYtDlpStream(url), inputType: undefined };
@@ -662,7 +713,11 @@ async function playNext(queue, { announce = true } = {}) {
             : createAudioResource(source.stream, { inlineVolume: true });
         resource.volume?.setVolume(queue.volume / 100);
         queue.currentResource = resource;
+        queue.startedAt = Date.now();
+        queue.pausedAt = null;
+        queue.pausedAccumulatedMs = 0;
         queue.player.play(resource);
+        emitMusicEvent('music:track-start', queue, { track: summarizeTrack(track) });
         if (announce) {
             queue.textChannel?.send(createTrackPayload(track, queue, { title: 'Now Playing' })).catch(() => null);
         }
@@ -723,6 +778,7 @@ async function enqueue(interaction, track) {
     const subscription = queue.connection.subscribe(queue.player);
     if (!subscription) throw new Error('Could not subscribe the audio player to the voice connection.');
     queue.tracks.push(track);
+    emitMusicEvent('music:queue-update', queue, { action: 'enqueue', track: summarizeTrack(track) });
     if (queue.connection.state.status === VoiceConnectionStatus.Ready) {
         await playNext(queue, { announce: false });
     } else {
@@ -735,7 +791,41 @@ function skip(guildId) {
     const queue = queues.get(guildId);
     if (!queue) return false;
     queue.player.stop(true);
+    emitMusicEvent('music:skip', queue);
     return true;
+}
+
+function pause(guildId) {
+    const queue = queues.get(guildId);
+    if (!queue?.current) return null;
+    if (queue.player.state.status === AudioPlayerStatus.Paused) {
+        return { ok: true, paused: true };
+    }
+
+    const ok = queue.player.pause(true);
+    if (ok) {
+        queue.pausedAt = Date.now();
+        emitMusicEvent('music:pause', queue);
+    }
+    return { ok, paused: true };
+}
+
+function resume(guildId) {
+    const queue = queues.get(guildId);
+    if (!queue?.current) return null;
+
+    if (queue.player.state.status === AudioPlayerStatus.Paused) {
+        const pausedForMs = queue.pausedAt ? Date.now() - queue.pausedAt : 0;
+        const ok = queue.player.unpause();
+        if (ok) {
+            queue.pausedAccumulatedMs += Math.max(0, pausedForMs);
+            queue.pausedAt = null;
+            emitMusicEvent('music:resume', queue);
+        }
+        return { ok, paused: false };
+    }
+
+    return { ok: true, paused: false };
 }
 
 function togglePause(guildId) {
@@ -743,10 +833,10 @@ function togglePause(guildId) {
     if (!queue?.current) return null;
 
     if (queue.player.state.status === AudioPlayerStatus.Paused) {
-        return { ok: queue.player.unpause(), paused: false };
+        return resume(guildId);
     }
 
-    return { ok: queue.player.pause(true), paused: true };
+    return pause(guildId);
 }
 
 function stop(guildId) {
@@ -759,12 +849,22 @@ function stop(guildId) {
         queue.tracks = [];
         queue.current = null;
         queue.currentResource = null;
+        queue.startedAt = null;
+        queue.pausedAt = null;
+        queue.pausedAccumulatedMs = 0;
         queue.player.stop(true);
         destroyVoiceConnection(queue.connection);
+        emitMusicEvent('music:stop', queue);
     }
     destroyVoiceConnection(connection);
     queues.delete(guildId);
     return true;
+}
+
+function getCurrentProgressMs(queue) {
+    if (!queue?.current || !queue.startedAt) return null;
+    const pausedExtra = queue.pausedAt ? Date.now() - queue.pausedAt : 0;
+    return Math.max(0, Date.now() - queue.startedAt - Number(queue.pausedAccumulatedMs || 0) - pausedExtra);
 }
 
 function getQueueSummary(guildId) {
@@ -778,6 +878,8 @@ function getQueueSummary(guildId) {
         connectionReady: queue.connection?.state.status === VoiceConnectionStatus.Ready,
         paused: queue.player.state.status === AudioPlayerStatus.Paused,
         voiceChannelId: queue.connection?.joinConfig?.channelId || null,
+        currentProgressMs: getCurrentProgressMs(queue),
+        startedAt: queue.startedAt,
     };
 }
 
@@ -790,6 +892,7 @@ function setVolume(guildId, amount) {
     const queue = getQueue(guildId);
     queue.volume = volume;
     queue.currentResource?.volume?.setVolume(volume / 100);
+    emitMusicEvent('music:volume', queue, { volume });
     return queue;
 }
 
@@ -799,6 +902,38 @@ function adjustVolume(guildId, delta) {
 
     const nextVolume = Math.max(0, Math.min(200, Number(queue.volume || 100) + Number(delta || 0)));
     return setVolume(guildId, nextVolume);
+}
+
+function removeQueuedTrack(guildId, index) {
+    const queue = queues.get(guildId);
+    if (!queue) return null;
+    const position = Number(index);
+    if (!Number.isInteger(position) || position < 0 || position >= queue.tracks.length) {
+        throw new MusicUserError('Queue position is no longer available.');
+    }
+
+    const [removed] = queue.tracks.splice(position, 1);
+    emitMusicEvent('music:queue-update', queue, { action: 'remove', track: summarizeTrack(removed), index: position });
+    return { queue, removed };
+}
+
+function moveQueuedTrack(guildId, from, to) {
+    const queue = queues.get(guildId);
+    if (!queue) return null;
+    const fromIndex = Number(from);
+    const toIndex = Number(to);
+    if (!Number.isInteger(fromIndex) || !Number.isInteger(toIndex)) {
+        throw new MusicUserError('Queue positions must be whole numbers.');
+    }
+    if (fromIndex < 0 || fromIndex >= queue.tracks.length || toIndex < 0 || toIndex >= queue.tracks.length) {
+        throw new MusicUserError('Queue position is no longer available.');
+    }
+    if (fromIndex === toIndex) return { queue, moved: queue.tracks[fromIndex] };
+
+    const [moved] = queue.tracks.splice(fromIndex, 1);
+    queue.tracks.splice(toIndex, 0, moved);
+    emitMusicEvent('music:queue-update', queue, { action: 'move', track: summarizeTrack(moved), from: fromIndex, to: toIndex });
+    return { queue, moved };
 }
 
 function getMusicErrorMessage(error) {
@@ -822,10 +957,18 @@ module.exports = {
     getYtDlpCookieStatus,
     describeConnectionState,
     generateDependencyReport,
+    moveQueuedTrack,
+    pause,
     resolvePlayableTrack,
+    removeQueuedTrack,
+    resume,
     setVolume,
     skip,
     stop,
     togglePause,
     getMusicSettings,
+    __testing: {
+        queues,
+        summarizeTrack,
+    },
 };

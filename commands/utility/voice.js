@@ -1,7 +1,24 @@
-const { InteractionContextType, ApplicationIntegrationType, MessageFlags, PermissionFlagsBits, SlashCommandBuilder } = require('discord.js');
-const { deleteTemporaryVoiceChannel, getGuildJoinToCreateConfig, getOwnedVoiceChannel, transferOwnership } = require('../../utils/joinToCreate');
-const { getTempVoiceChannel, upsertTempVoiceChannel } = require('../../utils/store');
+const { InteractionContextType, ApplicationIntegrationType, MessageFlags, SlashCommandBuilder } = require('discord.js');
+const { getGuildJoinToCreateConfig } = require('../../utils/joinToCreate');
+const {
+    VoiceControlError,
+    claimTemporaryVoiceChannel,
+    deleteOwnedVoiceChannel,
+    lockOwnedVoiceChannel,
+    permitVoiceMember,
+    rejectVoiceMember,
+    renameOwnedVoiceChannel,
+    requireOwnedTemporaryVoiceChannel,
+    setOwnedVoiceLimit,
+    transferOwnedVoiceChannel,
+    unlockOwnedVoiceChannel,
+} = require('../../services/voiceControlService');
 const { createVoicePanelPayload } = require('../../utils/voicePanel');
+
+function voiceErrorMessage(error) {
+    if (error instanceof VoiceControlError) return error.message;
+    return error?.message || 'Voice control failed.';
+}
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -47,87 +64,98 @@ module.exports = {
 
     async execute(interaction) {
         const subcommand = interaction.options.getSubcommand();
-        const activeChannel = interaction.member?.voice?.channel;
-
         if (subcommand === 'panel') {
             return interaction.reply(await createVoicePanelPayload(interaction));
         }
 
         if (subcommand === 'claim') {
-            if (!activeChannel) return interaction.reply({ content: 'Join the temporary voice channel first.', flags: MessageFlags.Ephemeral });
-            const record = await getTempVoiceChannel(activeChannel.id);
-            if (!record) return interaction.reply({ content: 'This is not a temporary join-to-create channel.', flags: MessageFlags.Ephemeral });
-            if (record.ownerId === interaction.user.id) return interaction.reply({ content: 'You already own this channel.', flags: MessageFlags.Ephemeral });
-            if (activeChannel.members.has(record.ownerId)) return interaction.reply({ content: 'The current owner is still in the channel.', flags: MessageFlags.Ephemeral });
-
-            const updated = await transferOwnership(record, activeChannel, interaction.member);
-            return interaction.reply({ content: `You now own <#${updated.channelId}>.`, flags: MessageFlags.Ephemeral });
+            try {
+                const channel = await claimTemporaryVoiceChannel(interaction.client, interaction.guild.id, interaction.user.id);
+                return interaction.reply({ content: `You now own <#${channel.id}>.`, flags: MessageFlags.Ephemeral });
+            } catch (error) {
+                return interaction.reply({ content: voiceErrorMessage(error), flags: MessageFlags.Ephemeral });
+            }
         }
 
-        const owned = await getOwnedVoiceChannel(interaction);
-        if (!owned.ok) return interaction.reply({ content: owned.message, flags: MessageFlags.Ephemeral });
-
-        const { channel } = owned;
+        try {
+            await requireOwnedTemporaryVoiceChannel(interaction.client, interaction.guild.id, interaction.user.id);
+        } catch (error) {
+            return interaction.reply({ content: voiceErrorMessage(error), flags: MessageFlags.Ephemeral });
+        }
 
         if (subcommand === 'limit') {
-            const amount = interaction.options.getInteger('amount', true);
             const max = Number((await getGuildJoinToCreateConfig(interaction.guild.id)).userLimitMax || 25);
-            if (amount > max) {
-                return interaction.reply({ content: `The maximum allowed limit is ${max}.`, flags: MessageFlags.Ephemeral });
+            const amount = interaction.options.getInteger('amount', true);
+            if (amount > max) return interaction.reply({ content: `The maximum allowed limit is ${max}.`, flags: MessageFlags.Ephemeral });
+            try {
+                await setOwnedVoiceLimit(interaction.client, interaction.guild.id, interaction.user.id, amount);
+                return interaction.reply({ content: `Voice channel limit set to ${amount || 'unlimited'}.`, flags: MessageFlags.Ephemeral });
+            } catch (error) {
+                return interaction.reply({ content: voiceErrorMessage(error), flags: MessageFlags.Ephemeral });
             }
-            await channel.setUserLimit(amount, 'Voice owner changed user limit');
-            await upsertTempVoiceChannel({ ...owned.record, userLimit: amount, name: channel.name });
-            return interaction.reply({ content: `Voice channel limit set to ${amount || 'unlimited'}.`, flags: MessageFlags.Ephemeral });
         }
 
         if (subcommand === 'name' || subcommand === 'rename') {
             const name = interaction.options.getString('name', true);
-            await channel.setName(name, 'Voice owner renamed channel');
-            await upsertTempVoiceChannel({ ...owned.record, name });
-            return interaction.reply({ content: `Voice channel renamed to ${name}.`, flags: MessageFlags.Ephemeral });
+            try {
+                await renameOwnedVoiceChannel(interaction.client, interaction.guild.id, interaction.user.id, name);
+                return interaction.reply({ content: `Voice channel renamed to ${name}.`, flags: MessageFlags.Ephemeral });
+            } catch (error) {
+                return interaction.reply({ content: voiceErrorMessage(error), flags: MessageFlags.Ephemeral });
+            }
         }
 
         if (subcommand === 'transfer') {
             const user = interaction.options.getUser('user', true);
-            const member = channel.members.get(user.id) || await interaction.guild.members.fetch(user.id).catch(() => null);
-            if (!member || member.voice?.channelId !== channel.id || member.user.bot) {
-                return interaction.reply({ content: 'Choose a human member currently in your voice channel.', flags: MessageFlags.Ephemeral });
+            try {
+                await transferOwnedVoiceChannel(interaction.client, interaction.guild.id, interaction.user.id, user.id);
+                return interaction.reply({ content: `<@${user.id}> now owns this voice channel.`, flags: MessageFlags.Ephemeral });
+            } catch (error) {
+                return interaction.reply({ content: voiceErrorMessage(error), flags: MessageFlags.Ephemeral });
             }
-            await transferOwnership(owned.record, channel, member);
-            return interaction.reply({ content: `<@${member.id}> now owns this voice channel.`, flags: MessageFlags.Ephemeral });
         }
 
         if (subcommand === 'lock') {
-            await channel.permissionOverwrites.edit(interaction.guild.roles.everyone, { Connect: false });
-            await upsertTempVoiceChannel({ ...owned.record, locked: true, name: channel.name, userLimit: channel.userLimit || 0 });
-            return interaction.reply({ content: 'Voice channel locked.', flags: MessageFlags.Ephemeral });
+            try {
+                await lockOwnedVoiceChannel(interaction.client, interaction.guild.id, interaction.user.id);
+                return interaction.reply({ content: 'Voice channel locked.', flags: MessageFlags.Ephemeral });
+            } catch (error) {
+                return interaction.reply({ content: voiceErrorMessage(error), flags: MessageFlags.Ephemeral });
+            }
         }
 
         if (subcommand === 'unlock') {
-            await channel.permissionOverwrites.edit(interaction.guild.roles.everyone, { Connect: true });
-            await upsertTempVoiceChannel({ ...owned.record, locked: false, name: channel.name, userLimit: channel.userLimit || 0 });
-            return interaction.reply({ content: 'Voice channel unlocked.', flags: MessageFlags.Ephemeral });
+            try {
+                await unlockOwnedVoiceChannel(interaction.client, interaction.guild.id, interaction.user.id);
+                return interaction.reply({ content: 'Voice channel unlocked.', flags: MessageFlags.Ephemeral });
+            } catch (error) {
+                return interaction.reply({ content: voiceErrorMessage(error), flags: MessageFlags.Ephemeral });
+            }
         }
 
         if (subcommand === 'delete') {
             await interaction.reply({ content: 'Deleting your temporary voice channel.', flags: MessageFlags.Ephemeral });
-            await deleteTemporaryVoiceChannel(interaction.guild, channel.id, 'Voice owner deleted temporary channel', { force: true });
+            await deleteOwnedVoiceChannel(interaction.client, interaction.guild.id, interaction.user.id, 'Voice owner deleted temporary channel').catch(() => null);
             return null;
         }
 
         const user = interaction.options.getUser('user', true);
         if (subcommand === 'permit') {
-            await channel.permissionOverwrites.edit(user.id, { Connect: true, ViewChannel: true });
-            return interaction.reply({ content: `<@${user.id}> can now join your channel.`, flags: MessageFlags.Ephemeral });
+            try {
+                await permitVoiceMember(interaction.client, interaction.guild.id, interaction.user.id, user.id);
+                return interaction.reply({ content: `<@${user.id}> can now join your channel.`, flags: MessageFlags.Ephemeral });
+            } catch (error) {
+                return interaction.reply({ content: voiceErrorMessage(error), flags: MessageFlags.Ephemeral });
+            }
         }
 
         if (subcommand === 'reject') {
-            await channel.permissionOverwrites.edit(user.id, { Connect: false });
-            const member = await interaction.guild.members.fetch(user.id).catch(() => null);
-            if (member?.voice?.channelId === channel.id && interaction.guild.members.me.permissions.has(PermissionFlagsBits.MoveMembers)) {
-                await member.voice.disconnect('Rejected from join-to-create channel').catch(() => null);
+            try {
+                await rejectVoiceMember(interaction.client, interaction.guild.id, interaction.user.id, user.id);
+                return interaction.reply({ content: `<@${user.id}> has been rejected from your channel.`, flags: MessageFlags.Ephemeral });
+            } catch (error) {
+                return interaction.reply({ content: voiceErrorMessage(error), flags: MessageFlags.Ephemeral });
             }
-            return interaction.reply({ content: `<@${user.id}> has been rejected from your channel.`, flags: MessageFlags.Ephemeral });
         }
 
         return null;

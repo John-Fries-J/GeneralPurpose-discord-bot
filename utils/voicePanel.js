@@ -9,8 +9,21 @@ const {
     UserSelectMenuBuilder,
 } = require('discord.js');
 const { createEmbed } = require('./embeds');
-const { deleteTemporaryVoiceChannel, getGuildJoinToCreateConfig, getOwnedVoiceChannel, transferOwnership } = require('./joinToCreate');
-const { getTempVoiceChannel, upsertTempVoiceChannel } = require('./store');
+const { getGuildJoinToCreateConfig } = require('./joinToCreate');
+const { getTempVoiceChannel } = require('./store');
+const {
+    VoiceControlError,
+    claimTemporaryVoiceChannel,
+    deleteOwnedVoiceChannel,
+    lockOwnedVoiceChannel,
+    permitVoiceMember,
+    rejectVoiceMember,
+    renameOwnedVoiceChannel,
+    requireOwnedTemporaryVoiceChannel,
+    setOwnedVoiceLimit,
+    transferOwnedVoiceChannel,
+    unlockOwnedVoiceChannel,
+} = require('../services/voiceControlService');
 
 const voicePanelCustomIds = {
     claim: 'voice:panel:claim',
@@ -146,16 +159,18 @@ function createLimitModal(max = 25) {
         ));
 }
 
-async function claimVoiceChannel(interaction) {
-    const channel = interaction.member?.voice?.channel;
-    if (!channel) return interaction.reply({ content: 'Join the temporary voice channel first.', flags: MessageFlags.Ephemeral });
-    const record = await getTempVoiceChannel(channel.id);
-    if (!record) return interaction.reply({ content: 'This is not a temporary join-to-create channel.', flags: MessageFlags.Ephemeral });
-    if (record.ownerId === interaction.user.id) return interaction.reply({ content: 'You already own this channel.', flags: MessageFlags.Ephemeral });
-    if (channel.members.has(record.ownerId)) return interaction.reply({ content: 'The current owner is still in the channel.', flags: MessageFlags.Ephemeral });
+function voiceErrorMessage(error) {
+    if (error instanceof VoiceControlError) return error.message;
+    return error?.message || 'Voice control failed.';
+}
 
-    const updated = await transferOwnership(record, channel, interaction.member);
-    return interaction.reply({ content: `You now own <#${updated.channelId}>.`, flags: MessageFlags.Ephemeral });
+async function claimVoiceChannel(interaction) {
+    try {
+        const channel = await claimTemporaryVoiceChannel(interaction.client, interaction.guild.id, interaction.user.id);
+        return interaction.reply({ content: `You now own <#${channel.id}>.`, flags: MessageFlags.Ephemeral });
+    } catch (error) {
+        return interaction.reply({ content: voiceErrorMessage(error), flags: MessageFlags.Ephemeral });
+    }
 }
 
 async function handleVoicePanelButton(interaction) {
@@ -166,9 +181,10 @@ async function handleVoicePanelButton(interaction) {
         return true;
     }
 
-    const owned = await getOwnedVoiceChannel(interaction);
-    if (!owned.ok) {
-        await interaction.reply({ content: owned.message, flags: MessageFlags.Ephemeral });
+    try {
+        await requireOwnedTemporaryVoiceChannel(interaction.client, interaction.guild.id, interaction.user.id);
+    } catch (error) {
+        await interaction.reply({ content: voiceErrorMessage(error), flags: MessageFlags.Ephemeral });
         return true;
     }
 
@@ -182,18 +198,17 @@ async function handleVoicePanelButton(interaction) {
         return true;
     }
     if (interaction.customId === voicePanelCustomIds.lock) {
-        await owned.channel.permissionOverwrites.edit(interaction.guild.roles.everyone, { Connect: false });
-        await upsertTempVoiceChannel({ ...owned.record, locked: true, name: owned.channel.name, userLimit: owned.channel.userLimit || 0 });
+        await lockOwnedVoiceChannel(interaction.client, interaction.guild.id, interaction.user.id, 'Voice owner locked channel from panel');
         await interaction.reply({ content: 'Voice channel locked.', flags: MessageFlags.Ephemeral });
         return true;
     }
     if (interaction.customId === voicePanelCustomIds.unlock) {
-        await owned.channel.permissionOverwrites.edit(interaction.guild.roles.everyone, { Connect: true });
-        await upsertTempVoiceChannel({ ...owned.record, locked: false, name: owned.channel.name, userLimit: owned.channel.userLimit || 0 });
+        await unlockOwnedVoiceChannel(interaction.client, interaction.guild.id, interaction.user.id, 'Voice owner unlocked channel from panel');
         await interaction.reply({ content: 'Voice channel unlocked.', flags: MessageFlags.Ephemeral });
         return true;
     }
     if (interaction.customId === voicePanelCustomIds.delete) {
+        const owned = await requireOwnedTemporaryVoiceChannel(interaction.client, interaction.guild.id, interaction.user.id);
         await interaction.reply({
             content: `Delete <#${owned.channel.id}>? This disconnects members and removes the temporary channel.`,
             components: [new ActionRowBuilder().addComponents(
@@ -210,7 +225,7 @@ async function handleVoicePanelButton(interaction) {
     }
     if (interaction.customId === voicePanelCustomIds.confirmDelete) {
         await interaction.reply({ content: 'Deleting your temporary voice channel.', flags: MessageFlags.Ephemeral });
-        await deleteTemporaryVoiceChannel(interaction.guild, owned.channel.id, 'Voice owner deleted temporary channel from panel', { force: true });
+        await deleteOwnedVoiceChannel(interaction.client, interaction.guild.id, interaction.user.id, 'Voice owner deleted temporary channel from panel');
         return true;
     }
 
@@ -220,16 +235,16 @@ async function handleVoicePanelButton(interaction) {
 async function handleVoicePanelModal(interaction) {
     if (!interaction.isModalSubmit?.() || !interaction.customId.startsWith('voice:modal:')) return false;
 
-    const owned = await getOwnedVoiceChannel(interaction);
-    if (!owned.ok) {
-        await interaction.reply({ content: owned.message, flags: MessageFlags.Ephemeral });
+    try {
+        await requireOwnedTemporaryVoiceChannel(interaction.client, interaction.guild.id, interaction.user.id);
+    } catch (error) {
+        await interaction.reply({ content: voiceErrorMessage(error), flags: MessageFlags.Ephemeral });
         return true;
     }
 
     if (interaction.customId === voicePanelCustomIds.renameModal) {
         const name = interaction.fields.getTextInputValue('name').trim();
-        await owned.channel.setName(name, 'Voice owner renamed channel from panel');
-        await upsertTempVoiceChannel({ ...owned.record, name });
+        await renameOwnedVoiceChannel(interaction.client, interaction.guild.id, interaction.user.id, name, 'Voice owner renamed channel from panel');
         await interaction.reply({ content: `Voice channel renamed to ${name}.`, flags: MessageFlags.Ephemeral });
         return true;
     }
@@ -242,8 +257,7 @@ async function handleVoicePanelModal(interaction) {
             await interaction.reply({ content: `Enter a whole number from 0 to ${max}.`, flags: MessageFlags.Ephemeral });
             return true;
         }
-        await owned.channel.setUserLimit(amount, 'Voice owner changed user limit from panel');
-        await upsertTempVoiceChannel({ ...owned.record, userLimit: amount, name: owned.channel.name });
+        await setOwnedVoiceLimit(interaction.client, interaction.guild.id, interaction.user.id, amount, 'Voice owner changed user limit from panel');
         await interaction.reply({ content: `Voice channel limit set to ${amount || 'unlimited'}.`, flags: MessageFlags.Ephemeral });
         return true;
     }
@@ -254,9 +268,11 @@ async function handleVoicePanelModal(interaction) {
 async function handleVoicePanelUserSelect(interaction) {
     if (!interaction.isUserSelectMenu?.() || !interaction.customId.startsWith('voice:panel:')) return false;
 
-    const owned = await getOwnedVoiceChannel(interaction);
-    if (!owned.ok) {
-        await interaction.reply({ content: owned.message, flags: MessageFlags.Ephemeral });
+    let owned;
+    try {
+        owned = await requireOwnedTemporaryVoiceChannel(interaction.client, interaction.guild.id, interaction.user.id);
+    } catch (error) {
+        await interaction.reply({ content: voiceErrorMessage(error), flags: MessageFlags.Ephemeral });
         return true;
     }
 
@@ -264,26 +280,19 @@ async function handleVoicePanelUserSelect(interaction) {
     const member = owned.channel.members.get(userId) || await interaction.guild.members.fetch(userId).catch(() => null);
 
     if (interaction.customId === voicePanelCustomIds.transfer) {
-        if (!member || member.voice?.channelId !== owned.channel.id || member.user.bot) {
-            await interaction.reply({ content: 'Choose a human member currently in your voice channel.', flags: MessageFlags.Ephemeral });
-            return true;
-        }
-        await transferOwnership(owned.record, owned.channel, member);
+        await transferOwnedVoiceChannel(interaction.client, interaction.guild.id, interaction.user.id, userId, 'Voice owner transferred channel from panel');
         await interaction.reply({ content: `<@${member.id}> now owns this voice channel.`, flags: MessageFlags.Ephemeral });
         return true;
     }
 
     if (interaction.customId === voicePanelCustomIds.permit) {
-        await owned.channel.permissionOverwrites.edit(userId, { Connect: true, ViewChannel: true });
+        await permitVoiceMember(interaction.client, interaction.guild.id, interaction.user.id, userId, 'Voice owner permitted user from panel');
         await interaction.reply({ content: `<@${userId}> can now join your channel.`, flags: MessageFlags.Ephemeral });
         return true;
     }
 
     if (interaction.customId === voicePanelCustomIds.reject) {
-        await owned.channel.permissionOverwrites.edit(userId, { Connect: false });
-        if (member?.voice?.channelId === owned.channel.id && interaction.guild.members.me.permissions.has('MoveMembers')) {
-            await member.voice.disconnect('Rejected from join-to-create channel').catch(() => null);
-        }
+        await rejectVoiceMember(interaction.client, interaction.guild.id, interaction.user.id, userId, 'Voice owner rejected user from panel');
         await interaction.reply({ content: `<@${userId}> has been rejected from your channel.`, flags: MessageFlags.Ephemeral });
         return true;
     }
