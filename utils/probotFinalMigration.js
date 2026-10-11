@@ -5,6 +5,9 @@ const {
     replayImportJobProfiles,
 } = require('./levelingCalibration');
 const {
+    fetchMembersForRoleRecovery,
+} = require('./levelingImport');
+const {
     getGuildLevelingConfig,
     getLevelProgress,
     getXpForLevel,
@@ -28,6 +31,8 @@ const FINAL_PROBOT_MIGRATION_POLICY = Object.freeze({
     liveXpPolicy: 'preserve current live text XP after subtracting prior historical/final migration deltas',
     voiceXpPolicy: 'preserve existing voice XP unchanged',
     rolePolicy: 'never_modify_roles',
+    incompleteRoleEvidencePolicy: 'block_apply',
+    currentMemberFilterPolicy: 'block_apply_when_member_fetch_incomplete',
 });
 
 const historicalTextSources = new Set(['historical_import', 'role_recovery']);
@@ -54,20 +59,68 @@ async function resolveCompletedImportJob(guildId, importJobId = null) {
     return job;
 }
 
-async function fetchCurrentMemberIds(guild) {
-    try {
-        const fetched = await guild.members.fetch();
-        return {
-            complete: true,
-            ids: new Set([...(fetched?.keys?.() || guild.members.cache.keys())].map(String)),
-            error: null,
-        };
-    } catch (error) {
-        return {
-            complete: false,
-            ids: new Set([...(guild.members.cache?.keys?.() || [])].map(String)),
-            error: error?.message || String(error),
-        };
+function memberFetchInfo(fetch = {}) {
+    return {
+        complete: fetch.complete !== false,
+        source: fetch.source || 'unknown',
+        expectedMembers: Number(fetch.expectedMembers || 0),
+        membersFetched: Number(fetch.membersFetched || fetch.members?.length || 0),
+        fetchAttempts: Number(fetch.fetchAttempts || 0),
+        retryDelaysMs: fetch.retryDelaysMs || [],
+        errors: fetch.errors || [],
+        error: fetch.error || null,
+    };
+}
+
+async function fetchCurrentMemberIds(guild, options = {}) {
+    const fetched = await fetchMembersForRoleRecovery(guild, null, options);
+    return {
+        ...memberFetchInfo(fetched),
+        ids: new Set((fetched.members || []).map(member => String(member.id))),
+    };
+}
+
+function buildEvidenceSafety({ evidence, currentMemberFetch, currentMemberOnly }) {
+    const blockers = [];
+    if (!evidence.complete) {
+        blockers.push({
+            type: 'role_evidence_incomplete',
+            reason: evidence.error || 'Guild member role evidence was not collected completely.',
+        });
+    }
+    if (currentMemberOnly && !currentMemberFetch.complete) {
+        blockers.push({
+            type: 'current_member_fetch_incomplete',
+            reason: currentMemberFetch.error || 'The current-member filter did not fetch a complete guild member list.',
+        });
+    }
+
+    return {
+        canApply: blockers.length === 0,
+        authoritative: blockers.length === 0,
+        complete: blockers.length === 0,
+        blockers,
+        requiresCompleteRoleEvidence: true,
+        requiresCompleteCurrentMemberFetch: currentMemberOnly === true,
+        incompleteEvidenceTypes: blockers.map(blocker => blocker.type),
+    };
+}
+
+class FinalProbotMigrationBlockedError extends Error {
+    constructor(preview) {
+        const reasons = (preview.safety?.blockers || [])
+            .map(blocker => {
+                const label = blocker.type === 'current_member_fetch_incomplete'
+                    ? 'current-member filter incomplete'
+                    : (blocker.type === 'role_evidence_incomplete' ? 'role evidence incomplete' : blocker.type);
+                return `${label}: ${blocker.reason}`;
+            })
+            .filter(Boolean)
+            .join('; ') || 'Migration evidence is incomplete.';
+        super(`Final ProBot migration blocked: ${reasons}`);
+        this.name = 'FinalProbotMigrationBlockedError';
+        this.code = 'FINAL_PROBOT_MIGRATION_EVIDENCE_INCOMPLETE';
+        this.preview = preview;
     }
 }
 
@@ -154,11 +207,20 @@ async function buildFinalProbotMigrationPreview(guild, options = {}) {
     if (options.targetUserId) requestedUserIds.add(String(options.targetUserId));
 
     let currentMemberIds = null;
-    let currentMemberFetch = { complete: true, error: null };
+    let currentMemberFetch = {
+        complete: true,
+        source: 'not_requested',
+        expectedMembers: 0,
+        membersFetched: 0,
+        fetchAttempts: 0,
+        retryDelaysMs: [],
+        errors: [],
+        error: null,
+    };
     if (options.currentMemberOnly === true) {
-        currentMemberFetch = await fetchCurrentMemberIds(guild);
+        currentMemberFetch = await fetchCurrentMemberIds(guild, options.memberFetch || {});
         currentMemberIds = currentMemberFetch.ids;
-        if (requestedUserIds.size) {
+        if (currentMemberFetch.complete && requestedUserIds.size) {
             for (const userId of [...requestedUserIds]) {
                 if (!currentMemberIds.has(userId)) requestedUserIds.delete(userId);
             }
@@ -168,13 +230,19 @@ async function buildFinalProbotMigrationPreview(guild, options = {}) {
     const importJob = await resolveCompletedImportJob(guild.id, options.importJobId || null);
     const evidence = await buildCombinedHistoricalEvidence(guild, settings, {
         targetUserIds: requestedUserIds.size ? requestedUserIds : null,
+        memberFetch: options.memberFetch || {},
     });
     const replay = await replayReconstruction(importJob, settings, requestedUserIds.size ? requestedUserIds : null);
+    const safety = buildEvidenceSafety({
+        evidence,
+        currentMemberFetch,
+        currentMemberOnly: options.currentMemberOnly === true,
+    });
 
     const protectedRecords = buildProtectedRecords(replay.simulation, evidence.evidence, {
         restrictToUserIds: requestedUserIds.size ? requestedUserIds : null,
         importWarnings: replay.completeness.warnings,
-        evidenceComplete: evidence.complete && currentMemberFetch.complete,
+        evidenceComplete: safety.authoritative,
     });
 
     const records = [];
@@ -230,8 +298,14 @@ async function buildFinalProbotMigrationPreview(guild, options = {}) {
 
     const warnings = [];
     if (!importJob) warnings.push('No completed historical import job was available; reconstructed-level outlier audit is limited.');
-    if (!evidence.complete) warnings.push(evidence.error || 'Guild member role evidence was partial.');
-    if (!currentMemberFetch.complete) warnings.push(`Current-member filtering used cached members after fetch failed: ${currentMemberFetch.error}`);
+    if (!safety.authoritative) warnings.push('Preview counts are partial because member or role evidence is incomplete; migration application is blocked.');
+    if (!evidence.complete) warnings.push(`Role evidence incomplete: ${evidence.error || 'Guild member role evidence was partial.'}`);
+    if (!currentMemberFetch.complete) warnings.push(`Current-member filtering incomplete: ${currentMemberFetch.error || 'Guild members could not be fetched completely.'}`);
+    const summary = {
+        ...summarizeRecords(records),
+        authoritative: safety.authoritative,
+        countsArePartial: !safety.authoritative,
+    };
 
     return {
         guildId: guild.id,
@@ -245,6 +319,10 @@ async function buildFinalProbotMigrationPreview(guild, options = {}) {
         policy: FINAL_PROBOT_MIGRATION_POLICY,
         scopedUserIds: [...requestedUserIds],
         currentMemberOnly: options.currentMemberOnly === true,
+        currentMemberFetch: memberFetchInfo(currentMemberFetch),
+        safety,
+        canApply: safety.canApply,
+        authoritative: safety.authoritative,
         evidence: {
             mappings: evidence.mappings.length,
             membersWithRoleEvidence: evidence.records.filter(record => Number(record.roleMinLevel || 0) > 0).length,
@@ -254,6 +332,7 @@ async function buildFinalProbotMigrationPreview(guild, options = {}) {
             highestAnnouncementLevel: evidence.announcementSummary?.highestRecoveredLevel || 0,
             complete: evidence.complete,
             error: evidence.error,
+            memberFetch: memberFetchInfo(evidence.memberFetch || {}),
         },
         replay: {
             messagesVisited: replay.simulation.messagesVisited || 0,
@@ -264,7 +343,7 @@ async function buildFinalProbotMigrationPreview(guild, options = {}) {
         },
         warnings,
         records,
-        summary: summarizeRecords(records),
+        summary,
     };
 }
 
@@ -294,6 +373,7 @@ function proposalsFromPreview(preview) {
 
 async function applyFinalProbotMigration(guild, options = {}) {
     const preview = await buildFinalProbotMigrationPreview(guild, options);
+    if (!preview.canApply) throw new FinalProbotMigrationBlockedError(preview);
     const proposals = proposalsFromPreview(preview);
     const result = await applyLevelProbotFinalMigration({
         guildId: guild.id,
@@ -333,6 +413,7 @@ async function latestFinalProbotMigrationBatch(guildId) {
 
 module.exports = {
     FINAL_PROBOT_MIGRATION_POLICY,
+    FinalProbotMigrationBlockedError,
     applyFinalProbotMigration,
     buildFinalProbotMigrationPreview,
     latestFinalProbotMigrationBatch,

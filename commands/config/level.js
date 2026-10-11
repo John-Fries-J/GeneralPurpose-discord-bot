@@ -410,6 +410,32 @@ function finalOutlierRows(records = [], limit = 8) {
         }).join('\n') || 'No unreliable reconstructed-level outliers in this preview.';
 }
 
+function fetchStatusLine(label, fetch = {}) {
+    const complete = fetch.complete !== false;
+    const count = fetch.expectedMembers
+        ? `${formatXp(fetch.membersFetched || 0)}/${formatXp(fetch.expectedMembers)}`
+        : formatXp(fetch.membersFetched || 0);
+    const attempts = fetch.fetchAttempts ? `, attempts ${fetch.fetchAttempts}` : '';
+    const source = fetch.source ? `, ${fetch.source}` : '';
+    const error = fetch.error ? ` - ${fetch.error}` : '';
+    return `${label}: **${complete ? 'complete' : 'partial'}** (${count}${source}${attempts})${error}`;
+}
+
+function finalMigrationEvidenceRows(preview) {
+    const blockers = preview.safety?.blockers?.length
+        ? `Blocked: ${preview.safety.blockers.map(blocker => blocker.type).join(', ')}`
+        : 'Blocked: none';
+    return [
+        `Authoritative counts: **${preview.authoritative ? 'yes' : 'no'}**`,
+        `Safe to apply: **${preview.canApply ? 'yes' : 'no'}**`,
+        `Role mappings: **${formatXp(preview.evidence?.mappings || 0)}**`,
+        `Role evidence records: **${formatXp(preview.evidence?.membersWithRoleEvidence || 0)}**`,
+        fetchStatusLine('Role evidence fetch', preview.evidence?.memberFetch || {}),
+        preview.currentMemberOnly ? fetchStatusLine('Current-member fetch', preview.currentMemberFetch || {}) : null,
+        blockers,
+    ].filter(Boolean).join('\n');
+}
+
 function createFinalMigrationExport(preview, format, filenameBase) {
     if (format === 'json') {
         return new AttachmentBuilder(Buffer.from(JSON.stringify({
@@ -418,6 +444,12 @@ function createFinalMigrationExport(preview, format, filenameBase) {
                 policy: preview.policy,
                 settings: preview.settings,
                 summary: preview.summary,
+                authoritative: preview.authoritative,
+                canApply: preview.canApply,
+                safety: preview.safety,
+                evidence: preview.evidence,
+                currentMemberOnly: preview.currentMemberOnly,
+                currentMemberFetch: preview.currentMemberFetch,
                 warnings: preview.warnings,
                 importJobId: preview.importJob?.id || null,
             },
@@ -444,6 +476,11 @@ function createFinalMigrationExport(preview, format, filenameBase) {
             'reconstructed_xp',
             'would_change',
             'unreliable_estimate',
+            'preview_authoritative',
+            'safe_to_apply',
+            'role_evidence_complete',
+            'current_member_fetch_complete',
+            'evidence_blockers',
             'confidence_warnings',
         ];
         const lines = [
@@ -467,6 +504,11 @@ function createFinalMigrationExport(preview, format, filenameBase) {
                 reconstructed_xp: record.reconstructedXp,
                 would_change: record.wouldChange,
                 unreliable_estimate: record.unreliableEstimate,
+                preview_authoritative: preview.authoritative,
+                safe_to_apply: preview.canApply,
+                role_evidence_complete: preview.evidence?.complete,
+                current_member_fetch_complete: preview.currentMemberFetch?.complete,
+                evidence_blockers: (preview.safety?.blockers || []).map(blocker => blocker.type).join(';'),
                 confidence_warnings: (record.confidenceWarnings || []).join(';'),
             }[header])).join(',')),
         ];
@@ -916,18 +958,20 @@ module.exports = {
             return interaction.editReply({
                 embeds: [createEmbed({
                     title: 'Final ProBot Migration Preview',
-                    color: 'blue',
+                    color: preview.authoritative ? 'blue' : 'red',
                     description: [
+                        preview.authoritative ? null : '**INCOMPLETE EVIDENCE:** counts below are partial and migration application is blocked until member and role evidence fetch completely.',
                         `Policy: **${preview.policy.id}**`,
                         `Formula: **${preview.settings.progressionFormula}**, base **${preview.settings.xpPerLevelBase}**`,
-                        `Confirmed members: **${formatXp(preview.summary.confirmedMembers)}**`,
-                        `Would change: **${formatXp(preview.summary.affectedCount)}**`,
-                        `Text XP to add: **${formatXp(preview.summary.xpDelta)}**`,
+                        `${preview.authoritative ? 'Confirmed members' : 'Partial confirmed records'}: **${formatXp(preview.summary.confirmedMembers)}**`,
+                        `${preview.authoritative ? 'Would change' : 'Partial would-change records'}: **${formatXp(preview.summary.affectedCount)}**`,
+                        `${preview.authoritative ? 'Text XP to add' : 'Partial text XP delta'}: **${formatXp(preview.summary.xpDelta)}**`,
                         `Unreliable estimates flagged: **${formatXp(preview.summary.unreliableEstimates)}**`,
                         preview.currentMemberOnly ? 'Scope: **current members only**. Departed stored records are not deleted or modified unless included separately.' : 'Scope: **all recovered stored records**, including departed members with verified announcements.',
                         'No XP or roles were changed.',
-                    ].join('\n'),
+                    ].filter(Boolean).join('\n'),
                     fields: [
+                        { name: 'Evidence status', value: finalMigrationEvidenceRows(preview).slice(0, 1024), inline: false },
                         { name: 'Top affected records', value: finalMigrationRows(preview.records.filter(record => record.wouldChange), 8).slice(0, 1024), inline: false },
                         { name: 'Unreliable estimate audit', value: finalOutlierRows(preview.records, 8).slice(0, 1024), inline: false },
                         preview.warnings.length ? { name: 'Warnings', value: preview.warnings.join('\n').slice(0, 1024), inline: false } : null,
@@ -944,12 +988,17 @@ module.exports = {
             }
             const user = interaction.options.getUser('user', true);
             await interaction.deferReply({ flags: 64 });
-            const result = await applyFinalProbotMigration(interaction.guild, {
-                targetUserId: user.id,
-                importJobId: interaction.options.getString('import_job_id') || null,
-                adminId: interaction.user.id,
-                mode: 'single_user_test',
-            });
+            let result;
+            try {
+                result = await applyFinalProbotMigration(interaction.guild, {
+                    targetUserId: user.id,
+                    importJobId: interaction.options.getString('import_job_id') || null,
+                    adminId: interaction.user.id,
+                    mode: 'single_user_test',
+                });
+            } catch (error) {
+                return interaction.editReply({ content: error.code === 'FINAL_PROBOT_MIGRATION_EVIDENCE_INCOMPLETE' ? error.message : `Final ProBot migration test failed: ${error.message}` });
+            }
             return interaction.editReply({
                 embeds: [createEmbed({
                     title: 'Single-User ProBot Migration Applied',
@@ -975,12 +1024,17 @@ module.exports = {
                 return interaction.reply({ content: 'Type `APPLY_PROBOT_FINAL` in the confirm option before applying the server-wide ProBot migration.', flags: 64 });
             }
             await interaction.deferReply({ flags: 64 });
-            const result = await applyFinalProbotMigration(interaction.guild, {
-                importJobId: interaction.options.getString('import_job_id') || null,
-                currentMemberOnly: interaction.options.getBoolean('current_members_only') === true,
-                adminId: interaction.user.id,
-                mode: 'server_apply',
-            });
+            let result;
+            try {
+                result = await applyFinalProbotMigration(interaction.guild, {
+                    importJobId: interaction.options.getString('import_job_id') || null,
+                    currentMemberOnly: interaction.options.getBoolean('current_members_only') === true,
+                    adminId: interaction.user.id,
+                    mode: 'server_apply',
+                });
+            } catch (error) {
+                return interaction.editReply({ content: error.code === 'FINAL_PROBOT_MIGRATION_EVIDENCE_INCOMPLETE' ? error.message : `Final ProBot migration failed: ${error.message}` });
+            }
             return interaction.editReply({
                 embeds: [createEmbed({
                     title: 'Final ProBot Migration Applied',
